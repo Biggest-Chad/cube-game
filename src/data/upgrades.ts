@@ -1,0 +1,517 @@
+/**
+ * P2/P3 upgrade catalog — sequential chains, smaller additive bonuses, ship vitals.
+ *
+ * Damage model (folded in TechTree):
+ *   damageMul = min(CAP, (1 + sum(damageAdd)) * product(damageMul rare))
+ * Orbit speed total soft-capped at 1.85 via TechTree.
+ */
+
+export type UpgradeBranch =
+  | 'ship'
+  | 'offense'
+  | 'loadouts'
+  | 'drones'
+  | 'analysis'
+  | 'idle'
+  | 'global';
+
+export type ShopTabId = 'ship' | 'main_gun' | 'loadouts' | 'drones' | 'economy' | 'global';
+
+export type CostCurrency = 'fragments' | 'coreEnergy';
+
+export interface UpgradeEffect {
+  /** Additive damage rank bonus (e.g. 0.12 = +12%). Prefer over damageMul. */
+  damageAdd?: number;
+  /** Rare multiplicative damage (global only) — use sparingly. */
+  damageMul?: number;
+  fireRateAdd?: number;
+  fireRateMul?: number;
+  multiShotAdd?: number;
+  splashAdd?: number;
+  orbitSpeedAdd?: number;
+  orbitSpeedMul?: number;
+  accelAdd?: number;
+  zoomRangeAdd?: number;
+  droneCountAdd?: number;
+  droneDamageAdd?: number;
+  droneDamageMul?: number;
+  droneFireRateAdd?: number;
+  droneFireRateMul?: number;
+  dronePriorityCore?: boolean;
+  dronePriorityData?: boolean;
+  fragmentAdd?: number;
+  fragmentMul?: number;
+  coreEnergyAdd?: number;
+  coreEnergyMul?: number;
+  idleRateAdd?: number;
+  idleRateMul?: number;
+  idleCapAdd?: number;
+  idleCapMul?: number;
+  critChance?: number;
+  beamWidth?: number;
+  unlockDrones?: boolean;
+  unlockAutoFire?: boolean;
+  /** Ship vitals */
+  maxHullAdd?: number;
+  maxShieldAdd?: number;
+  armorRatingAdd?: number;
+  shieldRegenAdd?: number;
+  /** Hardpoint unlocks (P4 placeholder stats) */
+  hardpointAdd?: number;
+}
+
+export interface UpgradeNodeDef {
+  id: string;
+  name: string;
+  description: string;
+  branch: UpgradeBranch;
+  /** Sequential chain id — only the next unpurchased rank is shown in the shop. */
+  chain: string;
+  /** 1-based rank within chain */
+  rank: number;
+  cost: number;
+  costCurrency: CostCurrency;
+  prerequisites: string[];
+  effects: UpgradeEffect;
+}
+
+export interface ShopTabDef {
+  id: ShopTabId;
+  label: string;
+  icon: string;
+  /** Branches that appear under this tab */
+  branches: UpgradeBranch[];
+}
+
+export const SHOP_TABS: ShopTabDef[] = [
+  { id: 'ship', label: 'SHIP', icon: '🚀', branches: ['ship'] },
+  { id: 'main_gun', label: 'MAIN GUN', icon: '⚡', branches: ['offense'] },
+  { id: 'loadouts', label: 'LOADOUTS', icon: '◎', branches: ['loadouts'] },
+  { id: 'drones', label: 'DRONES', icon: '⬡', branches: ['drones'] },
+  { id: 'economy', label: 'ECONOMY', icon: '◈', branches: ['analysis', 'idle'] },
+  { id: 'global', label: 'GLOBAL', icon: '✶', branches: ['global'] },
+];
+
+export const BRANCH_LABELS: Record<UpgradeBranch, string> = {
+  ship: 'SHIP',
+  offense: 'MAIN GUN',
+  loadouts: 'LOADOUTS',
+  drones: 'DRONES',
+  analysis: 'ANALYSIS',
+  idle: 'IDLE',
+  global: 'GLOBAL',
+};
+
+export const BRANCH_TO_TAB: Record<UpgradeBranch, ShopTabId> = {
+  ship: 'ship',
+  offense: 'main_gun',
+  loadouts: 'loadouts',
+  drones: 'drones',
+  analysis: 'economy',
+  idle: 'economy',
+  global: 'global',
+};
+
+/** Soft/hard caps referenced by TechTree recompute. */
+export const STAT_CAPS = {
+  damageMul: 4.0,
+  fireRateMul: 2.75,
+  orbitSpeedMul: 1.85,
+  fragmentMul: 2.25,
+  coreEnergyMul: 2.25,
+  critChance: 0.4,
+  critMult: 2.25,
+  armorEffective: 0.55,
+  armorK: 100,
+  droneCount: 24,
+} as const;
+
+function node(
+  partial: Omit<UpgradeNodeDef, 'costCurrency'> & { costCurrency?: CostCurrency }
+): UpgradeNodeDef {
+  return {
+    costCurrency: 'fragments',
+    ...partial,
+  };
+}
+
+function chainNodes(
+  chain: string,
+  branch: UpgradeBranch,
+  ranks: Array<{
+    id: string;
+    name: string;
+    description: string;
+    cost: number;
+    costCurrency?: CostCurrency;
+    effects: UpgradeEffect;
+    extraPrereq?: string[];
+  }>
+): UpgradeNodeDef[] {
+  return ranks.map((r, i) => {
+    const prereqs: string[] = i === 0 ? [...(r.extraPrereq ?? [])] : [ranks[i - 1].id, ...(r.extraPrereq ?? [])];
+    return node({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      branch,
+      chain,
+      rank: i + 1,
+      cost: r.cost,
+      costCurrency: r.costCurrency,
+      prerequisites: prereqs,
+      effects: r.effects,
+    });
+  });
+}
+
+export const UPGRADES: UpgradeNodeDef[] = [
+  // ═══════════════════════════════════════════
+  // SHIP — speed, accel, hull, shield, armor, zoom
+  // ═══════════════════════════════════════════
+  ...chainNodes('ship_speed', 'ship', [
+    { id: 'ship_speed_1', name: 'Thrusters', description: '+10% orbit speed', cost: 45, effects: { orbitSpeedAdd: 0.1 } },
+    { id: 'ship_speed_2', name: 'Thrusters', description: '+12% orbit speed', cost: 110, effects: { orbitSpeedAdd: 0.12 } },
+    { id: 'ship_speed_3', name: 'Thrusters', description: '+12% orbit speed', cost: 220, effects: { orbitSpeedAdd: 0.12 } },
+    { id: 'ship_speed_4', name: 'Thrusters', description: '+14% orbit speed', cost: 400, effects: { orbitSpeedAdd: 0.14 } },
+    { id: 'ship_speed_5', name: 'Thrusters', description: '+14% orbit speed (cap band)', cost: 700, effects: { orbitSpeedAdd: 0.14 } },
+  ]),
+  ...chainNodes('ship_accel', 'ship', [
+    { id: 'ship_accel_1', name: 'Vector Coils', description: '+15% angular accel', cost: 60, effects: { accelAdd: 0.15 } },
+    { id: 'ship_accel_2', name: 'Vector Coils', description: '+15% angular accel', cost: 150, effects: { accelAdd: 0.15 } },
+    { id: 'ship_accel_3', name: 'Vector Coils', description: '+18% angular accel', cost: 320, effects: { accelAdd: 0.18 } },
+  ]),
+  ...chainNodes('ship_hull', 'ship', [
+    { id: 'ship_hull_1', name: 'Hull Plating', description: '+40 max hull', cost: 55, effects: { maxHullAdd: 40 } },
+    { id: 'ship_hull_2', name: 'Hull Plating', description: '+55 max hull', cost: 140, effects: { maxHullAdd: 55 } },
+    { id: 'ship_hull_3', name: 'Hull Plating', description: '+70 max hull', cost: 280, effects: { maxHullAdd: 70 } },
+    { id: 'ship_hull_4', name: 'Hull Plating', description: '+90 max hull', cost: 500, effects: { maxHullAdd: 90 } },
+    { id: 'ship_hull_5', name: 'Hull Plating', description: '+120 max hull', cost: 850, effects: { maxHullAdd: 120 } },
+  ]),
+  ...chainNodes('ship_shield', 'ship', [
+    { id: 'ship_shield_1', name: 'Shield Matrix', description: '+30 max shield · +2 regen', cost: 70, effects: { maxShieldAdd: 30, shieldRegenAdd: 2 } },
+    { id: 'ship_shield_2', name: 'Shield Matrix', description: '+40 max shield · +2 regen', cost: 160, effects: { maxShieldAdd: 40, shieldRegenAdd: 2 } },
+    { id: 'ship_shield_3', name: 'Shield Matrix', description: '+55 max shield · +3 regen', cost: 340, effects: { maxShieldAdd: 55, shieldRegenAdd: 3 } },
+    { id: 'ship_shield_4', name: 'Shield Matrix', description: '+70 max shield · +3 regen', cost: 600, effects: { maxShieldAdd: 70, shieldRegenAdd: 3 } },
+  ]),
+  ...chainNodes('ship_armor', 'ship', [
+    { id: 'ship_armor_1', name: 'Ablative Weave', description: '+25 armor rating', cost: 80, effects: { armorRatingAdd: 25 } },
+    { id: 'ship_armor_2', name: 'Ablative Weave', description: '+30 armor rating', cost: 180, effects: { armorRatingAdd: 30 } },
+    { id: 'ship_armor_3', name: 'Ablative Weave', description: '+35 armor rating', cost: 360, effects: { armorRatingAdd: 35 } },
+    { id: 'ship_armor_4', name: 'Ablative Weave', description: '+40 armor rating', cost: 650, effects: { armorRatingAdd: 40 } },
+    { id: 'ship_armor_5', name: 'Ablative Weave', description: '+45 armor rating (~55% DR soft)', cost: 1000, effects: { armorRatingAdd: 45 } },
+  ]),
+  ...chainNodes('ship_zoom', 'ship', [
+    { id: 'ship_zoom_1', name: 'Long Lens', description: 'Extended zoom range', cost: 90, effects: { zoomRangeAdd: 12 } },
+    { id: 'ship_zoom_2', name: 'Deep Focus', description: 'More zoom for large cubes', cost: 260, effects: { zoomRangeAdd: 18 } },
+  ]),
+  ...chainNodes('ship_beam', 'ship', [
+    { id: 'ship_beam_1', name: 'Focus Coil', description: 'Wider beam hit tolerance', cost: 180, effects: { beamWidth: 1.25 }, extraPrereq: ['ship_speed_1'] },
+  ]),
+
+  // ═══════════════════════════════════════════
+  // MAIN GUN — additive damage ranks
+  // ═══════════════════════════════════════════
+  ...chainNodes('off_damage', 'offense', [
+    { id: 'off_damage_1', name: 'Pulse Amp', description: '+14% beam damage', cost: 40, effects: { damageAdd: 0.14 } },
+    { id: 'off_damage_2', name: 'Pulse Amp', description: '+16% beam damage', cost: 100, effects: { damageAdd: 0.16 } },
+    { id: 'off_damage_3', name: 'Pulse Amp', description: '+16% beam damage', cost: 220, effects: { damageAdd: 0.16 } },
+    { id: 'off_damage_4', name: 'Pulse Amp', description: '+18% beam damage', cost: 420, effects: { damageAdd: 0.18 } },
+    { id: 'off_damage_5', name: 'Pulse Amp', description: '+18% beam damage', cost: 750, effects: { damageAdd: 0.18 } },
+    { id: 'off_damage_6', name: 'Pulse Amp', description: '+20% beam damage', cost: 1200, effects: { damageAdd: 0.2 } },
+  ]),
+  ...chainNodes('off_rate', 'offense', [
+    { id: 'off_rate_1', name: 'Cycle Boost', description: '+12% fire rate', cost: 50, effects: { fireRateAdd: 0.12 } },
+    { id: 'off_rate_2', name: 'Cycle Boost', description: '+14% fire rate', cost: 140, effects: { fireRateAdd: 0.14 } },
+    { id: 'off_rate_3', name: 'Cycle Boost', description: '+14% fire rate', cost: 300, effects: { fireRateAdd: 0.14 } },
+    { id: 'off_rate_4', name: 'Cycle Boost', description: '+16% fire rate', cost: 550, effects: { fireRateAdd: 0.16 } },
+  ]),
+  ...chainNodes('off_multi', 'offense', [
+    { id: 'off_multi_1', name: 'Split Beam', description: '+1 concurrent beam', cost: 200, effects: { multiShotAdd: 1 }, extraPrereq: ['off_rate_1'] },
+    { id: 'off_multi_2', name: 'Tri-Beam', description: '+1 concurrent beam', cost: 520, effects: { multiShotAdd: 1 } },
+  ]),
+  ...chainNodes('off_splash', 'offense', [
+    { id: 'off_splash_1', name: 'Shock Halo', description: 'Small splash radius', cost: 240, effects: { splashAdd: 1.2 }, extraPrereq: ['off_damage_2'] },
+    { id: 'off_splash_2', name: 'Nova Ring', description: 'Larger splash', cost: 680, effects: { splashAdd: 1.5 } },
+  ]),
+  ...chainNodes('off_crit', 'offense', [
+    { id: 'off_crit_1', name: 'Overcharge', description: '+8% crit chance', cost: 280, effects: { critChance: 0.08 }, extraPrereq: ['off_damage_2'] },
+    { id: 'off_crit_2', name: 'Overcharge', description: '+8% crit chance', cost: 500, effects: { critChance: 0.08 } },
+    { id: 'off_crit_3', name: 'Overcharge', description: '+8% crit chance (soft cap)', cost: 900, effects: { critChance: 0.08 } },
+  ]),
+
+  // ═══════════════════════════════════════════
+  // LOADOUTS — hardpoint placeholders (P4)
+  // ═══════════════════════════════════════════
+  ...chainNodes('hardpoint', 'loadouts', [
+    {
+      id: 'hardpoint_2',
+      name: 'Hardpoint Bay II',
+      description: 'Unlock 2nd weapon hardpoint',
+      cost: 80,
+      costCurrency: 'coreEnergy',
+      effects: { hardpointAdd: 1 },
+      extraPrereq: ['off_damage_3'],
+    },
+    {
+      id: 'hardpoint_3',
+      name: 'Hardpoint Bay III',
+      description: 'Unlock 3rd weapon hardpoint',
+      cost: 200,
+      costCurrency: 'coreEnergy',
+      effects: { hardpointAdd: 1 },
+    },
+  ]),
+  // Teaser / placeholder until P4/P5
+  node({
+    id: 'loadout_coming',
+    name: 'Weapon Modules',
+    description: 'Modular weapons unlock in later sectors',
+    branch: 'loadouts',
+    chain: 'loadout_teaser',
+    rank: 1,
+    cost: 99999,
+    costCurrency: 'fragments',
+    prerequisites: ['hardpoint_2'],
+    effects: {},
+  }),
+
+  // ═══════════════════════════════════════════
+  // DRONES
+  // ═══════════════════════════════════════════
+  ...chainNodes('drone_unlock', 'drones', [
+    {
+      id: 'drone_unlock',
+      name: 'Ally Protocol',
+      description: 'Unlock first AI drone',
+      cost: 150,
+      effects: { unlockDrones: true, droneCountAdd: 1 },
+    },
+  ]),
+  ...chainNodes('drone_count', 'drones', [
+    { id: 'drone_count_1', name: 'Wingman Bay', description: '+1 drone', cost: 280, effects: { droneCountAdd: 1 }, extraPrereq: ['drone_unlock'] },
+    { id: 'drone_count_2', name: 'Wingman Bay', description: '+1 drone', cost: 420, effects: { droneCountAdd: 1 } },
+    { id: 'drone_count_3', name: 'Wingman Bay', description: '+1 drone', cost: 620, effects: { droneCountAdd: 1 } },
+    { id: 'drone_count_4', name: 'Wingman Bay', description: '+1 drone', cost: 900, effects: { droneCountAdd: 1 } },
+    { id: 'drone_count_5', name: 'Wingman Bay', description: '+1 drone', cost: 1300, effects: { droneCountAdd: 1 } },
+    { id: 'drone_count_6', name: 'Wingman Bay', description: '+1 drone', cost: 1850, effects: { droneCountAdd: 1 } },
+    { id: 'drone_count_7', name: 'Wingman Bay', description: '+1 drone', cost: 2600, effects: { droneCountAdd: 1 } },
+    { id: 'drone_count_8', name: 'Wingman Bay', description: '+1 drone', cost: 3600, effects: { droneCountAdd: 1 } },
+  ]),
+  ...chainNodes('drone_dmg', 'drones', [
+    { id: 'drone_dmg_1', name: 'Drone Lens', description: '+20% drone damage', cost: 200, effects: { droneDamageAdd: 0.2 }, extraPrereq: ['drone_unlock'] },
+    { id: 'drone_dmg_2', name: 'Drone Lens', description: '+22% drone damage', cost: 450, effects: { droneDamageAdd: 0.22 } },
+    { id: 'drone_dmg_3', name: 'Drone Lens', description: '+25% drone damage', cost: 800, effects: { droneDamageAdd: 0.25 } },
+  ]),
+  ...chainNodes('drone_rate', 'drones', [
+    { id: 'drone_rate_1', name: 'Swarm Cycle', description: '+18% drone fire rate', cost: 240, effects: { droneFireRateAdd: 0.18 }, extraPrereq: ['drone_dmg_1'] },
+    { id: 'drone_rate_2', name: 'Swarm Cycle', description: '+20% drone fire rate', cost: 520, effects: { droneFireRateAdd: 0.2 } },
+  ]),
+  ...chainNodes('drone_prio_core', 'drones', [
+    {
+      id: 'drone_prio_core',
+      name: 'Core Hunter',
+      description: 'Drones prioritize cores',
+      cost: 350,
+      effects: { dronePriorityCore: true },
+      extraPrereq: ['drone_unlock'],
+    },
+  ]),
+  ...chainNodes('drone_prio_data', 'drones', [
+    {
+      id: 'drone_prio_data',
+      name: 'Data Sniffer',
+      description: 'Drones prioritize data nodes',
+      cost: 420,
+      effects: { dronePriorityData: true },
+      extraPrereq: ['drone_prio_core'],
+    },
+  ]),
+
+  // ═══════════════════════════════════════════
+  // ECONOMY — analysis + idle
+  // ═══════════════════════════════════════════
+  ...chainNodes('ana_frag', 'analysis', [
+    { id: 'ana_frag_1', name: 'Fragment Scan', description: '+10% Data Fragments', cost: 65, effects: { fragmentAdd: 0.1 } },
+    { id: 'ana_frag_2', name: 'Deep Extract', description: '+12% Data Fragments', cost: 180, effects: { fragmentAdd: 0.12 } },
+    { id: 'ana_frag_3', name: 'Parity Harvest', description: '+14% Data Fragments', cost: 400, effects: { fragmentAdd: 0.14 } },
+    { id: 'ana_frag_4', name: 'Lattice Siphon', description: '+14% Data Fragments (cap band)', cost: 800, effects: { fragmentAdd: 0.14 } },
+  ]),
+  ...chainNodes('ana_core', 'analysis', [
+    { id: 'ana_core_1', name: 'Core Reader', description: '+12% Core Energy on clear', cost: 160, effects: { coreEnergyAdd: 0.12 }, extraPrereq: ['ana_frag_1'] },
+    { id: 'ana_core_2', name: 'Energy Lattice', description: '+15% Core Energy', cost: 480, effects: { coreEnergyAdd: 0.15 } },
+  ]),
+  ...chainNodes('idle_rate', 'idle', [
+    { id: 'idle_rate_1', name: 'Background Tick', description: '+25% idle clear rate', cost: 100, effects: { idleRateAdd: 0.25 } },
+    { id: 'idle_rate_2', name: 'Ghost Protocol', description: '+30% idle clear rate', cost: 280, effects: { idleRateAdd: 0.3 } },
+    { id: 'idle_rate_3', name: 'Autonomous Siege', description: '+35% idle clear rate', cost: 650, effects: { idleRateAdd: 0.35 }, extraPrereq: ['drone_unlock'] },
+  ]),
+  ...chainNodes('idle_cap', 'idle', [
+    { id: 'idle_cap_1', name: 'Cache Buffer', description: '+40% offline time cap', cost: 150, effects: { idleCapAdd: 0.4 }, extraPrereq: ['idle_rate_1'] },
+    { id: 'idle_cap_2', name: 'Deep Sleep', description: '+60% offline time cap', cost: 450, effects: { idleCapAdd: 0.6 } },
+  ]),
+
+  // ═══════════════════════════════════════════
+  // GLOBAL — rare mults with hard caps
+  // ═══════════════════════════════════════════
+  ...chainNodes('glob_all', 'global', [
+    {
+      id: 'glob_all_1',
+      name: 'Sync Field',
+      description: '+8% all currency',
+      cost: 280,
+      effects: { fragmentMul: 1.08, coreEnergyMul: 1.08 },
+      extraPrereq: ['ana_frag_1', 'off_damage_1'],
+    },
+    {
+      id: 'glob_all_2',
+      name: 'Master Link',
+      description: '+10% all currency',
+      cost: 750,
+      effects: { fragmentMul: 1.1, coreEnergyMul: 1.1 },
+      extraPrereq: ['ana_frag_2'],
+    },
+  ]),
+  ...chainNodes('glob_dmg', 'global', [
+    {
+      id: 'glob_dmg_1',
+      name: 'Unity Pulse',
+      description: '+10% player & drone damage',
+      cost: 420,
+      effects: { damageMul: 1.1, droneDamageMul: 1.1 },
+      extraPrereq: ['glob_all_1'],
+    },
+  ]),
+];
+
+export function getUpgrade(id: string): UpgradeNodeDef | undefined {
+  return UPGRADES.find((u) => u.id === id);
+}
+
+export function getChainNodes(chain: string): UpgradeNodeDef[] {
+  return UPGRADES.filter((u) => u.chain === chain).sort((a, b) => a.rank - b.rank);
+}
+
+export function getChainsForTab(tabId: ShopTabId): string[] {
+  const tab = SHOP_TABS.find((t) => t.id === tabId);
+  if (!tab) return [];
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const u of UPGRADES) {
+    if (!tab.branches.includes(u.branch)) continue;
+    if (seen.has(u.chain)) continue;
+    seen.add(u.chain);
+    order.push(u.chain);
+  }
+  return order;
+}
+
+export interface SequentialVisibleNode {
+  node: UpgradeNodeDef;
+  chain: string;
+  rank: number;
+  maxRank: number;
+  ownedCount: number;
+  maxed: boolean;
+  /** True when chain is locked by missing branch prereq (show teaser). */
+  teaser: boolean;
+  teaserLabel?: string;
+}
+
+/**
+ * One visible card per sequential chain:
+ * - next unpurchased rank if prereqs met
+ * - MAXED card if chain complete
+ * - single teaser if first rank blocked by external prereq
+ */
+export function getSequentialVisibleNodes(
+  owned: Set<string> | string[],
+  _currency?: { dataFragments: number; coreEnergy: number },
+  tabId?: ShopTabId
+): SequentialVisibleNode[] {
+  const ownedSet = owned instanceof Set ? owned : new Set(owned);
+  const chains = tabId
+    ? getChainsForTab(tabId)
+    : (() => {
+        const s = new Set<string>();
+        const o: string[] = [];
+        for (const u of UPGRADES) {
+          if (!s.has(u.chain)) {
+            s.add(u.chain);
+            o.push(u.chain);
+          }
+        }
+        return o;
+      })();
+
+  const result: SequentialVisibleNode[] = [];
+
+  for (const chain of chains) {
+    const ranks = getChainNodes(chain);
+    if (ranks.length === 0) continue;
+    const maxRank = ranks.length;
+    let ownedCount = 0;
+    for (const r of ranks) if (ownedSet.has(r.id)) ownedCount++;
+
+    if (ownedCount >= maxRank) {
+      const last = ranks[maxRank - 1];
+      result.push({
+        node: last,
+        chain,
+        rank: maxRank,
+        maxRank,
+        ownedCount,
+        maxed: true,
+        teaser: false,
+      });
+      continue;
+    }
+
+    // Find first unpurchased rank
+    const next = ranks.find((r) => !ownedSet.has(r.id))!;
+    const prereqsMet = next.prerequisites.every((p) => ownedSet.has(p));
+
+    if (prereqsMet) {
+      result.push({
+        node: next,
+        chain,
+        rank: next.rank,
+        maxRank,
+        ownedCount,
+        maxed: false,
+        teaser: false,
+      });
+    } else if (ownedCount === 0) {
+      // Teaser: show first node as locked with missing prereq name
+      const missing = next.prerequisites.find((p) => !ownedSet.has(p));
+      const missingNode = missing ? getUpgrade(missing) : undefined;
+      result.push({
+        node: next,
+        chain,
+        rank: next.rank,
+        maxRank,
+        ownedCount: 0,
+        maxed: false,
+        teaser: true,
+        teaserLabel: missingNode ? `Requires: ${missingNode.name}` : 'Locked',
+      });
+    }
+    // Mid-chain with unmet prereq (external) — still show next as locked teaser
+    else {
+      const missing = next.prerequisites.find((p) => !ownedSet.has(p));
+      const missingNode = missing ? getUpgrade(missing) : undefined;
+      result.push({
+        node: next,
+        chain,
+        rank: next.rank,
+        maxRank,
+        ownedCount,
+        maxed: false,
+        teaser: true,
+        teaserLabel: missingNode ? `Requires: ${missingNode.name}` : 'Locked',
+      });
+    }
+  }
+
+  return result;
+}
