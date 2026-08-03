@@ -35,10 +35,13 @@ import { ShopUI } from '../ui/ShopUI';
 import { LevelSelectUI } from '../ui/LevelSelectUI';
 import { LoadoutUI } from '../ui/LoadoutUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
+import { IntroCinematic } from '../cinematic/IntroCinematic';
+import { tryImmersiveFullscreen, tryLockLandscape } from '../platform/display';
 
 type Mode =
   | 'menu'
   | 'intro'
+  | 'cinematic'
   | 'playing'
   | 'levelclear'
   | 'tech'
@@ -97,6 +100,9 @@ export class Game {
   private saveAccum = 0;
   private clearRewardMul = 1;
   private pendingReturnMode: Mode = 'playing';
+  private introCinematic = new IntroCinematic();
+  /** After replay-from-sectors, return to level select instead of combat. */
+  private cinematicPreview = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -119,6 +125,7 @@ export class Game {
     this.ambient.applyToScene(this.scene);
     this.scene.add(this.cube.group);
     this.scene.add(this.cubeAnimator.group);
+    this.scene.add(this.introCinematic.group);
     this.scene.add(this.cubeDefense.group);
     this.scene.add(this.ship.group);
     this.scene.add(this.weapon.group);
@@ -194,6 +201,8 @@ export class Game {
   private wireUI(): void {
     this.menu.onPlay = () => {
       void this.audio.resume();
+      void tryLockLandscape();
+      void tryImmersiveFullscreen();
       this.startLevel(this.currentLevelId);
     };
     this.menu.onTech = () => this.openTech();
@@ -247,7 +256,16 @@ export class Game {
     this.levelUI.onSelect = (id) => {
       this.levelUI.hide();
       void this.audio.resume();
+      void tryLockLandscape();
+      void tryImmersiveFullscreen();
       this.startLevel(id);
+    };
+    this.levelUI.onReplayCinematic = () => {
+      this.levelUI.hide();
+      void this.audio.resume();
+      void tryLockLandscape();
+      void tryImmersiveFullscreen();
+      this.playIntroCinematic({ previewOnly: true });
     };
 
     this.loadoutUI.onClose = () => {
@@ -331,9 +349,11 @@ export class Game {
         this.persist();
         this.refreshShopPrompt();
       }),
-      bus.on('cube-rotation-start', () => {
-        this.cameraCtrl.shake(0.12);
-        this.toast('CUBE REALIGNING');
+      bus.on('cube-rotation-start', (payload?: { cinematic?: boolean }) => {
+        this.cameraCtrl.shake(payload?.cinematic ? 0.06 : 0.12);
+        if (!payload?.cinematic && this.mode === 'playing') {
+          this.toast('CUBE REALIGNING');
+        }
       }),
       bus.on('cube-rotation-end', () => this.cameraCtrl.shake(0.18))
     );
@@ -515,15 +535,20 @@ export class Game {
   }
 
   private showMenu(): void {
+    if (this.introCinematic.isActive) this.introCinematic.abort();
     this.mode = 'menu';
+    this.cinematicPreview = false;
     this.hud.setVisible(false);
     this.hud.setIntro(false);
+    this.hud.setCinematicChrome(false);
+    this.ship.group.visible = true;
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.adsUI.hide?.();
     this.overlay.innerHTML = '';
     this.cameraCtrl.endCinematic();
+    this.cube.group.position.set(0, 0, 0);
     this.menu.show();
   }
 
@@ -586,6 +611,7 @@ export class Game {
     this.currentLevelId = id;
     this.levelClearHandled = false;
     this.clearRewardMul = 1;
+    this.cinematicPreview = false;
     this.menu.hide();
     this.shopUI.hide();
     this.levelUI.hide();
@@ -595,18 +621,12 @@ export class Game {
     // Session hygiene — clear projectiles/particles/defense before new cube
     this.wipeCombatSession();
 
-    this.mode = 'intro';
-    this.introTimer = 0;
-    this.hud.setVisible(true);
-    this.hud.setIntro(true, `${level.name} · ${level.size}³ lattice`);
-
     this.cube.loadLevel(level);
     this.cubeAnimator.setLevel(id);
     this.cubeDefense.startLevel(id);
     this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
     this.cameraCtrl.setTopSpeedMul(this.tech.stats.orbitSpeedMul);
     this.cameraCtrl.extendMaxRadius(this.tech.stats.zoomRangeAdd);
-    this.cameraCtrl.startCinematic(this.cameraCtrl.yaw);
 
     this.loadout.syncLevelUnlocks(this.save.data.highestLevel);
     this.hardpoints.rebuildFromLoadout();
@@ -640,14 +660,90 @@ export class Game {
       this.cube.totalBlocks
     );
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
-    this.refreshShopPrompt();
     this.persist();
+
+    // Level 1: full action cinematic. Other levels: short orbit intro.
+    if (id === 1) {
+      this.playIntroCinematic({ previewOnly: false });
+    } else {
+      this.beginShortIntro(level.name, level.size);
+    }
+  }
+
+  /**
+   * Load sector 1 cube and run the ~10s portal/rise cinematic.
+   * previewOnly: used by sector-select replay button (returns to sectors).
+   */
+  private playIntroCinematic(opts: { previewOnly: boolean }): void {
+    const level = getLevel(1);
+    this.cinematicPreview = opts.previewOnly;
+    this.menu.hide();
+    this.shopUI.hide();
+    this.levelUI.hide();
+    this.loadoutUI.hide();
+    this.overlay.innerHTML = '';
+
+    if (opts.previewOnly) {
+      this.wipeCombatSession();
+      this.currentLevelId = 1;
+      this.cube.loadLevel(level);
+      this.cubeAnimator.setLevel(1);
+      this.cubeDefense.startLevel(1);
+      this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
+    }
+
+    this.mode = 'cinematic';
+    this.introTimer = 0;
+    this.hud.setVisible(true);
+    this.hud.setIntro(false);
+    this.hud.setCinematicChrome(true);
+    this.ship.group.visible = false;
+
+    this.introCinematic.start({
+      cube: this.cube,
+      animator: this.cubeAnimator,
+      camera: this.cameraCtrl,
+      particles: this.particles,
+      titleHost: this.overlay,
+      previewOnly: opts.previewOnly,
+      onComplete: () => this.onCinematicComplete(),
+    });
+  }
+
+  private onCinematicComplete(): void {
+    this.ship.group.visible = true;
+    this.hud.setCinematicChrome(false);
+    this.cube.group.position.set(0, 0, 0);
+
+    if (this.cinematicPreview) {
+      this.cinematicPreview = false;
+      this.cameraCtrl.endCinematic();
+      this.hud.setVisible(false);
+      this.openLevels();
+      return;
+    }
+
+    this.finishIntro();
+  }
+
+  private beginShortIntro(name: string, size: number): void {
+    this.mode = 'intro';
+    this.introTimer = 0;
+    this.introDuration = ORBIT.introDuration;
+    this.hud.setVisible(true);
+    this.hud.setCinematicChrome(false);
+    this.hud.setIntro(true, `${name} · ${size}³ lattice`);
+    this.ship.group.visible = true;
+    this.cameraCtrl.startCinematic(this.cameraCtrl.yaw);
+    this.refreshShopPrompt();
   }
 
   private finishIntro(): void {
     this.mode = 'playing';
     this.cameraCtrl.endCinematic();
     this.hud.setIntro(false);
+    this.hud.setCinematicChrome(false);
+    this.ship.group.visible = true;
     this.refreshShopPrompt();
     this.toast('ENGAGE');
   }
@@ -781,7 +877,7 @@ export class Game {
 
     if (
       this.time.fps < PERF.lowFpsThreshold &&
-      (this.mode === 'playing' || this.mode === 'intro')
+      (this.mode === 'playing' || this.mode === 'intro' || this.mode === 'cinematic')
     ) {
       this.lowFpsTimer += dt;
       if (this.lowFpsTimer > PERF.lowFpsSeconds && this.highQuality) {
@@ -802,6 +898,10 @@ export class Game {
       this.cameraCtrl.pitch = 0.28 + Math.sin(now * 0.15) * 0.06;
       this.cameraCtrl.update(dt);
       this.ship.update(this.cameraCtrl, dt);
+    } else if (this.mode === 'cinematic') {
+      this.introCinematic.update(dt);
+      this.cameraCtrl.updateScriptedCinematic(dt);
+      // Ship hidden; skip ship visual update lag
     } else if (this.mode === 'intro') {
       this.introTimer += dt;
       const progress = this.introTimer / this.introDuration;
@@ -915,6 +1015,7 @@ export class Game {
     for (const u of this.unsubs) u();
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVisibility);
+    this.introCinematic.dispose();
     this.cube.dispose();
     this.cubeAnimator.dispose();
     this.cubeDefense.dispose();

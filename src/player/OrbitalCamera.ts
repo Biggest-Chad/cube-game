@@ -102,14 +102,67 @@ export class OrbitalCamera {
     this.camera.updateProjectionMatrix();
   }
 
+  private lookYOffset = 0;
+  private scriptedLag = 3.5;
+
   startCinematic(startYaw = this.yaw): void {
     this.mode = 'cinematic';
     this.blend = 0;
     this.cinematicYaw = startYaw - 0.6;
     this.cinematicPitch = 0.42;
     this.cinematicRadius = this.radius * ORBIT.introRadiusMul;
+    this.lookYOffset = 0;
     this.resetVelocities();
     this.sync(true);
+  }
+
+  /** Begin fully scripted cinematic (IntroCinematic drives poses each frame). */
+  beginScriptedCinematic(pose: {
+    yaw: number;
+    pitch: number;
+    radius: number;
+    lookY?: number;
+  }): void {
+    this.mode = 'cinematic';
+    this.blend = 0;
+    this.cinematicYaw = pose.yaw;
+    this.cinematicPitch = pose.pitch;
+    this.cinematicRadius = pose.radius;
+    this.lookYOffset = pose.lookY ?? 0;
+    this.lookTarget.set(0, this.lookYOffset, 0);
+    this.resetVelocities();
+    this.sync(true);
+  }
+
+  /**
+   * Drive cinematic camera each frame.
+   * hard=true snaps immediately (action cut); otherwise exp-lags toward pose.
+   */
+  setScriptedPose(pose: {
+    yaw: number;
+    pitch: number;
+    radius: number;
+    lookY?: number;
+    hard?: boolean;
+    lag?: number;
+  }): void {
+    this.mode = 'cinematic';
+    this.blend = 0;
+    if (pose.hard) {
+      this.cinematicYaw = pose.yaw;
+      this.cinematicPitch = pose.pitch;
+      this.cinematicRadius = pose.radius;
+      this.lookYOffset = pose.lookY ?? 0;
+      this.lookTarget.set(0, this.lookYOffset, 0);
+      this.sync(true);
+      return;
+    }
+    this.cinematicYaw = pose.yaw;
+    this.cinematicPitch = pose.pitch;
+    this.cinematicRadius = pose.radius;
+    this.lookYOffset = pose.lookY ?? this.lookYOffset;
+    this.lookTarget.set(0, this.lookYOffset, 0);
+    this.scriptedLag = pose.lag ?? this.scriptedLag;
   }
 
   updateIntro(progress: number, dt: number): void {
@@ -136,9 +189,17 @@ export class OrbitalCamera {
     this.sync(false, dt);
   }
 
+  /** Advance scripted cinematic camera lag (call from Game when intro cinematic runs). */
+  updateScriptedCinematic(dt: number): void {
+    if (this.mode !== 'cinematic') return;
+    this.sync(false, dt);
+  }
+
   endCinematic(): void {
     this.mode = 'gameplay';
     this.blend = 1;
+    this.lookYOffset = 0;
+    this.lookTarget.set(0, 0, 0);
     this.resetVelocities();
     this.sync(true);
   }
@@ -259,7 +320,8 @@ export class OrbitalCamera {
    * camera eases rather than rubber-banding behind a fast orbit.
    */
   private cameraLagRate(): number {
-    const base = this.mode === 'cinematic' ? 2.2 : ORBIT.cameraLag * 0.85;
+    const base =
+      this.mode === 'cinematic' ? Math.max(1.4, this.scriptedLag) : ORBIT.cameraLag * 0.85;
     const omega = Math.hypot(this.velYaw, this.velPitch);
     // Peak yawSpeed * maxMul ≈ 1.0; map high ω → up to ~45% less snappy
     const peak = ORBIT.yawSpeed * maxOrbitSpeedMul;

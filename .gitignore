@@ -8,3 +8,11 @@ dist/
 *.local
 .idea/
 .vscode/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/captures/
+*.iml
+# Keep release APKs for distribution; ignore raw gradle debug dumps
+android/app/release/

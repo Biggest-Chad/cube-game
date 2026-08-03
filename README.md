@@ -23,13 +23,35 @@ Open the URL Vite prints (default `http://localhost:5173`). Use Chrome on a phon
 | `npm run build` | Production build → `dist/` |
 | `npm run preview` | Serve the production build |
 
-## Install on Android (PWA)
+## Install on Android
+
+### Debug APK (playtest)
+
+Build a landscape-locked Capacitor APK:
+
+```bash
+npm run apk:debug
+```
+
+Output: `android/app/build/outputs/apk/debug/app-debug.apk`  
+(also copied to `releases/` when packaging a release).
+
+Install: transfer the APK to the device, enable **Install unknown apps**, open the file.  
+The app locks to **landscape**, uses immersive system UI (status / nav bars hidden), and runs the full WebView game shell.
+
+### PWA
 
 1. Open the game in **Chrome** (device or after deploying `dist/`).
 2. Menu → **Add to Home screen** / **Install app**.
 3. Launch from the home screen — fullscreen, offline after first load (service worker caches the app shell).
 
 For local testing on a device: `npm run dev -- --host` and visit `http://<your-pc-ip>:5173`.
+
+## Landscape & intro cinematic
+
+- Orientation is locked to **landscape** (manifest + Screen Orientation API + Android `sensorLandscape`).
+- HUD / menus are laid out for landscape play; safe-area + visualViewport insets keep UI clear of Android system chrome.
+- **Sector 1** plays a ~10s action intro (portal rise, Rubik shifts, title cards). Replay from **Sectors → REPLAY INTRO**.
 
 ## Controls
 

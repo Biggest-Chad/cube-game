@@ -35,7 +35,7 @@ const DEFAULT_CFG: CubeAnimatorConfig = {
   reducedMotion: false,
 };
 
-type Phase = 'idle' | 'telegraph' | 'spin' | 'cooldown';
+type Phase = 'idle' | 'telegraph' | 'spin' | 'cooldown' | 'cinematic';
 
 export class CubeAnimator {
   readonly group = new THREE.Group();
@@ -49,6 +49,9 @@ export class CubeAnimator {
   private levelId = 1;
   private damagePressure = 0;
   private enabled = true;
+  /** When true, normal level rotation AI is suspended; only forceQuickShift runs. */
+  private cinematicBurst = false;
+  private pendingQuick: { duration: number } | null = null;
   private axisHelper: THREE.Group;
   private ghostShell: THREE.Mesh;
   private fromQuat = new THREE.Quaternion();
@@ -118,6 +121,78 @@ export class CubeAnimator {
     this.enabled = on;
   }
 
+  /** Intro cinematic: suspend normal rotation AI. */
+  beginCinematicBurst(): void {
+    this.cinematicBurst = true;
+    this.phase = 'cinematic';
+    this.timer = 0;
+    this.pendingQuick = null;
+    this.finishVisuals();
+    if (this.cube) this.cube.group.quaternion.identity();
+  }
+
+  endCinematicBurst(): void {
+    this.cinematicBurst = false;
+    this.pendingQuick = null;
+    if (this.phase === 'cinematic' || this.phase === 'spin') {
+      this.phase = 'idle';
+      this.timer = 0;
+    }
+    this.finishVisuals();
+    if (this.cube) this.cube.group.quaternion.identity();
+  }
+
+  /**
+   * Instant queue of a rapid 90° Rubik-style spin (cinematic).
+   * Completes via update(); commits lattice at end of spin.
+   */
+  forceQuickShift(duration = 0.32): void {
+    if (!this.cube) return;
+    // If already spinning, finish current spin first so lattice stays consistent
+    if (this.phase === 'spin') {
+      if (this.cinematicBurst) this.completeSpinCinematic();
+      else this.completeSpin();
+    }
+    this.pendingQuick = { duration: Math.max(0.12, duration) };
+    this.startQuickSpin(this.pendingQuick.duration);
+  }
+
+  private startQuickSpin(duration: number): void {
+    if (!this.cube) return;
+    this.pendingQuick = null;
+    this.phase = 'spin';
+    this.timer = 0;
+    this.phaseDuration = duration;
+
+    const axes: RotationAxis[] = ['x', 'y', 'z'];
+    this.axis = axes[Math.floor(Math.random() * 3)];
+    this.sign = Math.random() < 0.5 ? 1 : -1;
+
+    this.fromQuat.copy(this.cube.group.quaternion);
+    this._e.set(0, 0, 0);
+    const ang = (this.sign * Math.PI) / 2;
+    if (this.axis === 'x') this._e.x = ang;
+    else if (this.axis === 'y') this._e.y = ang;
+    else this._e.z = ang;
+    this.toQuat.setFromEuler(this._e);
+    this.toQuat.premultiply(this.fromQuat);
+
+    // Light ghost for cinematic readability
+    const he = this.cube.halfExtent * 2.15;
+    this.ghostShell.geometry.dispose();
+    this.ghostShell.geometry = new THREE.BoxGeometry(he, he, he);
+    this.ghostShell.visible = true;
+    (this.ghostShell.material as THREE.MeshBasicMaterial).opacity = 0.22;
+    this.axisHelper.visible = false;
+
+    bus.emit('cube-rotation-start', {
+      axis: this.axis,
+      sign: this.sign,
+      duration: this.phaseDuration,
+      cinematic: true,
+    });
+  }
+
   /** Call when blocks take damage to raise rotation chance. */
   notifyDamage(amount: number): void {
     this.damagePressure = Math.min(3, this.damagePressure + amount * 0.002);
@@ -132,7 +207,23 @@ export class CubeAnimator {
   }
 
   update(dt: number): void {
-    if (!this.cube || !this.enabled) return;
+    if (!this.cube) return;
+
+    // Cinematic path: only process forced quick spins
+    if (this.cinematicBurst) {
+      this.timer += dt;
+      if (this.phase === 'spin') {
+        this.updateSpin();
+        if (this.timer >= this.phaseDuration) {
+          this.completeSpinCinematic();
+        }
+      } else if (this.pendingQuick) {
+        this.startQuickSpin(this.pendingQuick.duration);
+      }
+      return;
+    }
+
+    if (!this.enabled) return;
     if (this.levelId < this.cfg.minLevel) return;
 
     this.damagePressure = Math.max(0, this.damagePressure - dt * 0.15);
@@ -161,7 +252,24 @@ export class CubeAnimator {
           this.completeSpin();
         }
         break;
+      case 'cinematic':
+        break;
     }
+  }
+
+  private completeSpinCinematic(): void {
+    if (!this.cube) return;
+    this.cube.group.quaternion.identity();
+    this.cube.commitLatticeRotation(this.axis, this.sign);
+    this.finishVisuals();
+    bus.emit('cube-rotation-complete', {
+      axis: this.axis,
+      sign: this.sign,
+      instant: false,
+      cinematic: true,
+    });
+    this.phase = 'cinematic';
+    this.timer = 0;
   }
 
   private enterCooldown(): void {
@@ -286,9 +394,10 @@ export class CubeAnimator {
   }
 
   reset(): void {
-    this.phase = 'idle';
+    this.phase = this.cinematicBurst ? 'cinematic' : 'idle';
     this.timer = 0;
     this.damagePressure = 0;
+    this.pendingQuick = null;
     this.finishVisuals();
     if (this.cube) this.cube.group.quaternion.identity();
   }
