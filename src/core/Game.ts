@@ -730,30 +730,53 @@ export class Game {
       this.mode = 'cinematic';
       this.hud.setVisible(false);
       this.reticle.setVisible(false);
-      this.ship.group.visible = true;
       this.hasSeenCinematic = true;
-      this.cinematic.start();
-      this.audio.playLevelClear(); // dramatic sting placeholder
+      this.cinematic.start({
+        cube: this.cube,
+        animator: this.cubeAnimator,
+        camera: this.cameraCtrl,
+        ship: this.ship,
+        particles: this.particles,
+      });
+      try {
+        this.audio.playUi();
+      } catch {
+        /* audio may be locked until gesture */
+      }
     } else {
       this.mode = 'intro';
       this.introTimer = 0;
       this.hud.setVisible(true);
       this.hud.setIntro(true, `${level.name} · ${level.size}³ lattice`);
       this.reticle.setVisible(false);
+      this.ship.group.visible = true;
       this.cameraCtrl.startCinematic(this.cameraCtrl.yaw);
     }
   }
 
   private finishIntro(): void {
-    this.mode = 'playing';
-    this.cameraCtrl.endCinematic();
+    // Hard-reset cube to playable origin
     this.cube.group.position.set(0, 0, 0);
     this.cube.group.rotation.set(0, 0, 0);
+    this.cube.group.quaternion.identity();
     this.cube.group.scale.setScalar(1);
+    this.cubeAnimator.endCinematicBurst();
+    this.cubeAnimator.reset();
+    this.cubeAnimator.setEnabled(true);
+
+    this.cameraCtrl.yaw = 0.85;
+    this.cameraCtrl.pitch = 0.28;
+    this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
+    this.cameraCtrl.endCinematic();
+
+    this.ship.group.visible = true;
+    this.ship.update(this.cameraCtrl, 0.05);
+
+    this.mode = 'playing';
     this.hud.setVisible(true);
     this.hud.setIntro(false);
     this.reticle.setVisible(true);
-    this.ship.group.visible = true;
+    this.cinematicRoot.classList.add('panel-hidden');
     this.refreshShopPrompt();
     this.toast('ENGAGE');
   }
@@ -917,15 +940,9 @@ export class Game {
       this.cube.group.rotation.y += dt * 0.08;
       this.cube.group.rotation.x = Math.sin(now * 0.35) * 0.12;
     } else if (this.mode === 'cinematic' && this.cinematic) {
+      // Cube block regen/flash only — transform owned by cinematic director
       this.cube.update(dt, now);
-      this.cubeAnimator.update(dt);
-      const done = this.cinematic.update(
-        dt,
-        this.cameraCtrl,
-        this.cube,
-        this.cubeAnimator,
-        this.ship
-      );
+      const done = this.cinematic.update(dt);
       if (done) this.finishIntro();
     } else if (this.mode === 'intro') {
       this.introTimer += dt;
