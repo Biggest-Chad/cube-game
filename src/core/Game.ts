@@ -45,6 +45,7 @@ import { LoadoutUI } from '../ui/LoadoutUI';
 import { SettingsUI } from '../ui/SettingsUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
 import { TutorialDirector } from '../ui/TutorialDirector';
+import { ScreenTransition } from '../ui/ScreenTransition';
 import { cheapestPurchasableWeapon, weaponUnlockCost } from '../data/weapons';
 
 type Mode =
@@ -99,6 +100,7 @@ export class Game {
   private settingsUI: SettingsUI;
   private adsUI: AdsOfferUI;
   private tutorial!: TutorialDirector;
+  private screenFx!: ScreenTransition;
   private overlay: HTMLElement;
   private cinematicRoot: HTMLElement;
   private orientLock: HTMLElement | null = null;
@@ -213,6 +215,7 @@ export class Game {
       stage1Done: false,
       loadoutDone: false,
     });
+    this.screenFx = new ScreenTransition(document.getElementById('app') ?? document.body);
 
     const els = this.hud.elements;
     this.input.bind(els.joyZone, els.stickEl, els.aimZone, els.aimStickEl);
@@ -891,7 +894,24 @@ export class Game {
     return true;
   }
 
+  /**
+   * Start a sector with cinematic letterbox fade (menu → level, level → level).
+   */
   private startLevel(id: number): void {
+    const go = () => this.startLevelImmediate(id);
+    if (this.screenFx.isActive) {
+      go();
+      return;
+    }
+    this.screenFx.play({
+      fadeOut: 0.55,
+      hold: 0.4,
+      fadeIn: 0.8,
+      onBlack: go,
+    });
+  }
+
+  private startLevelImmediate(id: number): void {
     const level = getLevel(id);
     this.currentLevelId = id;
     this.levelClearHandled = false;
@@ -901,6 +921,7 @@ export class Game {
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
+    this.settingsUI.hide();
     this.overlay.innerHTML = '';
 
     this.wipeCombatSession();
@@ -984,7 +1005,24 @@ export class Game {
     }
   }
 
+  /**
+   * Exit cinematic / short intro into gameplay through a black letterbox cut.
+   */
   private finishIntro(): void {
+    const go = () => this.finishIntroImmediate();
+    if (this.screenFx.isActive) {
+      go();
+      return;
+    }
+    this.screenFx.play({
+      fadeOut: 0.7,
+      hold: 0.45,
+      fadeIn: 1.0,
+      onBlack: go,
+    });
+  }
+
+  private finishIntroImmediate(): void {
     // Hard-reset cube to playable origin
     this.cube.group.position.set(0, 0, 0);
     this.cube.group.rotation.set(0, 0, 0);
@@ -1256,6 +1294,7 @@ export class Game {
     }
 
     this.ambient.update(dt);
+    this.screenFx.update(dt);
 
     if (this.mode === 'menu') {
       // Demo cube: smooth orbit presentation
@@ -1447,6 +1486,7 @@ export class Game {
     this.rings.dispose();
     this.reticle.dispose();
     this.cinematic?.dispose();
+    this.screenFx?.dispose();
     this.ambient.dispose();
     this.post.dispose();
     this.audio.dispose();

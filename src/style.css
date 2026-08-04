@@ -2585,3 +2585,41 @@ body.orientation-portrait #rotate-overlay {
   .menu-engage { min-height: 76px; }
   .menu-subrow { grid-template-columns: 1fr 1fr; }
 }
+
+/* —— Cinematic screen transition (letterbox + black fade) —— */
+.screen-transition {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  pointer-events: none;
+  overflow: hidden;
+}
+.screen-transition.active {
+  pointer-events: auto;
+}
+.st-veil {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  will-change: opacity;
+}
+.st-letterbox {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0%;
+  background: #000;
+  opacity: 0;
+  z-index: 2;
+  will-change: height, opacity;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.9);
+}
+.st-letterbox.st-top {
+  top: 0;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.12);
+}
+.st-letterbox.st-bot {
+  bottom: 0;
+  border-top: 1px solid rgba(255, 0, 170, 0.1);
+}
