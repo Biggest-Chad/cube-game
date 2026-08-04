@@ -136,6 +136,31 @@ export class CubeAnimator {
     }
   }
 
+  /** Cinematic helper: rapid multi-slice pressure during intro. */
+  beginCinematicBurst(): void {
+    this.setDemoMode(true);
+    this.damagePressure = 4;
+    this.enabled = true;
+    // Kick an immediate scramble if idle
+    if (this.phase === 'idle' || this.phase === 'cooldown') {
+      this.timer = this.phaseDuration;
+    }
+  }
+
+  endCinematicBurst(): void {
+    this.setDemoMode(false);
+    this.damagePressure = 0;
+  }
+
+  /** Force a quick scramble soon (intro beats). */
+  forceQuickShift(_intensity = 1): void {
+    this.damagePressure = Math.min(4.5, this.damagePressure + 2 * Math.max(0.5, _intensity));
+    if (this.phase === 'cooldown' || this.phase === 'idle') {
+      this.planConcurrentMoves();
+      this.beginTelegraph();
+    }
+  }
+
   notifyDamage(amount: number): void {
     this.damagePressure = Math.min(4.5, this.damagePressure + amount * 0.0045);
   }
