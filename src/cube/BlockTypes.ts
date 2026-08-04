@@ -10,6 +10,8 @@ export enum BlockType {
   Core = 6,
   /** Ultra-armor wall — idle / drones nearly useless without armor-pierce. */
   Siege = 7,
+  /** Surface defense turret — lattice block that fires at the player. */
+  Turret = 8,
 }
 
 /** Armor class for idle walls, drone effectiveness, and future weapon pierce. */
@@ -96,6 +98,16 @@ export const BLOCK_DEFS: Record<number, BlockTypeDef> = {
     fragmentMul: 1.8,
     priority: 4,
     armorClass: 'siege',
+  },
+  [BlockType.Turret]: {
+    type: BlockType.Turret,
+    name: 'Turret Node',
+    hpMul: 2.4,
+    color: 0xff3355,
+    emissiveIntensity: 0.7,
+    fragmentMul: 2.2,
+    priority: 7,
+    armorClass: 'light',
   },
 };
 

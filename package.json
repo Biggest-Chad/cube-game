@@ -8,9 +8,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "cap:sync": "npm run build && npx cap sync android",
-    "apk:debug": "npm run cap:sync && cd android && .\\gradlew.bat assembleDebug",
-    "apk:release": "npm run cap:sync && cd android && .\\gradlew.bat assembleRelease"
+    "android:sync": "npm run build && npx cap sync android",
+    "android:apk": "npm run android:sync && cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",

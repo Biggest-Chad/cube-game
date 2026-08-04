@@ -120,18 +120,26 @@ export function generateCube(level: LevelDefinition): GeneratedCube {
           }
         } else {
           type = pickType(rng, level);
+          // Surface defense nodes (lattice turrets) — more common mid/late game
+          if (shell && level.id >= 5) {
+            const tChance =
+              level.id <= 7 ? 0.04 : level.id <= 14 ? 0.07 : level.id <= 22 ? 0.1 : 0.13;
+            if (rng() < tChance) type = BlockType.Turret;
+          }
           const defMul =
             type === BlockType.Siege
               ? 3.5
-              : type === BlockType.Reinforced
-                ? 2.2
-                : type === BlockType.Regenerating
-                  ? 1.3
-                  : type === BlockType.DataNode
-                    ? 1.1
-                    : type === BlockType.Explosive
-                      ? 0.9
-                      : 1;
+              : type === BlockType.Turret
+                ? 2.4
+                : type === BlockType.Reinforced
+                  ? 2.2
+                  : type === BlockType.Regenerating
+                    ? 1.3
+                    : type === BlockType.DataNode
+                      ? 1.1
+                      : type === BlockType.Explosive
+                        ? 0.9
+                        : 1;
           hp = Math.max(1, Math.round(level.avgHP * defMul * (0.85 + rng() * 0.35)));
         }
 

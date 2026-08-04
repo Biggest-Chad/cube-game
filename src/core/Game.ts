@@ -24,6 +24,8 @@ import { IdleSimulator } from '../progression/IdleSimulator';
 import { ParticlePool } from '../vfx/ParticlePool';
 import { ShatterSystem } from '../vfx/ShatterSystem';
 import { ImpactRings } from '../vfx/ImpactRings';
+import { AimReticle } from '../vfx/AimReticle';
+import { CinematicIntro } from '../vfx/CinematicIntro';
 import { PostProcessing } from '../vfx/PostProcessing';
 import { AmbientEnvironment } from '../world/AmbientEnvironment';
 import { AudioEngine } from '../audio/AudioEngine';
@@ -35,8 +37,6 @@ import { ShopUI } from '../ui/ShopUI';
 import { LevelSelectUI } from '../ui/LevelSelectUI';
 import { LoadoutUI } from '../ui/LoadoutUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
-import { IntroCinematic } from '../cinematic/IntroCinematic';
-import { tryImmersiveFullscreen, tryLockLandscape } from '../platform/display';
 
 type Mode =
   | 'menu'
@@ -74,8 +74,12 @@ export class Game {
   private particles: ParticlePool;
   private shatter: ShatterSystem;
   private rings: ImpactRings;
+  private reticle = new AimReticle();
+  private cinematic: CinematicIntro | null = null;
   private audio = new AudioEngine();
   private ads = new AdService(new DummyAdProvider());
+  private readonly _muzzle = new THREE.Vector3();
+  private readonly _aimDir = new THREE.Vector3();
 
   private hud: HUD;
   private menu: MenuUI;
@@ -84,6 +88,8 @@ export class Game {
   private loadoutUI: LoadoutUI;
   private adsUI: AdsOfferUI;
   private overlay: HTMLElement;
+  private cinematicRoot: HTMLElement;
+  private orientLock: HTMLElement | null = null;
 
   private mode: Mode = 'menu';
   private currentLevelId = 1;
@@ -97,12 +103,12 @@ export class Game {
   private introDuration = ORBIT.introDuration;
   private shopHintShown = false;
   private pendingIdle = 0;
+  private menuDemoActive = false;
+  private forceCinematicNext = false;
+  private hasSeenCinematic = false;
   private saveAccum = 0;
   private clearRewardMul = 1;
   private pendingReturnMode: Mode = 'playing';
-  private introCinematic = new IntroCinematic();
-  /** After replay-from-sectors, return to level select instead of combat. */
-  private cinematicPreview = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -125,7 +131,6 @@ export class Game {
     this.ambient.applyToScene(this.scene);
     this.scene.add(this.cube.group);
     this.scene.add(this.cubeAnimator.group);
-    this.scene.add(this.introCinematic.group);
     this.scene.add(this.cubeDefense.group);
     this.scene.add(this.ship.group);
     this.scene.add(this.weapon.group);
@@ -138,6 +143,11 @@ export class Game {
     this.rings = new ImpactRings(28);
     this.scene.add(this.particles.points);
     this.scene.add(this.rings.group);
+    this.scene.add(this.reticle.group);
+    this.cinematicRoot = document.getElementById('cinematic-root')!;
+    this.cinematic = new CinematicIntro(this.cinematicRoot);
+    this.scene.add(this.cinematic.group);
+    this.orientLock = document.getElementById('orientation-lock');
 
     const amb = new THREE.AmbientLight(0x1a2830, 0.75);
     this.scene.add(amb);
@@ -168,7 +178,7 @@ export class Game {
     this.overlay = document.getElementById('overlay-root')!;
 
     const els = this.hud.elements;
-    this.input.bind(els.joyZone, els.stickEl, els.fireBtn);
+    this.input.bind(els.joyZone, els.stickEl, els.aimZone, els.aimStickEl);
     this.input.autoFire = true;
 
     this.wireUI();
@@ -176,11 +186,29 @@ export class Game {
     this.loadProgress();
 
     window.addEventListener('resize', this.onResize);
+    window.addEventListener('orientationchange', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibility);
     window.addEventListener('beforeunload', () => this.persist());
+    this.lockLandscape();
 
     this.showMenu();
     this.loop();
+  }
+
+  private lockLandscape(): void {
+    try {
+      const o = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+      void o.lock?.('landscape');
+    } catch {
+      /* browser may ignore */
+    }
+    this.updateOrientationGate();
+  }
+
+  private updateOrientationGate(): void {
+    if (!this.orientLock) return;
+    const portrait = window.matchMedia('(orientation: portrait)').matches;
+    this.orientLock.classList.toggle('panel-hidden', !portrait);
   }
 
   private registerSessionCleaners(): void {
@@ -201,15 +229,15 @@ export class Game {
   private wireUI(): void {
     this.menu.onPlay = () => {
       void this.audio.resume();
-      void tryLockLandscape();
-      void tryImmersiveFullscreen();
       this.startLevel(this.currentLevelId);
     };
     this.menu.onTech = () => this.openTech();
     this.menu.onLevels = () => this.openLevels();
+    this.menu.onLoadout = () => this.openLoadout();
     this.menu.onReset = () => {
       this.save.reset();
       this.shopHintShown = false;
+      this.hasSeenCinematic = false;
       this.loadProgress();
       this.showMenu();
     };
@@ -217,6 +245,7 @@ export class Game {
     const els = this.hud.elements;
     els.btnTech.addEventListener('click', () => this.openTech());
     els.btnLevels.addEventListener('click', () => this.openLevels());
+    els.btnLoadout.addEventListener('click', () => this.openLoadout());
     els.btnMenu.addEventListener('click', () => {
       this.persist();
       this.showMenu();
@@ -249,23 +278,20 @@ export class Game {
 
     this.levelUI.onClose = () => {
       this.levelUI.hide();
-      this.mode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
+      this.mode = this.cube.aliveBlocks > 0 && !this.menuDemoActive ? 'playing' : 'menu';
       if (this.mode === 'playing') this.hud.setVisible(true);
       else this.showMenu();
     };
     this.levelUI.onSelect = (id) => {
       this.levelUI.hide();
       void this.audio.resume();
-      void tryLockLandscape();
-      void tryImmersiveFullscreen();
       this.startLevel(id);
     };
-    this.levelUI.onReplayCinematic = () => {
+    this.levelUI.onReplayIntro = () => {
       this.levelUI.hide();
       void this.audio.resume();
-      void tryLockLandscape();
-      void tryImmersiveFullscreen();
-      this.playIntroCinematic({ previewOnly: true });
+      this.forceCinematicNext = true;
+      this.startLevel(1);
     };
 
     this.loadoutUI.onClose = () => {
@@ -320,7 +346,8 @@ export class Game {
           crit?: boolean;
         }) => {
           const len = Math.hypot(r.x, r.y, r.z) || 1;
-          this.cubeAnimator.notifyDamage(r.destroyed ? 12 : 3);
+          // Damage pressure speeds up slice scrambles (reactive cube)
+          this.cubeAnimator.notifyDamage(r.destroyed ? 18 : 5);
 
           if (r.destroyed) {
             this.shatter.shatter(r.x, r.y, r.z, r.type);
@@ -349,13 +376,16 @@ export class Game {
         this.persist();
         this.refreshShopPrompt();
       }),
-      bus.on('cube-rotation-start', (payload?: { cinematic?: boolean }) => {
-        this.cameraCtrl.shake(payload?.cinematic ? 0.06 : 0.12);
-        if (!payload?.cinematic && this.mode === 'playing') {
-          this.toast('CUBE REALIGNING');
+      bus.on('cube-rotation-start', (p: { concurrent?: number }) => {
+        if (this.mode === 'playing') {
+          this.cameraCtrl.shake(0.1);
+          if ((p?.concurrent ?? 1) > 1) this.toast('MULTI-SLICE REALIGN');
         }
       }),
-      bus.on('cube-rotation-end', () => this.cameraCtrl.shake(0.18))
+      bus.on('cube-rotation-complete', () => this.cameraCtrl.shake(0.08)),
+      bus.on('camera-shake-request', (p: { amount?: number }) => {
+        this.cameraCtrl.shake(p?.amount ?? 0.1);
+      })
     );
   }
 
@@ -495,6 +525,7 @@ export class Game {
     });
 
     this.shopHintShown = this.tech.owned.size > 0;
+    this.hasSeenCinematic = data.highestLevel > 1;
     this.drones.syncCount(this.tech.stats);
 
     const offlineSec = this.idle.computeOffline(data.lastSaveTime, this.tech.stats);
@@ -535,21 +566,49 @@ export class Game {
   }
 
   private showMenu(): void {
-    if (this.introCinematic.isActive) this.introCinematic.abort();
     this.mode = 'menu';
-    this.cinematicPreview = false;
     this.hud.setVisible(false);
     this.hud.setIntro(false);
-    this.hud.setCinematicChrome(false);
-    this.ship.group.visible = true;
+    this.reticle.setVisible(false);
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.adsUI.hide?.();
+    this.cinematicRoot?.classList.add('panel-hidden');
     this.overlay.innerHTML = '';
     this.cameraCtrl.endCinematic();
-    this.cube.group.position.set(0, 0, 0);
     this.menu.show();
+    this.startMenuDemo();
+  }
+
+  /** Passive demo cube on main menu — rubik slices + slow orbit. */
+  private startMenuDemo(): void {
+    this.wipeCombatSession();
+    this.menuDemoActive = true;
+    const level = getLevel(Math.min(5, Math.max(1, this.save.data.highestLevel)));
+    this.cube.loadLevel(level);
+    this.cube.group.position.set(0, 0.4, 0);
+    this.cube.group.rotation.set(0.15, 0, 0.08);
+    this.cube.group.scale.setScalar(1);
+    this.cubeAnimator.setLevel(level.id);
+    this.cubeAnimator.setDemoMode(true);
+    this.cubeAnimator.setEnabled(true);
+    this.cubeDefense.reset();
+    this.ship.group.visible = false;
+    this.hardpoints.group.visible = false;
+    this.cameraCtrl.setOrbitLimits(this.cube.halfExtent * 1.15);
+    this.cameraCtrl.yaw = 0.95;
+    this.cameraCtrl.pitch = 0.32;
+  }
+
+  private stopMenuDemo(): void {
+    this.menuDemoActive = false;
+    this.cubeAnimator.setDemoMode(false);
+    this.cube.group.position.set(0, 0, 0);
+    this.cube.group.rotation.set(0, 0, 0);
+    this.cube.group.scale.setScalar(1);
+    this.ship.group.visible = true;
+    this.hardpoints.group.visible = true;
   }
 
   private openTech(): void {
@@ -611,17 +670,17 @@ export class Game {
     this.currentLevelId = id;
     this.levelClearHandled = false;
     this.clearRewardMul = 1;
-    this.cinematicPreview = false;
+    this.stopMenuDemo();
     this.menu.hide();
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.overlay.innerHTML = '';
 
-    // Session hygiene — clear projectiles/particles/defense before new cube
     this.wipeCombatSession();
 
     this.cube.loadLevel(level);
+    this.cubeAnimator.setDemoMode(false);
     this.cubeAnimator.setLevel(id);
     this.cubeDefense.startLevel(id);
     this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
@@ -660,89 +719,40 @@ export class Game {
       this.cube.totalBlocks
     );
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+    this.refreshShopPrompt();
     this.persist();
 
-    // Level 1: full action cinematic. Other levels: short orbit intro.
-    if (id === 1) {
-      this.playIntroCinematic({ previewOnly: false });
-    } else {
-      this.beginShortIntro(level.name, level.size);
-    }
-  }
+    const playCinematic =
+      (id === 1 && !this.hasSeenCinematic) || this.forceCinematicNext;
+    this.forceCinematicNext = false;
 
-  /**
-   * Load sector 1 cube and run the ~10s portal/rise cinematic.
-   * previewOnly: used by sector-select replay button (returns to sectors).
-   */
-  private playIntroCinematic(opts: { previewOnly: boolean }): void {
-    const level = getLevel(1);
-    this.cinematicPreview = opts.previewOnly;
-    this.menu.hide();
-    this.shopUI.hide();
-    this.levelUI.hide();
-    this.loadoutUI.hide();
-    this.overlay.innerHTML = '';
-
-    if (opts.previewOnly) {
-      this.wipeCombatSession();
-      this.currentLevelId = 1;
-      this.cube.loadLevel(level);
-      this.cubeAnimator.setLevel(1);
-      this.cubeDefense.startLevel(1);
-      this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
-    }
-
-    this.mode = 'cinematic';
-    this.introTimer = 0;
-    this.hud.setVisible(true);
-    this.hud.setIntro(false);
-    this.hud.setCinematicChrome(true);
-    this.ship.group.visible = false;
-
-    this.introCinematic.start({
-      cube: this.cube,
-      animator: this.cubeAnimator,
-      camera: this.cameraCtrl,
-      particles: this.particles,
-      titleHost: this.overlay,
-      previewOnly: opts.previewOnly,
-      onComplete: () => this.onCinematicComplete(),
-    });
-  }
-
-  private onCinematicComplete(): void {
-    this.ship.group.visible = true;
-    this.hud.setCinematicChrome(false);
-    this.cube.group.position.set(0, 0, 0);
-
-    if (this.cinematicPreview) {
-      this.cinematicPreview = false;
-      this.cameraCtrl.endCinematic();
+    if (playCinematic && this.cinematic) {
+      this.mode = 'cinematic';
       this.hud.setVisible(false);
-      this.openLevels();
-      return;
+      this.reticle.setVisible(false);
+      this.ship.group.visible = true;
+      this.hasSeenCinematic = true;
+      this.cinematic.start();
+      this.audio.playLevelClear(); // dramatic sting placeholder
+    } else {
+      this.mode = 'intro';
+      this.introTimer = 0;
+      this.hud.setVisible(true);
+      this.hud.setIntro(true, `${level.name} · ${level.size}³ lattice`);
+      this.reticle.setVisible(false);
+      this.cameraCtrl.startCinematic(this.cameraCtrl.yaw);
     }
-
-    this.finishIntro();
-  }
-
-  private beginShortIntro(name: string, size: number): void {
-    this.mode = 'intro';
-    this.introTimer = 0;
-    this.introDuration = ORBIT.introDuration;
-    this.hud.setVisible(true);
-    this.hud.setCinematicChrome(false);
-    this.hud.setIntro(true, `${name} · ${size}³ lattice`);
-    this.ship.group.visible = true;
-    this.cameraCtrl.startCinematic(this.cameraCtrl.yaw);
-    this.refreshShopPrompt();
   }
 
   private finishIntro(): void {
     this.mode = 'playing';
     this.cameraCtrl.endCinematic();
+    this.cube.group.position.set(0, 0, 0);
+    this.cube.group.rotation.set(0, 0, 0);
+    this.cube.group.scale.setScalar(1);
+    this.hud.setVisible(true);
     this.hud.setIntro(false);
-    this.hud.setCinematicChrome(false);
+    this.reticle.setVisible(true);
     this.ship.group.visible = true;
     this.refreshShopPrompt();
     this.toast('ENGAGE');
@@ -854,6 +864,7 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.cameraCtrl.resize(w / h);
     this.post.setSize(w, h);
+    this.updateOrientationGate();
   };
 
   private onVisibility = (): void => {
@@ -877,7 +888,7 @@ export class Game {
 
     if (
       this.time.fps < PERF.lowFpsThreshold &&
-      (this.mode === 'playing' || this.mode === 'intro' || this.mode === 'cinematic')
+      (this.mode === 'playing' || this.mode === 'intro')
     ) {
       this.lowFpsTimer += dt;
       if (this.lowFpsTimer > PERF.lowFpsSeconds && this.highQuality) {
@@ -894,19 +905,34 @@ export class Game {
     this.ambient.update(dt);
 
     if (this.mode === 'menu') {
-      this.cameraCtrl.yaw += dt * 0.08;
-      this.cameraCtrl.pitch = 0.28 + Math.sin(now * 0.15) * 0.06;
+      // Demo cube: slow orbit + continuous slice scrambles
+      this.cameraCtrl.yaw += dt * 0.12;
+      this.cameraCtrl.pitch = 0.32 + Math.sin(now * 0.2) * 0.08;
       this.cameraCtrl.update(dt);
-      this.ship.update(this.cameraCtrl, dt);
-    } else if (this.mode === 'cinematic') {
-      this.introCinematic.update(dt);
-      this.cameraCtrl.updateScriptedCinematic(dt);
-      // Ship hidden; skip ship visual update lag
+      this.cube.update(dt, now);
+      this.cubeAnimator.update(dt);
+      // Gentle whole-cube pulse
+      const pulse = 1 + Math.sin(now * 1.4) * 0.02;
+      this.cube.group.scale.setScalar(pulse);
+      this.cube.group.rotation.y += dt * 0.08;
+      this.cube.group.rotation.x = Math.sin(now * 0.35) * 0.12;
+    } else if (this.mode === 'cinematic' && this.cinematic) {
+      this.cube.update(dt, now);
+      this.cubeAnimator.update(dt);
+      const done = this.cinematic.update(
+        dt,
+        this.cameraCtrl,
+        this.cube,
+        this.cubeAnimator,
+        this.ship
+      );
+      if (done) this.finishIntro();
     } else if (this.mode === 'intro') {
       this.introTimer += dt;
       const progress = this.introTimer / this.introDuration;
       this.cameraCtrl.updateIntro(progress, dt);
       this.ship.update(this.cameraCtrl, dt);
+      this.cubeAnimator.update(dt);
       if (Math.random() < dt * 6) {
         const a = Math.random() * Math.PI * 2;
         const r = this.cube.halfExtent * (1.2 + Math.random());
@@ -930,7 +956,7 @@ export class Game {
       );
       if (progress >= 1) this.finishIntro();
     } else if (this.mode === 'playing' || this.mode === 'levelclear') {
-      this.input.update();
+      this.input.update(dt);
       const zoom = this.input.consumeZoom();
       if (this.mode === 'playing') {
         this.cameraCtrl.applyInput(
@@ -947,14 +973,25 @@ export class Game {
       if (this.mode === 'playing') {
         this.vitals.update(dt);
 
-        // Combat origin = ship visual pos (tracks orbit with lag)
         this.weapon.update(
           dt,
           this.input.isFiring,
-          this.ship.position,
+          this.ship,
           this.cube,
           this.tech.stats,
-          now
+          now,
+          this.input.aimX,
+          this.input.aimY
+        );
+
+        this.weapon.getMuzzle(this._muzzle);
+        this.weapon.getAimDirection(this._aimDir);
+        this.reticle.update(
+          dt,
+          this._muzzle,
+          this._aimDir,
+          this.cube,
+          this.cameraCtrl.camera
         );
 
         this.hardpoints.update(
@@ -999,9 +1036,14 @@ export class Game {
       this.mode === 'loadout' ||
       this.mode === 'dead'
     ) {
-      this.cameraCtrl.yaw += dt * 0.06;
+      this.cameraCtrl.yaw += dt * 0.05;
       this.cameraCtrl.update(dt);
-      this.ship.update(this.cameraCtrl, dt);
+      if (this.menuDemoActive) {
+        this.cube.update(dt, now);
+        this.cubeAnimator.update(dt);
+      } else {
+        this.ship.update(this.cameraCtrl, dt);
+      }
     }
 
     this.particles.update(dt);
@@ -1015,7 +1057,6 @@ export class Game {
     for (const u of this.unsubs) u();
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVisibility);
-    this.introCinematic.dispose();
     this.cube.dispose();
     this.cubeAnimator.dispose();
     this.cubeDefense.dispose();
@@ -1025,6 +1066,8 @@ export class Game {
     this.drones.dispose();
     this.particles.dispose();
     this.rings.dispose();
+    this.reticle.dispose();
+    this.cinematic?.dispose();
     this.ambient.dispose();
     this.post.dispose();
     this.audio.dispose();

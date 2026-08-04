@@ -1,9 +1,10 @@
 /**
- * Staged cube self-defense: shields, turrets, enemy drones.
- * Level-gated schedule from plan P8.
+ * Cube self-defense: lattice-mounted turrets (destructible blocks) + enemy drones + shields.
+ * Turrets are part of the cube lattice and move with Rubik slice scrambles.
  */
 import * as THREE from 'three';
 import type { CubeManager } from './CubeManager';
+import { BlockType } from './BlockTypes';
 import { Turret } from './Turret';
 import { EnemyDrone } from './EnemyDrone';
 import { bus } from '../core/EventBus';
@@ -12,29 +13,29 @@ import { COLORS } from '../data/constants';
 export interface DefenseSchedule {
   coreShield: boolean;
   faceShields: boolean;
-  turretCount: number;
+  /** Extra free-floating turrets only if lattice yield is low */
+  floatingTurretFallback: number;
   enemyDroneCount: number;
   layeredShields: boolean;
   elite: boolean;
 }
 
-/** Tunable introduction schedule by level id. */
 export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
-  if (levelId <= 4) {
+  if (levelId <= 3) {
     return {
       coreShield: false,
       faceShields: false,
-      turretCount: 0,
+      floatingTurretFallback: 0,
       enemyDroneCount: 0,
       layeredShields: false,
       elite: false,
     };
   }
-  if (levelId <= 7) {
+  if (levelId <= 6) {
     return {
       coreShield: true,
       faceShields: false,
-      turretCount: 0,
+      floatingTurretFallback: 1,
       enemyDroneCount: 0,
       layeredShields: false,
       elite: false,
@@ -44,7 +45,7 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: false,
-      turretCount: 1,
+      floatingTurretFallback: 2,
       enemyDroneCount: 0,
       layeredShields: false,
       elite: false,
@@ -54,8 +55,8 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: true,
-      turretCount: 2,
-      enemyDroneCount: 0,
+      floatingTurretFallback: 2,
+      enemyDroneCount: 1,
       layeredShields: false,
       elite: false,
     };
@@ -64,8 +65,8 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: true,
-      turretCount: 2,
-      enemyDroneCount: 2 + Math.min(2, levelId - 15),
+      floatingTurretFallback: 3,
+      enemyDroneCount: 3,
       layeredShields: false,
       elite: false,
     };
@@ -74,8 +75,8 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: true,
-      turretCount: 3,
-      enemyDroneCount: 4,
+      floatingTurretFallback: 3,
+      enemyDroneCount: 5,
       layeredShields: true,
       elite: false,
     };
@@ -83,8 +84,8 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
   return {
     coreShield: true,
     faceShields: true,
-    turretCount: 4,
-    enemyDroneCount: 6,
+    floatingTurretFallback: 4,
+    enemyDroneCount: 7,
     layeredShields: true,
     elite: true,
   };
@@ -93,7 +94,6 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
 export interface ShieldPool {
   current: number;
   max: number;
-  /** Seconds since last hit */
   regenDelay: number;
   regenPerSec: number;
   active: boolean;
@@ -105,12 +105,18 @@ export interface CubeDefenseHooks {
   getPlayerDronePositions?: () => THREE.Vector3[];
 }
 
+interface LatticeTurretLink {
+  turret: Turret;
+  instanceId: number;
+  floating: boolean;
+}
+
 export class CubeDefense {
   readonly group = new THREE.Group();
   private cube: CubeManager | null = null;
   private levelId = 1;
   private schedule: DefenseSchedule = defenseScheduleForLevel(1);
-  private turrets: Turret[] = [];
+  private links: LatticeTurretLink[] = [];
   private enemyDrones: EnemyDrone[] = [];
   private coreShield: ShieldPool = {
     current: 0,
@@ -125,6 +131,7 @@ export class CubeDefense {
   private projectileRoot = new THREE.Group();
   private hooks: CubeDefenseHooks | null = null;
   private _idSeq = 0;
+  private _pos = new THREE.Vector3();
 
   constructor() {
     this.group.add(this.projectileRoot);
@@ -178,7 +185,6 @@ export class CubeDefense {
         new THREE.Vector3(0, 0, he),
         new THREE.Vector3(0, 0, -he),
       ];
-      // Use 2–4 faces mid, all late
       const use = this.schedule.elite ? faces : faces.slice(0, 2 + (levelId % 3));
       for (const f of use) {
         const max = 40 + levelId * 8;
@@ -207,30 +213,32 @@ export class CubeDefense {
       }
     }
 
-    // Turrets on surface
-    for (let i = 0; i < this.schedule.turretCount; i++) {
-      const ang = (i / Math.max(1, this.schedule.turretCount)) * Math.PI * 2 + 0.4;
-      const elev = (i % 2 === 0 ? 0.4 : -0.35) * he;
+    // Lattice turret blocks (primary — destructible & scramble-safe)
+    const turretIds = this.cube.collectIdsOfType(BlockType.Turret);
+    for (const id of turretIds) {
+      this.spawnTurretOnInstance(id, levelId, false);
+    }
+
+    // Fallback floaters only if lattice has very few turrets
+    const need =
+      Math.max(0, this.schedule.floatingTurretFallback - turretIds.length);
+    for (let i = 0; i < need; i++) {
+      const ang = (i / Math.max(1, need)) * Math.PI * 2 + 0.3;
+      const elev = (i % 2 === 0 ? 0.35 : -0.3) * he;
       const pos = new THREE.Vector3(
-        Math.cos(ang) * he * 1.05,
+        Math.cos(ang) * he * 1.08,
         elev,
-        Math.sin(ang) * he * 1.05
+        Math.sin(ang) * he * 1.08
       );
-      const t = new Turret(`turret_${this._idSeq++}`, pos, {
-        hp: 60 + levelId * 10,
-        damage: 10 + levelId * 0.8,
-        fireRate: this.schedule.elite ? 0.65 : 0.4,
-        projectileSpeed: 16 + levelId * 0.3,
-        color: this.schedule.elite ? 0xff66ff : 0xff4488,
-      });
-      this.turrets.push(t);
-      this.group.add(t.group);
-      for (const m of t.getProjectileMeshes()) {
-        this.projectileRoot.add(m);
+      // Snap to nearest block if possible so it "sits" on lattice
+      const near = this.cube.findNearest(pos, he * 0.5);
+      if (near) {
+        this.spawnTurretOnInstance(near.instanceId, levelId, true);
+      } else {
+        this.spawnFloatingTurret(pos, levelId);
       }
     }
 
-    // Enemy drones
     for (let i = 0; i < this.schedule.enemyDroneCount; i++) {
       const d = new EnemyDrone(`ed_${this._idSeq++}`, i, he, {
         hp: 35 + levelId * 4,
@@ -242,42 +250,83 @@ export class CubeDefense {
       this.group.add(d.group);
     }
 
-    bus.emit('cube-defense-started', { levelId, schedule: this.schedule });
+    bus.emit('cube-defense-started', {
+      levelId,
+      latticeTurrets: turretIds.length,
+      totalTurrets: this.links.length,
+    });
+  }
+
+  private spawnTurretOnInstance(instanceId: number, levelId: number, floating: boolean): void {
+    if (!this.cube) return;
+    this.cube.getInstanceWorldPos(instanceId, this._pos);
+    // Offset slightly outward so model sits on surface
+    this._pos.multiplyScalar(1.08);
+    const t = new Turret(`turret_${this._idSeq++}`, this._pos.clone(), {
+      hp: 99999, // HP is the lattice block; visual dies with block
+      damage: 9 + levelId * 0.85,
+      fireRate: this.schedule.elite ? 0.7 : 0.45,
+      projectileSpeed: 16 + levelId * 0.35,
+      color: this.schedule.elite ? 0xff66ff : 0xff3355,
+    });
+    // Shrink model to block scale
+    t.group.scale.setScalar(0.55);
+    this.links.push({ turret: t, instanceId, floating });
+    this.group.add(t.group);
+    for (const m of t.getProjectileMeshes()) this.projectileRoot.add(m);
+  }
+
+  private spawnFloatingTurret(pos: THREE.Vector3, levelId: number): void {
+    const t = new Turret(`turret_${this._idSeq++}`, pos, {
+      hp: 70 + levelId * 12,
+      damage: 10 + levelId * 0.8,
+      fireRate: 0.4,
+      projectileSpeed: 16,
+      color: 0xff4488,
+    });
+    this.links.push({ turret: t, instanceId: -1, floating: true });
+    this.group.add(t.group);
+    for (const m of t.getProjectileMeshes()) this.projectileRoot.add(m);
   }
 
   getSchedule(): DefenseSchedule {
     return this.schedule;
   }
 
-  /** Live enemy unit refs for player fighters / flak. */
   getEnemyUnitRefs(): Array<{ id: string; position: { x: number; y: number; z: number }; hp: number }> {
     return this.enemyDrones.filter((d) => d.alive).map((d) => d.toUnitRef());
   }
 
   getEnemyTargetsForWeapons(): Array<{ position: THREE.Vector3; radius: number; id: string }> {
-    return this.enemyDrones
-      .filter((d) => d.alive)
-      .map((d) => ({
-        position: d.position.clone(),
-        radius: 0.6,
-        id: d.id,
-      }));
+    const out: Array<{ position: THREE.Vector3; radius: number; id: string }> = [];
+    for (const d of this.enemyDrones) {
+      if (d.alive) out.push({ position: d.position.clone(), radius: 0.6, id: d.id });
+    }
+    // Lattice turrets: target via blocks; floating still targetable as entities
+    for (const link of this.links) {
+      if (link.floating && link.turret.alive) {
+        out.push({
+          position: link.turret.group.position.clone(),
+          radius: 0.5,
+          id: link.turret.id,
+        });
+      }
+    }
+    return out;
   }
 
   damageEnemy(id: string, amount: number): boolean {
     for (const d of this.enemyDrones) {
       if (d.id === id && d.alive) return d.applyDamage(amount);
     }
-    for (const t of this.turrets) {
-      if (t.id === id && t.alive) return t.applyDamage(amount);
+    for (const link of this.links) {
+      if (link.turret.id === id && link.turret.alive && link.floating) {
+        return link.turret.applyDamage(amount);
+      }
     }
     return false;
   }
 
-  /**
-   * Absorb damage aimed at cube center / core region.
-   * Returns remaining damage that should hit blocks.
-   */
   absorbCoreDamage(raw: number): number {
     if (!this.coreShield.active || this.coreShield.current <= 0) return raw;
     const absorb = Math.min(this.coreShield.current, raw);
@@ -293,7 +342,6 @@ export class CubeDefense {
   }
 
   update(dt: number): void {
-    // Shield regen
     this.tickShield(this.coreShield, this.coreShieldMesh, dt);
     for (let i = 0; i < this.faceShields.length; i++) {
       this.tickShield(this.faceShields[i], this.faceShieldMeshes[i] ?? null, dt);
@@ -303,8 +351,16 @@ export class CubeDefense {
     const playerPos = this.hooks.getPlayerPosition();
     const dronePos = this.hooks.getPlayerDronePositions?.() ?? [];
 
-    for (const t of this.turrets) {
-      t.update(dt, playerPos, (dmg, _pt) => {
+    // Re-sync lattice turrets by position (instance ids shift on block remove)
+    this.syncLatticeTurrets();
+
+    for (const link of this.links) {
+      if (!link.turret.alive) continue;
+      if (!link.floating && link.instanceId >= 0) {
+        this.cube.getInstanceWorldPos(link.instanceId, this._pos);
+        link.turret.group.position.copy(this._pos).multiplyScalar(1.12);
+      }
+      link.turret.update(dt, playerPos, (dmg) => {
         this.hooks?.onPlayerDamage(dmg, 'turret');
       });
     }
@@ -320,7 +376,6 @@ export class CubeDefense {
       );
     }
 
-    // Core shield pulse
     if (this.coreShieldMesh && this.coreShield.active) {
       const mat = this.coreShieldMesh.material as THREE.MeshBasicMaterial;
       const ratio = this.coreShield.current / Math.max(1, this.coreShield.max);
@@ -349,18 +404,59 @@ export class CubeDefense {
 
   private flashShield(mesh: THREE.Mesh | null): void {
     if (!mesh) return;
-    const mat = mesh.material as THREE.MeshBasicMaterial;
-    mat.opacity = 0.55;
+    (mesh.material as THREE.MeshBasicMaterial).opacity = 0.55;
   }
 
-  /** Session cleaner entry. */
-  reset(): void {
-    for (const t of this.turrets) {
-      t.reset();
-      t.dispose();
-      this.group.remove(t.group);
+  /**
+   * Match non-floating turret models to current Turret block instances.
+   * Destroys models whose lattice block was destroyed.
+   */
+  private syncLatticeTurrets(): void {
+    if (!this.cube) return;
+    const ids = this.cube.collectIdsOfType(BlockType.Turret);
+    const used = new Set<number>();
+
+    for (const link of this.links) {
+      if (link.floating || !link.turret.alive) continue;
+      // Find nearest turret block to current model position
+      let bestId = -1;
+      let bestD = 2.5;
+      for (const id of ids) {
+        if (used.has(id)) continue;
+        this.cube.getInstanceWorldPos(id, this._pos);
+        const d = link.turret.group.position.distanceTo(
+          this._pos.clone().multiplyScalar(1.12)
+        );
+        if (d < bestD) {
+          bestD = d;
+          bestId = id;
+        }
+      }
+      if (bestId < 0) {
+        link.turret.applyDamage(999999);
+      } else {
+        used.add(bestId);
+        link.instanceId = bestId;
+      }
     }
-    this.turrets = [];
+
+    // Spawn missing models for new turret blocks (e.g. after load)
+    for (const id of ids) {
+      if (used.has(id)) continue;
+      const already = this.links.some(
+        (l) => !l.floating && l.turret.alive && l.instanceId === id
+      );
+      if (!already) this.spawnTurretOnInstance(id, this.levelId, false);
+    }
+  }
+
+  reset(): void {
+    for (const link of this.links) {
+      link.turret.reset();
+      link.turret.dispose();
+      this.group.remove(link.turret.group);
+    }
+    this.links = [];
     for (const d of this.enemyDrones) {
       d.reset();
       d.dispose();

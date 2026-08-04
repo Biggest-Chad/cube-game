@@ -1,6 +1,7 @@
 /**
- * Rubik-style whole-cube 90° rotations with telegraph ≥0.6s.
- * Emits bus events for audio / camera shake.
+ * Rubik-style slice scrambles — multi-layer / multi-axis simultaneous turns.
+ * Blocks decouple & expand outward before locking into new lattice slots.
+ * Damage pressure accelerates the cube's reactive rearrangements.
  */
 import * as THREE from 'three';
 import type { CubeManager } from './CubeManager';
@@ -9,33 +10,45 @@ import { bus } from '../core/EventBus';
 export type RotationAxis = 'x' | 'y' | 'z';
 
 export interface CubeAnimatorConfig {
-  /** Min seconds of telegraph before spin */
   telegraphMin: number;
   telegraphMax: number;
-  /** Spin duration seconds */
   spinMin: number;
   spinMax: number;
-  /** Base seconds between rotation attempts */
   cooldownMin: number;
   cooldownMax: number;
-  /** Level band where rotations begin */
   minLevel: number;
-  /** Reduced motion: snap without interpolation */
   reducedMotion: boolean;
+  /** Outward expand factor at mid-spin (alien decouple) */
+  expandPeak: number;
 }
 
 const DEFAULT_CFG: CubeAnimatorConfig = {
-  telegraphMin: 0.65,
-  telegraphMax: 1.1,
-  spinMin: 0.85,
-  spinMax: 1.35,
-  cooldownMin: 14,
-  cooldownMax: 28,
-  minLevel: 6,
+  telegraphMin: 0.4,
+  telegraphMax: 0.75,
+  spinMin: 0.55,
+  spinMax: 0.95,
+  // ~25% more frequent than prior 7–16s baseline
+  cooldownMin: 5.2,
+  cooldownMax: 12,
+  minLevel: 1,
   reducedMotion: false,
+  expandPeak: 0.22,
 };
 
-type Phase = 'idle' | 'telegraph' | 'spin' | 'cooldown' | 'cinematic';
+type Phase = 'idle' | 'telegraph' | 'spin' | 'cooldown';
+
+interface SliceMove {
+  axis: RotationAxis;
+  layer: number;
+  sign: 1 | -1;
+}
+
+interface SliceAnimState {
+  move: SliceMove;
+  ids: number[];
+  startPos: THREE.Vector3[];
+  scales: THREE.Vector3[];
+}
 
 export class CubeAnimator {
   readonly group = new THREE.Group();
@@ -44,64 +57,54 @@ export class CubeAnimator {
   private phase: Phase = 'idle';
   private timer = 0;
   private phaseDuration = 1;
-  private axis: RotationAxis = 'y';
-  private sign: 1 | -1 = 1;
   private levelId = 1;
   private damagePressure = 0;
   private enabled = true;
-  /** When true, normal level rotation AI is suspended; only forceQuickShift runs. */
-  private cinematicBurst = false;
-  private pendingQuick: { duration: number } | null = null;
+
+  /** Concurrent slice animations (multi-axis / multi-layer) */
+  private active: SliceAnimState[] = [];
+  private pendingMoves: SliceMove[] = [];
+
+  private planePool: THREE.Mesh[] = [];
   private axisHelper: THREE.Group;
-  private ghostShell: THREE.Mesh;
-  private fromQuat = new THREE.Quaternion();
-  private toQuat = new THREE.Quaternion();
+  private _axis = new THREE.Vector3();
+  private _pos = new THREE.Vector3();
   private _q = new THREE.Quaternion();
-  private _e = new THREE.Euler();
 
   constructor(cfg: Partial<CubeAnimatorConfig> = {}) {
     this.cfg = { ...DEFAULT_CFG, ...cfg };
 
+    for (let i = 0; i < 4; i++) {
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+          color: i % 2 === 0 ? 0x00f0ff : 0xff00aa,
+          transparent: true,
+          opacity: 0,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        })
+      );
+      plane.visible = false;
+      this.planePool.push(plane);
+      this.group.add(plane);
+    }
+
     this.axisHelper = new THREE.Group();
     this.axisHelper.visible = false;
-    // Axis glyph — glowing tube
     const tube = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.08, 0.08, 1, 8),
+      new THREE.CylinderGeometry(0.04, 0.04, 1, 8),
       new THREE.MeshBasicMaterial({
-        color: 0x00f0ff,
+        color: 0xff00aa,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.7,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
     );
     this.axisHelper.add(tube);
-    const arrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.22, 0.4, 8),
-      new THREE.MeshBasicMaterial({
-        color: 0xff00aa,
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-    );
-    arrow.position.y = 0.7;
-    this.axisHelper.add(arrow);
     this.group.add(this.axisHelper);
-
-    this.ghostShell = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshBasicMaterial({
-        color: 0x00f0ff,
-        wireframe: true,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-      })
-    );
-    this.ghostShell.visible = false;
-    this.group.add(this.ghostShell);
   }
 
   bind(cube: CubeManager): void {
@@ -121,283 +124,319 @@ export class CubeAnimator {
     this.enabled = on;
   }
 
-  /** Intro cinematic: suspend normal rotation AI. */
-  beginCinematicBurst(): void {
-    this.cinematicBurst = true;
-    this.phase = 'cinematic';
-    this.timer = 0;
-    this.pendingQuick = null;
-    this.finishVisuals();
-    if (this.cube) this.cube.group.quaternion.identity();
-  }
-
-  endCinematicBurst(): void {
-    this.cinematicBurst = false;
-    this.pendingQuick = null;
-    if (this.phase === 'cinematic' || this.phase === 'spin') {
-      this.phase = 'idle';
-      this.timer = 0;
+  /** Force faster scrambles (menu demo). */
+  setDemoMode(on: boolean): void {
+    if (on) {
+      this.cfg.cooldownMin = 2.2;
+      this.cfg.cooldownMax = 4.5;
+      this.cfg.telegraphMin = 0.3;
+      this.cfg.spinMin = 0.5;
+    } else {
+      this.cfg = { ...DEFAULT_CFG };
     }
-    this.finishVisuals();
-    if (this.cube) this.cube.group.quaternion.identity();
   }
 
-  /**
-   * Instant queue of a rapid 90° Rubik-style spin (cinematic).
-   * Completes via update(); commits lattice at end of spin.
-   */
-  forceQuickShift(duration = 0.32): void {
-    if (!this.cube) return;
-    // If already spinning, finish current spin first so lattice stays consistent
-    if (this.phase === 'spin') {
-      if (this.cinematicBurst) this.completeSpinCinematic();
-      else this.completeSpin();
-    }
-    this.pendingQuick = { duration: Math.max(0.12, duration) };
-    this.startQuickSpin(this.pendingQuick.duration);
-  }
-
-  private startQuickSpin(duration: number): void {
-    if (!this.cube) return;
-    this.pendingQuick = null;
-    this.phase = 'spin';
-    this.timer = 0;
-    this.phaseDuration = duration;
-
-    const axes: RotationAxis[] = ['x', 'y', 'z'];
-    this.axis = axes[Math.floor(Math.random() * 3)];
-    this.sign = Math.random() < 0.5 ? 1 : -1;
-
-    this.fromQuat.copy(this.cube.group.quaternion);
-    this._e.set(0, 0, 0);
-    const ang = (this.sign * Math.PI) / 2;
-    if (this.axis === 'x') this._e.x = ang;
-    else if (this.axis === 'y') this._e.y = ang;
-    else this._e.z = ang;
-    this.toQuat.setFromEuler(this._e);
-    this.toQuat.premultiply(this.fromQuat);
-
-    // Light ghost for cinematic readability
-    const he = this.cube.halfExtent * 2.15;
-    this.ghostShell.geometry.dispose();
-    this.ghostShell.geometry = new THREE.BoxGeometry(he, he, he);
-    this.ghostShell.visible = true;
-    (this.ghostShell.material as THREE.MeshBasicMaterial).opacity = 0.22;
-    this.axisHelper.visible = false;
-
-    bus.emit('cube-rotation-start', {
-      axis: this.axis,
-      sign: this.sign,
-      duration: this.phaseDuration,
-      cinematic: true,
-    });
-  }
-
-  /** Call when blocks take damage to raise rotation chance. */
   notifyDamage(amount: number): void {
-    this.damagePressure = Math.min(3, this.damagePressure + amount * 0.002);
+    this.damagePressure = Math.min(4.5, this.damagePressure + amount * 0.0045);
   }
 
   get isRotating(): boolean {
     return this.phase === 'telegraph' || this.phase === 'spin';
   }
 
-  get phaseName(): Phase {
-    return this.phase;
-  }
-
   update(dt: number): void {
-    if (!this.cube) return;
-
-    // Cinematic path: only process forced quick spins
-    if (this.cinematicBurst) {
-      this.timer += dt;
-      if (this.phase === 'spin') {
-        this.updateSpin();
-        if (this.timer >= this.phaseDuration) {
-          this.completeSpinCinematic();
-        }
-      } else if (this.pendingQuick) {
-        this.startQuickSpin(this.pendingQuick.duration);
-      }
-      return;
-    }
-
-    if (!this.enabled) return;
+    if (!this.cube || !this.enabled) return;
     if (this.levelId < this.cfg.minLevel) return;
+    if (this.cube.aliveBlocks <= 0) return;
 
-    this.damagePressure = Math.max(0, this.damagePressure - dt * 0.15);
+    this.damagePressure = Math.max(0, this.damagePressure - dt * 0.12);
     this.timer += dt;
 
     switch (this.phase) {
       case 'idle':
         this.enterCooldown();
         break;
-      case 'cooldown': {
-        const urgency = 1 + this.damagePressure * 0.35 + (this.cube.progress > 0.7 ? 0.4 : 0);
-        if (this.timer >= this.phaseDuration / urgency) {
+      case 'cooldown':
+        if (this.timer >= this.phaseDuration) {
+          this.planConcurrentMoves();
           this.beginTelegraph();
         }
         break;
-      }
       case 'telegraph':
         this.updateTelegraph();
-        if (this.timer >= this.phaseDuration) {
-          this.beginSpin();
-        }
+        if (this.timer >= this.phaseDuration) this.beginSpin();
         break;
       case 'spin':
         this.updateSpin();
-        if (this.timer >= this.phaseDuration) {
-          this.completeSpin();
-        }
-        break;
-      case 'cinematic':
+        if (this.timer >= this.phaseDuration) this.completeSpin();
         break;
     }
   }
 
-  private completeSpinCinematic(): void {
-    if (!this.cube) return;
-    this.cube.group.quaternion.identity();
-    this.cube.commitLatticeRotation(this.axis, this.sign);
-    this.finishVisuals();
-    bus.emit('cube-rotation-complete', {
-      axis: this.axis,
-      sign: this.sign,
-      instant: false,
-      cinematic: true,
-    });
-    this.phase = 'cinematic';
-    this.timer = 0;
+  private sizeFactor(): number {
+    const n = Math.max(4, this.cube?.size ?? 6);
+    return Math.max(0.48, 1 - (n - 6) * 0.038);
   }
 
   private enterCooldown(): void {
     this.phase = 'cooldown';
     this.timer = 0;
-    this.phaseDuration =
+    let gap =
       this.cfg.cooldownMin +
       Math.random() * (this.cfg.cooldownMax - this.cfg.cooldownMin);
-    // Later levels rotate more often
-    const levelFactor = Math.max(0.55, 1 - (this.levelId - this.cfg.minLevel) * 0.02);
-    this.phaseDuration *= levelFactor;
+    gap *= this.sizeFactor();
+    gap *= Math.max(0.5, 1 - (this.levelId - 1) * 0.018);
+    const urgency = 1 + this.damagePressure * 0.6;
+    this.phaseDuration = Math.max(1.4, gap / urgency);
+  }
+
+  /**
+   * Plan 1–3 simultaneous slice turns on different layers/axes.
+   */
+  private planConcurrentMoves(): void {
+    this.pendingMoves = [];
+    if (!this.cube) return;
+    const n = Math.max(1, this.cube.size);
+
+    let count = 1;
+    if (Math.random() < 0.45 + this.damagePressure * 0.1) count++;
+    if (n >= 8 && Math.random() < 0.4 + this.damagePressure * 0.08) count++;
+    if (n >= 12 && Math.random() < 0.32 + this.damagePressure * 0.07) count++;
+    if (n >= 16 && Math.random() < 0.25 + this.damagePressure * 0.06) count++;
+    count = Math.min(3, count);
+
+    const used = new Set<string>();
+    for (let i = 0; i < count * 4 && this.pendingMoves.length < count; i++) {
+      const move = this.pickRandomSlice();
+      if (!move) continue;
+      const key = `${move.axis}:${move.layer}`;
+      if (used.has(key)) continue;
+      // Prefer variety: avoid same axis if we already have one (unless only option)
+      if (
+        this.pendingMoves.some((m) => m.axis === move.axis) &&
+        this.pendingMoves.length < count &&
+        Math.random() < 0.55
+      ) {
+        continue;
+      }
+      used.add(key);
+      this.pendingMoves.push(move);
+    }
+    if (this.pendingMoves.length === 0) {
+      this.pendingMoves.push({ axis: 'y', layer: Math.floor(n / 2), sign: 1 });
+    }
+  }
+
+  private pickRandomSlice(): SliceMove | null {
+    if (!this.cube) return null;
+    const axes: RotationAxis[] = ['x', 'y', 'z'];
+    for (let a = axes.length - 1; a > 0; a--) {
+      const j = Math.floor(Math.random() * (a + 1));
+      [axes[a], axes[j]] = [axes[j], axes[a]];
+    }
+    for (const axis of axes) {
+      const layers = this.cube.populatedLayers(axis);
+      if (!layers.length) continue;
+      const layer = layers[Math.floor(Math.random() * layers.length)];
+      return { axis, layer, sign: Math.random() < 0.5 ? 1 : -1 };
+    }
+    return null;
   }
 
   private beginTelegraph(): void {
+    if (!this.cube || !this.pendingMoves.length) {
+      this.enterCooldown();
+      return;
+    }
     this.phase = 'telegraph';
     this.timer = 0;
-    this.phaseDuration = Math.max(
-      this.cfg.telegraphMin,
-      this.cfg.telegraphMin +
-        Math.random() * (this.cfg.telegraphMax - this.cfg.telegraphMin)
-    );
+    const tScale = Math.max(0.5, 1 - this.damagePressure * 0.12);
+    this.phaseDuration =
+      (this.cfg.telegraphMin +
+        Math.random() * (this.cfg.telegraphMax - this.cfg.telegraphMin)) *
+      tScale;
 
-    const axes: RotationAxis[] = ['x', 'y', 'z'];
-    this.axis = axes[Math.floor(Math.random() * 3)];
-    this.sign = Math.random() < 0.5 ? 1 : -1;
-
-    const he = this.cube!.halfExtent * 2.2;
-    this.ghostShell.geometry.dispose();
-    this.ghostShell.geometry = new THREE.BoxGeometry(he, he, he);
-    this.ghostShell.visible = true;
-    (this.ghostShell.material as THREE.MeshBasicMaterial).opacity = 0.15;
-
-    this.layoutAxisHelper();
+    this.hidePlanes();
+    this.pendingMoves.forEach((m, i) => this.layoutSliceVisual(m, i));
     this.axisHelper.visible = true;
 
     bus.emit('cube-rotation-telegraph', {
-      axis: this.axis,
-      sign: this.sign,
+      moves: this.pendingMoves,
       duration: this.phaseDuration,
     });
   }
 
-  private layoutAxisHelper(): void {
-    const len = this.cube!.halfExtent * 2.4;
-    this.axisHelper.scale.set(1, len / 1.4, 1);
-    this.axisHelper.position.set(0, 0, 0);
-    this.axisHelper.rotation.set(0, 0, 0);
-    if (this.axis === 'x') this.axisHelper.rotation.z = -Math.PI / 2;
-    else if (this.axis === 'z') this.axisHelper.rotation.x = Math.PI / 2;
-    // y default
-    if (this.sign < 0) this.axisHelper.rotation.x += Math.PI;
+  private layoutSliceVisual(move: SliceMove, index: number): void {
+    if (!this.cube) return;
+    const plane = this.planePool[index];
+    if (!plane) return;
+    const n = this.cube.size;
+    const bs = this.cube.blockSize;
+    const half = (n * bs) / 2;
+    const extent = n * bs * 1.08;
+    const layerCenter = (move.layer + 0.5) * bs - half;
+
+    plane.geometry.dispose();
+    plane.geometry = new THREE.PlaneGeometry(extent, extent);
+    plane.position.set(0, 0, 0);
+    plane.rotation.set(0, 0, 0);
+    plane.visible = true;
+
+    if (move.axis === 'x') {
+      plane.position.x = layerCenter;
+      plane.rotation.y = Math.PI / 2;
+    } else if (move.axis === 'y') {
+      plane.position.y = layerCenter;
+      plane.rotation.x = -Math.PI / 2;
+    } else {
+      plane.position.z = layerCenter;
+    }
   }
 
   private updateTelegraph(): void {
-    const t = this.timer / this.phaseDuration;
-    const pulse = 0.2 + Math.sin(this.timer * 12) * 0.12 + t * 0.25;
-    (this.ghostShell.material as THREE.MeshBasicMaterial).opacity = pulse;
-    this.axisHelper.rotation.y += this.sign * 0.04;
-    // Glitch scale
-    const s = 1 + Math.sin(this.timer * 20) * 0.01 * t;
-    this.ghostShell.scale.setScalar(s);
+    const t = this.timer / Math.max(1e-4, this.phaseDuration);
+    for (const plane of this.planePool) {
+      if (!plane.visible) continue;
+      const pulse = 0.1 + Math.sin(this.timer * 16) * 0.08 + t * 0.22;
+      (plane.material as THREE.MeshBasicMaterial).opacity = pulse;
+    }
+    this.axisHelper.rotation.y += 0.05;
   }
 
   private beginSpin(): void {
+    if (!this.cube || !this.pendingMoves.length) {
+      this.enterCooldown();
+      return;
+    }
     this.phase = 'spin';
     this.timer = 0;
+    const sScale = Math.max(0.55, 1 - this.damagePressure * 0.1);
     this.phaseDuration =
-      this.cfg.spinMin + Math.random() * (this.cfg.spinMax - this.cfg.spinMin);
+      (this.cfg.spinMin + Math.random() * (this.cfg.spinMax - this.cfg.spinMin)) *
+      sScale;
 
-    if (!this.cube) return;
+    this.active = [];
+    for (const move of this.pendingMoves) {
+      const ids = this.cube.collectSliceIds(move.axis, move.layer);
+      const startPos: THREE.Vector3[] = [];
+      const scales: THREE.Vector3[] = [];
+      for (const id of ids) {
+        startPos.push(this.cube.getInstanceWorldPos(id, new THREE.Vector3()));
+        scales.push(this.cube.getInstanceScale(id, new THREE.Vector3()));
+      }
+      if (ids.length) this.active.push({ move, ids, startPos, scales });
+    }
 
-    if (this.cfg.reducedMotion) {
-      // Instant snap path
-      this.cube.commitLatticeRotation(this.axis, this.sign);
+    if (this.cfg.reducedMotion || !this.active.length) {
+      for (const a of this.active) {
+        this.cube.commitSliceFromStarts(
+          a.ids,
+          a.startPos,
+          a.scales,
+          a.move.axis,
+          a.move.sign
+        );
+      }
       this.finishVisuals();
-      bus.emit('cube-rotation-complete', { axis: this.axis, sign: this.sign, instant: true });
+      bus.emit('cube-rotation-complete', { moves: this.pendingMoves, instant: true });
+      this.pendingMoves = [];
+      this.active = [];
       this.enterCooldown();
       return;
     }
 
-    this.fromQuat.copy(this.cube.group.quaternion);
-    this._e.set(0, 0, 0);
-    const ang = (this.sign * Math.PI) / 2;
-    if (this.axis === 'x') this._e.x = ang;
-    else if (this.axis === 'y') this._e.y = ang;
-    else this._e.z = ang;
-    this.toQuat.setFromEuler(this._e);
-    this.toQuat.premultiply(this.fromQuat);
-
     bus.emit('cube-rotation-start', {
-      axis: this.axis,
-      sign: this.sign,
+      moves: this.pendingMoves,
       duration: this.phaseDuration,
+      concurrent: this.active.length,
     });
+  }
+
+  private axisVector(axis: RotationAxis, out: THREE.Vector3): THREE.Vector3 {
+    if (axis === 'x') return out.set(1, 0, 0);
+    if (axis === 'y') return out.set(0, 1, 0);
+    return out.set(0, 0, 1);
   }
 
   private updateSpin(): void {
     if (!this.cube) return;
-    const t = Math.min(1, this.timer / this.phaseDuration);
-    // Smooth ease-in-out
+    const t = Math.min(1, this.timer / Math.max(1e-4, this.phaseDuration));
+    // Ease in-out for rotation
     const e = t * t * (3 - 2 * t);
-    this._q.slerpQuaternions(this.fromQuat, this.toQuat, e);
-    this.cube.group.quaternion.copy(this._q);
-    (this.ghostShell.material as THREE.MeshBasicMaterial).opacity = 0.35 * (1 - t);
+    // Expand mid-spin (alien decouple): peaks at t=0.5
+    const expand = 1 + Math.sin(t * Math.PI) * this.cfg.expandPeak;
+
+    for (const slice of this.active) {
+      const ang = e * (slice.move.sign * (Math.PI / 2));
+      this.axisVector(slice.move.axis, this._axis);
+      this._q.setFromAxisAngle(this._axis, ang);
+
+      for (let i = 0; i < slice.ids.length; i++) {
+        this._pos.copy(slice.startPos[i]).applyQuaternion(this._q);
+        // Radial expand from cube origin then settle
+        this._pos.multiplyScalar(expand);
+        const s = slice.scales[i];
+        // Slight scale pulse
+        const sc = 1 + Math.sin(t * Math.PI) * 0.12;
+        this.cube.setInstanceWorldPos(
+          slice.ids[i],
+          this._pos,
+          new THREE.Vector3(s.x * sc, s.y * sc, s.z * sc)
+        );
+      }
+    }
+    this.cube.markInstanceMatrixDirty();
+
+    for (const plane of this.planePool) {
+      if (!plane.visible) continue;
+      (plane.material as THREE.MeshBasicMaterial).opacity = 0.25 * (1 - t);
+    }
   }
 
   private completeSpin(): void {
-    if (!this.cube) return;
-    // Snap visual rotation back and remap lattice data so raycasts stay correct
-    this.cube.group.quaternion.identity();
-    this.cube.commitLatticeRotation(this.axis, this.sign);
+    if (!this.cube) {
+      this.enterCooldown();
+      return;
+    }
+    for (const a of this.active) {
+      this.cube.commitSliceFromStarts(
+        a.ids,
+        a.startPos,
+        a.scales,
+        a.move.axis,
+        a.move.sign
+      );
+    }
     this.finishVisuals();
-    bus.emit('cube-rotation-complete', { axis: this.axis, sign: this.sign, instant: false });
-    bus.emit('camera-shake-request', { amount: 0.14 });
+    bus.emit('cube-rotation-complete', {
+      moves: this.pendingMoves,
+      concurrent: this.active.length,
+      instant: false,
+    });
+    bus.emit('camera-shake-request', { amount: 0.1 + this.active.length * 0.03 });
+    this.pendingMoves = [];
+    this.active = [];
     this.enterCooldown();
   }
 
+  private hidePlanes(): void {
+    for (const p of this.planePool) {
+      p.visible = false;
+      (p.material as THREE.MeshBasicMaterial).opacity = 0;
+    }
+  }
+
   private finishVisuals(): void {
+    this.hidePlanes();
     this.axisHelper.visible = false;
-    this.ghostShell.visible = false;
-    (this.ghostShell.material as THREE.MeshBasicMaterial).opacity = 0;
   }
 
   reset(): void {
-    this.phase = this.cinematicBurst ? 'cinematic' : 'idle';
+    this.phase = 'idle';
     this.timer = 0;
     this.damagePressure = 0;
-    this.pendingQuick = null;
+    this.pendingMoves = [];
+    this.active = [];
     this.finishVisuals();
     if (this.cube) this.cube.group.quaternion.identity();
   }

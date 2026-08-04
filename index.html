@@ -7,21 +7,37 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#000000" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="screen-orientation" content="landscape" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="screen-orientation" content="landscape" />
-    <meta name="description" content="Cube Game — destroy the cube from orbit" />
+    <meta name="description" content="The Cube — destroy the cube. Save humanity." />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
-    <title>Cube Game</title>
+    <title>The Cube</title>
     <style>
-      /* Critical paint: prevent white flash / portrait layout jump */
-      html, body { background: #000; margin: 0; width: 100%; height: 100%; overflow: hidden; }
+      /* Early landscape hint before CSS loads */
+      @media (orientation: portrait) {
+        body::before {
+          content: 'ROTATE DEVICE · LANDSCAPE REQUIRED';
+          position: fixed;
+          inset: 0;
+          z-index: 99999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #000;
+          color: #00f0ff;
+          font-family: system-ui, monospace;
+          letter-spacing: 0.2em;
+          font-size: 14px;
+          text-align: center;
+          padding: 24px;
+        }
+      }
     </style>
   </head>
-  <body class="game-body">
+  <body>
     <div id="app">
       <canvas id="game-canvas"></canvas>
       <div id="ui-root">
@@ -31,9 +47,17 @@
         <div id="level-select-root" class="panel-hidden"></div>
         <div id="loadout-root" class="panel-hidden"></div>
         <div id="ads-root" class="panel-hidden"></div>
+        <div id="cinematic-root" class="panel-hidden"></div>
         <div id="overlay-root"></div>
       </div>
       <div id="scanlines" aria-hidden="true"></div>
+      <div id="orientation-lock" class="panel-hidden" aria-hidden="true">
+        <div class="orient-card">
+          <div class="orient-icon">▣</div>
+          <div class="orient-title">LANDSCAPE REQUIRED</div>
+          <div class="orient-sub">Rotate your device to continue</div>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

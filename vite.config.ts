@@ -21,7 +21,7 @@ export default defineConfig({
         description: 'Destroy the cube. Orbit. Fire. Ascend.',
         theme_color: '#000000',
         background_color: '#000000',
-        display: 'fullscreen',
+        display: 'standalone',
         orientation: 'landscape',
         start_url: './',
         scope: './',

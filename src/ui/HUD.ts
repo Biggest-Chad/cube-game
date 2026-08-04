@@ -7,11 +7,13 @@ export class HUD {
   private blocksEl!: HTMLElement;
   private joyZone!: HTMLElement;
   private stickEl!: HTMLElement;
-  private fireBtn!: HTMLElement;
+  private aimZone!: HTMLElement;
+  private aimStickEl!: HTMLElement;
   private btnTech!: HTMLElement;
   private btnLevels!: HTMLElement;
   private btnMute!: HTMLElement;
   private btnMenu!: HTMLElement;
+  private btnLoadout!: HTMLElement;
   private shopHint!: HTMLElement;
   private introBanner!: HTMLElement;
   private controlsLayer!: HTMLElement;
@@ -19,58 +21,83 @@ export class HUD {
   constructor(root: HTMLElement) {
     this.root = root;
     this.root.innerHTML = `
-      <div class="hud-top hud-landscape">
-        <div class="hud-stat-cluster">
-          <div class="hud-stat">
+      <div class="hud-landscape">
+        <div class="hud-top-bar">
+          <div class="hud-stat ui-chip">
             <div class="label">Fragments</div>
             <div class="value" id="hud-frag">0</div>
           </div>
-          <div class="hud-stat magenta">
-            <div class="label">Core</div>
+          <div class="hud-center-stack">
+            <div class="level-banner" id="hud-level">LEVEL 1</div>
+            <div class="progress-bar"><span id="hud-progress"></span></div>
+            <div class="level-banner blocks" id="hud-blocks"></div>
+          </div>
+          <div class="hud-stat magenta ui-chip">
+            <div class="label">Core Energy</div>
             <div class="value" id="hud-core">0</div>
           </div>
         </div>
-        <div class="hud-center-strip">
-          <div class="level-banner" id="hud-level">LEVEL 1</div>
-          <div class="progress-bar"><span id="hud-progress"></span></div>
-          <div class="blocks-line" id="hud-blocks"></div>
-        </div>
-        <div class="hud-actions">
-          <button class="shop-btn interactive" id="btn-tech" title="Open Tech Shop" type="button">
-            <span class="shop-btn-icon" aria-hidden="true">◈</span>
+
+        <div class="hud-side-rail">
+          <button class="shop-btn interactive ui-btn" id="btn-tech" type="button">
+            <span class="shop-btn-icon">◈</span>
             <span class="shop-btn-text">
               <span class="shop-btn-title">SHOP</span>
               <span class="shop-btn-sub">Upgrades</span>
             </span>
             <span class="shop-btn-badge panel-hidden" id="shop-badge">BUY</span>
           </button>
-          <div class="hud-icon-row">
-            <button class="icon-btn interactive" id="btn-levels" title="Sectors" type="button">☰</button>
-            <button class="icon-btn interactive" id="btn-mute" title="Mute" type="button">
-              <span id="mute-icon">♪</span>
-            </button>
-            <button class="icon-btn interactive" id="btn-menu" title="Menu" type="button">▦</button>
+          <button class="action-btn interactive ui-btn" id="btn-loadout" type="button">
+            <span class="action-btn-icon">◎</span>
+            <span class="action-btn-label">Loadout</span>
+          </button>
+          <button class="action-btn interactive ui-btn" id="btn-levels" type="button">
+            <span class="action-btn-icon">☰</span>
+            <span class="action-btn-label">Sectors</span>
+          </button>
+          <button class="action-btn interactive ui-btn" id="btn-mute" type="button">
+            <span class="action-btn-icon" id="mute-icon">♪</span>
+            <span class="action-btn-label">Audio</span>
+          </button>
+          <button class="action-btn interactive ui-btn" id="btn-menu" type="button">
+            <span class="action-btn-icon">▦</span>
+            <span class="action-btn-label">Menu</span>
+          </button>
+        </div>
+
+        <div class="shop-hint panel-hidden interactive" id="shop-hint">
+          <div class="shop-hint-title">UPGRADE READY</div>
+          <div class="shop-hint-body" id="shop-hint-body">You can buy your first power boost.</div>
+          <button class="shop-hint-btn ui-btn" id="shop-hint-open" type="button">Open Shop</button>
+        </div>
+
+        <div class="intro-banner panel-hidden" id="intro-banner">
+          <div class="intro-title">SECTOR SCAN</div>
+          <div class="intro-sub" id="intro-sub">Mapping cube topology…</div>
+        </div>
+
+        <div class="hud-controls" id="controls-layer">
+          <div class="control-cluster left">
+            <div class="control-label">ORBIT</div>
+            <div class="joystick-zone interactive" id="joy-zone">
+              <div class="joystick-base">
+                <div class="joystick-stick" id="joy-stick"></div>
+              </div>
+            </div>
+          </div>
+          <div class="control-cluster right">
+            <div class="control-label">AIM</div>
+            <div class="aim-zone interactive" id="aim-zone">
+              <div class="joystick-base aim-base">
+                <div class="joystick-stick aim-stick" id="aim-stick"></div>
+                <div class="aim-crosshair-hint">+</div>
+              </div>
+            </div>
           </div>
         </div>
+
+        <div class="desktop-hint">WASD ORBIT · IJKL / RIGHT STICK AIM · AUTO-FIRE · SCROLL ZOOM</div>
       </div>
-      <div class="shop-hint panel-hidden interactive" id="shop-hint">
-        <div class="shop-hint-title">UPGRADE READY</div>
-        <div class="shop-hint-body" id="shop-hint-body">You can buy your first power boost.</div>
-        <button class="shop-hint-btn" id="shop-hint-open" type="button">Open Shop</button>
-      </div>
-      <div class="intro-banner panel-hidden" id="intro-banner">
-        <div class="intro-title">SECTOR SCAN</div>
-        <div class="intro-sub" id="intro-sub">Mapping cube topology…</div>
-      </div>
-      <div class="hud-bottom hud-bottom-landscape" id="controls-layer">
-        <div class="joystick-zone interactive" id="joy-zone">
-          <div class="joystick-base">
-            <div class="joystick-stick" id="joy-stick"></div>
-          </div>
-        </div>
-        <button class="fire-btn interactive" id="fire-btn" type="button">FIRE</button>
-      </div>
-      <div class="desktop-hint">WASD / ARROWS ORBIT · SPACE FIRE · SCROLL ZOOM</div>
     `;
     this.fragEl = this.root.querySelector('#hud-frag')!;
     this.coreEl = this.root.querySelector('#hud-core')!;
@@ -79,11 +106,13 @@ export class HUD {
     this.blocksEl = this.root.querySelector('#hud-blocks')!;
     this.joyZone = this.root.querySelector('#joy-zone')!;
     this.stickEl = this.root.querySelector('#joy-stick')!;
-    this.fireBtn = this.root.querySelector('#fire-btn')!;
+    this.aimZone = this.root.querySelector('#aim-zone')!;
+    this.aimStickEl = this.root.querySelector('#aim-stick')!;
     this.btnTech = this.root.querySelector('#btn-tech')!;
     this.btnLevels = this.root.querySelector('#btn-levels')!;
     this.btnMute = this.root.querySelector('#btn-mute')!;
     this.btnMenu = this.root.querySelector('#btn-menu')!;
+    this.btnLoadout = this.root.querySelector('#btn-loadout')!;
     this.shopHint = this.root.querySelector('#shop-hint')!;
     this.introBanner = this.root.querySelector('#intro-banner')!;
     this.controlsLayer = this.root.querySelector('#controls-layer')!;
@@ -93,11 +122,13 @@ export class HUD {
     return {
       joyZone: this.joyZone,
       stickEl: this.stickEl,
-      fireBtn: this.fireBtn,
+      aimZone: this.aimZone,
+      aimStickEl: this.aimStickEl,
       btnTech: this.btnTech,
       btnLevels: this.btnLevels,
       btnMute: this.btnMute,
       btnMenu: this.btnMenu,
+      btnLoadout: this.btnLoadout,
       shopHintOpen: this.root.querySelector('#shop-hint-open') as HTMLElement,
     };
   }
@@ -114,14 +145,6 @@ export class HUD {
       const el = this.root.querySelector('#intro-sub');
       if (el) el.textContent = subtitle;
     }
-  }
-
-  /** Hide combat chrome entirely during full cinematic (titles are separate). */
-  setCinematicChrome(hidden: boolean): void {
-    this.root.classList.toggle('hud-cinematic', hidden);
-    this.controlsLayer.style.opacity = hidden ? '0' : '1';
-    this.controlsLayer.style.pointerEvents = hidden ? 'none' : '';
-    if (hidden) this.introBanner.classList.add('panel-hidden');
   }
 
   updateCurrency(fragments: number, core: number): void {

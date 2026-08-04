@@ -1,27 +1,46 @@
+/**
+ * Dual-stick input: left orbit, right aim (heavy, spring-return).
+ * Main cannon auto-fires; aim stick offsets the beam from cube center.
+ */
 export class InputController {
-  /** Joystick axes -1..1 */
+  /** Orbit stick −1..1 */
   axisX = 0;
   axisY = 0;
-  firing = false;
+  /** Raw aim stick −1..1 while held */
+  aimRawX = 0;
+  aimRawY = 0;
+  /** Smoothed aim offset −1..1 (heavy lag + spring to 0 when released) */
+  aimX = 0;
+  aimY = 0;
   autoFire = true;
   private keys = new Set<string>();
-  private pointerId: number | null = null;
+  private joyPointerId: number | null = null;
   private joyOriginX = 0;
   private joyOriginY = 0;
   private joyActive = false;
-  private firePointerId: number | null = null;
+  private aimPointerId: number | null = null;
+  private aimOriginX = 0;
+  private aimOriginY = 0;
+  private aimActive = false;
   private pinchStartDist = 0;
   private zoomDelta = 0;
   private bound = false;
 
   private joyZone: HTMLElement | null = null;
   private stickEl: HTMLElement | null = null;
-  private fireBtn: HTMLElement | null = null;
+  private aimZone: HTMLElement | null = null;
+  private aimStickEl: HTMLElement | null = null;
 
-  bind(joyZone: HTMLElement, stickEl: HTMLElement, fireBtn: HTMLElement): void {
+  bind(
+    joyZone: HTMLElement,
+    stickEl: HTMLElement,
+    aimZone: HTMLElement,
+    aimStickEl: HTMLElement
+  ): void {
     this.joyZone = joyZone;
     this.stickEl = stickEl;
-    this.fireBtn = fireBtn;
+    this.aimZone = aimZone;
+    this.aimStickEl = aimStickEl;
     if (this.bound) return;
     this.bound = true;
 
@@ -33,81 +52,97 @@ export class InputController {
     joyZone.addEventListener('pointerup', this.onJoyUp);
     joyZone.addEventListener('pointercancel', this.onJoyUp);
 
-    fireBtn.addEventListener('pointerdown', this.onFireDown);
-    fireBtn.addEventListener('pointerup', this.onFireUp);
-    fireBtn.addEventListener('pointercancel', this.onFireUp);
-    fireBtn.addEventListener('pointerleave', this.onFireUp);
+    aimZone.addEventListener('pointerdown', this.onAimDown);
+    aimZone.addEventListener('pointermove', this.onAimMove);
+    aimZone.addEventListener('pointerup', this.onAimUp);
+    aimZone.addEventListener('pointercancel', this.onAimUp);
 
     window.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('touchstart', this.onTouchStart, { passive: false });
     window.addEventListener('touchmove', this.onTouchMove, { passive: false });
-    window.addEventListener('touchend', this.onTouchEnd);
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
     this.keys.add(e.code);
-    if (e.code === 'Space') this.firing = true;
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
-    if (e.code === 'Space') this.firing = false;
   };
 
   private onJoyDown = (e: PointerEvent): void => {
-    if (this.pointerId !== null) return;
-    this.pointerId = e.pointerId;
+    if (this.joyPointerId !== null) return;
+    this.joyPointerId = e.pointerId;
     this.joyActive = true;
     this.joyOriginX = e.clientX;
     this.joyOriginY = e.clientY;
     this.joyZone?.setPointerCapture(e.pointerId);
-    this.updateStick(0, 0);
+    this.setStick(this.stickEl, 0, 0);
   };
 
   private onJoyMove = (e: PointerEvent): void => {
-    if (!this.joyActive || e.pointerId !== this.pointerId) return;
-    const maxR = 48;
-    let dx = e.clientX - this.joyOriginX;
-    let dy = e.clientY - this.joyOriginY;
+    if (!this.joyActive || e.pointerId !== this.joyPointerId) return;
+    const { dx, dy, nx, ny } = this.clampStick(e.clientX - this.joyOriginX, e.clientY - this.joyOriginY, 52);
+    this.axisX = nx;
+    this.axisY = ny;
+    this.setStick(this.stickEl, dx, dy);
+  };
+
+  private onJoyUp = (e: PointerEvent): void => {
+    if (e.pointerId !== this.joyPointerId) return;
+    this.joyPointerId = null;
+    this.joyActive = false;
+    this.axisX = 0;
+    this.axisY = 0;
+    this.setStick(this.stickEl, 0, 0);
+  };
+
+  private onAimDown = (e: PointerEvent): void => {
+    e.preventDefault();
+    if (this.aimPointerId !== null) return;
+    this.aimPointerId = e.pointerId;
+    this.aimActive = true;
+    this.aimOriginX = e.clientX;
+    this.aimOriginY = e.clientY;
+    this.aimZone?.setPointerCapture(e.pointerId);
+    this.aimZone?.classList.add('active');
+    this.setStick(this.aimStickEl, 0, 0);
+  };
+
+  private onAimMove = (e: PointerEvent): void => {
+    if (!this.aimActive || e.pointerId !== this.aimPointerId) return;
+    const { dx, dy, nx, ny } = this.clampStick(
+      e.clientX - this.aimOriginX,
+      e.clientY - this.aimOriginY,
+      48
+    );
+    this.aimRawX = nx;
+    this.aimRawY = ny;
+    this.setStick(this.aimStickEl, dx, dy);
+  };
+
+  private onAimUp = (e: PointerEvent): void => {
+    if (this.aimPointerId !== null && e.pointerId !== this.aimPointerId) return;
+    this.aimPointerId = null;
+    this.aimActive = false;
+    this.aimRawX = 0;
+    this.aimRawY = 0;
+    this.aimZone?.classList.remove('active');
+    this.setStick(this.aimStickEl, 0, 0);
+  };
+
+  private clampStick(dx: number, dy: number, maxR: number) {
     const len = Math.hypot(dx, dy);
     if (len > maxR) {
       dx = (dx / len) * maxR;
       dy = (dy / len) * maxR;
     }
-    this.axisX = dx / maxR;
-    this.axisY = dy / maxR;
-    this.updateStick(dx, dy);
-  };
-
-  private onJoyUp = (e: PointerEvent): void => {
-    if (e.pointerId !== this.pointerId) return;
-    this.pointerId = null;
-    this.joyActive = false;
-    this.axisX = 0;
-    this.axisY = 0;
-    this.updateStick(0, 0);
-  };
-
-  private updateStick(dx: number, dy: number): void {
-    if (this.stickEl) {
-      this.stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
-    }
+    return { dx, dy, nx: dx / maxR, ny: dy / maxR };
   }
 
-  private onFireDown = (e: PointerEvent): void => {
-    e.preventDefault();
-    this.firePointerId = e.pointerId;
-    this.firing = true;
-    this.fireBtn?.classList.add('active');
-    this.fireBtn?.setPointerCapture(e.pointerId);
-  };
-
-  private onFireUp = (e: PointerEvent): void => {
-    if (this.firePointerId !== null && e.pointerId !== this.firePointerId) return;
-    this.firePointerId = null;
-    this.firing = false;
-    this.fireBtn?.classList.remove('active');
-  };
+  private setStick(el: HTMLElement | null, dx: number, dy: number): void {
+    if (el) el.style.transform = `translate(${dx}px, ${dy}px)`;
+  }
 
   private onWheel = (e: WheelEvent): void => {
     this.zoomDelta += e.deltaY > 0 ? 1 : -1;
@@ -130,21 +165,17 @@ export class InputController {
         e.touches[0].clientY - e.touches[1].clientY
       );
       if (this.pinchStartDist > 0) {
-        const delta = (this.pinchStartDist - d) * 0.02;
-        this.zoomDelta += delta;
+        this.zoomDelta += (this.pinchStartDist - d) * 0.02;
         this.pinchStartDist = d;
       }
     }
   };
 
-  private onTouchEnd = (): void => {
-    if (!this.joyActive) {
-      // keep
-    }
-  };
-
-  /** Consume keyboard into axes each frame */
-  update(): void {
+  /**
+   * Per-frame: keyboard orbit + heavy aim spring.
+   * @param dt seconds
+   */
+  update(dt = 1 / 60): void {
     let kx = 0;
     let ky = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) kx -= 1;
@@ -155,6 +186,26 @@ export class InputController {
       this.axisX = kx;
       this.axisY = ky;
     }
+
+    // Keyboard fine-aim (IJKL)
+    let tx = this.aimActive ? this.aimRawX : 0;
+    let ty = this.aimActive ? this.aimRawY : 0;
+    if (this.keys.has('KeyJ')) tx -= 1;
+    if (this.keys.has('KeyL')) tx += 1;
+    if (this.keys.has('KeyI')) ty -= 1;
+    if (this.keys.has('KeyK')) ty += 1;
+    tx = Math.max(-1, Math.min(1, tx));
+    ty = Math.max(-1, Math.min(1, ty));
+
+    // Heavy tracking when held; spring home when released
+    const targetX = tx;
+    const targetY = ty;
+    const rate = this.aimActive || Math.abs(tx) > 0.01 || Math.abs(ty) > 0.01 ? 4.2 : 5.5;
+    const k = 1 - Math.exp(-rate * dt);
+    this.aimX += (targetX - this.aimX) * k;
+    this.aimY += (targetY - this.aimY) * k;
+    if (Math.abs(this.aimX) < 0.004) this.aimX = 0;
+    if (Math.abs(this.aimY) < 0.004) this.aimY = 0;
   }
 
   consumeZoom(): number {
@@ -164,7 +215,12 @@ export class InputController {
   }
 
   get isFiring(): boolean {
-    return this.firing || this.autoFire || this.keys.has('Space');
+    // Auto-fire always; space still works as boost focus (same)
+    return this.autoFire || this.keys.has('Space');
+  }
+
+  get isAiming(): boolean {
+    return this.aimActive || Math.hypot(this.aimX, this.aimY) > 0.02;
   }
 
   dispose(): void {
@@ -173,6 +229,5 @@ export class InputController {
     window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('touchstart', this.onTouchStart);
     window.removeEventListener('touchmove', this.onTouchMove);
-    window.removeEventListener('touchend', this.onTouchEnd);
   }
 }

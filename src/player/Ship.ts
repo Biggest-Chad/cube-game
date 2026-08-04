@@ -3,7 +3,8 @@ import { COLORS, ORBIT } from '../data/constants';
 import type { OrbitalCamera } from './OrbitalCamera';
 
 /**
- * High-detail procedural interceptor — layered hull plates, canopy, pods, headlights.
+ * Aggressive cinematic interceptor — dagger silhouette, forward-swept wings,
+ * exposed nose cannon, layered armor. Local -Z is forward (toward cube).
  */
 export class Ship {
   readonly group = new THREE.Group();
@@ -13,6 +14,9 @@ export class Ship {
   private headLightR!: THREE.SpotLight;
   private headTarget = new THREE.Object3D();
   private fillLight!: THREE.PointLight;
+  /** Local-space muzzle tip (nose cannon aperture). */
+  private muzzleLocal = new THREE.Vector3(0, -0.02, -1.72);
+  private _muzzleWorld = new THREE.Vector3();
   private _desired = new THREE.Vector3();
   private _look = new THREE.Vector3();
   private _targetQuat = new THREE.Quaternion();
@@ -27,13 +31,11 @@ export class Ship {
     this.setupLights();
   }
 
-  private hull(color = 0x1a2430, metal = 0.72, rough = 0.38): THREE.MeshStandardMaterial {
+  private hull(color = 0x1a2430, metal = 0.78, rough = 0.32): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({
       color,
       metalness: metal,
       roughness: rough,
-      emissive: 0x000000,
-      emissiveIntensity: 0,
     });
   }
 
@@ -42,20 +44,20 @@ export class Ship {
       color,
       emissive: color,
       emissiveIntensity: intensity,
-      metalness: 0.35,
-      roughness: 0.28,
+      metalness: 0.4,
+      roughness: 0.22,
     });
   }
 
   private glass(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({
-      color: 0x6ad4ef,
-      metalness: 0.15,
-      roughness: 0.12,
+      color: 0x4ec8e8,
+      metalness: 0.2,
+      roughness: 0.08,
       transparent: true,
-      opacity: 0.72,
-      emissive: 0x1a4050,
-      emissiveIntensity: 0.35,
+      opacity: 0.78,
+      emissive: 0x0a3040,
+      emissiveIntensity: 0.4,
     });
   }
 
@@ -102,163 +104,250 @@ export class Ship {
 
   private buildMesh(): THREE.Group {
     const g = new THREE.Group();
-    const hullDark = this.hull(0x121820, 0.78, 0.32);
-    const hullMid = this.hull(0x1e2a38, 0.7, 0.4);
-    const hullLight = this.hull(0x2a3a4c, 0.65, 0.45);
-    const panel = this.hull(0x0c1018, 0.85, 0.5);
-    const cyan = this.accent(COLORS.cyan, 0.4);
-    const mag = this.accent(COLORS.magenta, 0.5);
-    const white = this.accent(COLORS.white, 0.55);
-    const eng = this.accent(0xff66cc, 0.9);
+    const hullDark = this.hull(0x0e141c, 0.85, 0.28);
+    const hullMid = this.hull(0x182230, 0.78, 0.34);
+    const hullLite = this.hull(0x243444, 0.7, 0.4);
+    const panel = this.hull(0x080c12, 0.9, 0.45);
+    const edge = this.hull(0x2a3848, 0.75, 0.3);
+    const cyan = this.accent(COLORS.cyan, 0.55);
+    const mag = this.accent(COLORS.magenta, 0.65);
+    const white = this.accent(COLORS.white, 0.7);
+    const eng = this.accent(0xff44bb, 1.1);
+    const warn = this.accent(0xff6622, 0.5);
 
-    // —— Main fuselage (multi-step tapered look) ——
-    this.addBox(g, 0.42, 0.28, 1.35, 0, 0, 0.05, hullMid);
-    this.addBox(g, 0.5, 0.18, 1.0, 0, 0.08, 0.1, hullLight);
-    this.addBox(g, 0.36, 0.22, 0.55, 0, -0.02, -0.55, hullDark); // nose base
-    this.addBox(g, 0.28, 0.16, 0.4, 0, 0.02, -0.85, hullMid);
+    // ═══════════════════════════════════════════
+    // AGGRESSIVE DAGGER FUSELAGE (front = -Z)
+    // ═══════════════════════════════════════════
 
-    // Nose cone / sensor spike
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.42, 8), hullDark);
+    // Main body — deep wedge
+    this.addBox(g, 0.38, 0.22, 1.55, 0, 0.02, 0.05, hullMid);
+    this.addBox(g, 0.48, 0.12, 1.2, 0, 0.12, 0.12, hullLite);
+    this.addBox(g, 0.34, 0.16, 0.9, 0, -0.08, 0.15, hullDark);
+
+    // Chin plow / armor beak
+    this.addBox(g, 0.3, 0.1, 0.7, 0, -0.1, -0.55, hullDark, 0.18, 0, 0);
+    this.addBox(g, 0.22, 0.06, 0.45, 0, -0.12, -0.95, panel, 0.12, 0, 0);
+
+    // Tapered nose stack (aggressive needle)
+    this.addBox(g, 0.28, 0.14, 0.5, 0, 0.02, -0.7, hullMid);
+    this.addBox(g, 0.2, 0.11, 0.4, 0, 0.01, -1.05, hullDark);
+    this.addBox(g, 0.12, 0.08, 0.28, 0, 0, -1.32, panel);
+
+    // Nose cone
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.38, 7), hullDark);
     nose.rotation.x = Math.PI / 2;
-    nose.position.set(0, 0.01, -1.15);
+    nose.position.set(0, 0, -1.55);
     g.add(nose);
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), white);
-    tip.position.set(0, 0.01, -1.38);
-    g.add(tip);
 
-    // Dorsal spine + antenna
-    this.addBox(g, 0.06, 0.12, 0.9, 0, 0.2, 0.05, panel);
-    this.addCyl(g, 0.015, 0.015, 0.35, 6, 0, 0.38, -0.15, cyan, 0, 0, 0);
-    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.02, 12), cyan);
-    dish.position.set(0, 0.52, -0.15);
-    g.add(dish);
+    // Primary plasma cannon barrel (muzzle beyond tip)
+    this.addCyl(g, 0.035, 0.042, 0.42, 8, 0, -0.02, -1.48, edge, Math.PI / 2, 0, 0);
+    this.addCyl(g, 0.028, 0.028, 0.18, 8, 0, -0.02, -1.68, panel, Math.PI / 2, 0, 0);
+    const muzzleRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.04, 0.01, 6, 14),
+      cyan
+    );
+    muzzleRing.rotation.y = Math.PI / 2;
+    muzzleRing.position.set(0, -0.02, -1.78);
+    g.add(muzzleRing);
+    const muzzleGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.035, 10, 10),
+      new THREE.MeshBasicMaterial({
+        color: COLORS.cyan,
+        transparent: true,
+        opacity: 0.75,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    muzzleGlow.position.set(0, -0.02, -1.8);
+    g.add(muzzleGlow);
+    this.muzzleLocal.set(0, -0.02, -1.88);
 
-    // Cockpit canopy
-    const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), this.glass());
-    canopy.scale.set(1.1, 0.7, 1.4);
-    canopy.position.set(0, 0.18, -0.35);
-    g.add(canopy);
-    this.addBox(g, 0.32, 0.04, 0.45, 0, 0.12, -0.35, panel); // canopy frame
-
-    // Side armor plates
-    this.addBox(g, 0.08, 0.2, 0.7, 0.26, 0, 0.05, hullDark, 0, 0, 0.12);
-    this.addBox(g, 0.08, 0.2, 0.7, -0.26, 0, 0.05, hullDark, 0, 0, -0.12);
-
-    // Panel line greebles
-    for (const z of [-0.2, 0.15, 0.45]) {
-      this.addBox(g, 0.44, 0.01, 0.02, 0, 0.15, z, panel);
-      this.addBox(g, 0.01, 0.16, 0.5, 0.2, 0, z - 0.1, panel);
-      this.addBox(g, 0.01, 0.16, 0.5, -0.2, 0, z - 0.1, panel);
+    // Twin secondary barrels under chin
+    for (const side of [-1, 1]) {
+      this.addCyl(g, 0.018, 0.022, 0.28, 6, side * 0.1, -0.12, -1.15, cyan, Math.PI / 2, 0, 0);
     }
 
-    // Accent light strips
-    this.addBox(g, 0.02, 0.03, 0.8, 0.22, 0.05, 0.05, cyan);
-    this.addBox(g, 0.02, 0.03, 0.8, -0.22, 0.05, 0.05, cyan);
-    this.addBox(g, 0.2, 0.02, 0.04, 0, -0.12, -0.5, mag);
+    // ── Cockpit (recessed, armored) ──
+    const canopy = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 14, 12, 0, Math.PI * 2, 0, Math.PI * 0.52),
+      this.glass()
+    );
+    canopy.scale.set(1.05, 0.65, 1.35);
+    canopy.position.set(0, 0.16, -0.28);
+    g.add(canopy);
+    this.addBox(g, 0.3, 0.04, 0.42, 0, 0.1, -0.28, panel);
+    // Canopy frame rails
+    this.addBox(g, 0.02, 0.06, 0.38, 0.12, 0.14, -0.28, edge);
+    this.addBox(g, 0.02, 0.06, 0.38, -0.12, 0.14, -0.28, edge);
 
-    // Wings / fins
-    const wingMat = hullLight;
-    this.addBox(g, 0.95, 0.035, 0.38, 0.55, -0.02, 0.25, wingMat, 0, 0.15, 0.18);
-    this.addBox(g, 0.95, 0.035, 0.38, -0.55, -0.02, 0.25, wingMat, 0, -0.15, -0.18);
-    this.addBox(g, 0.5, 0.025, 0.22, 0.7, 0.02, 0.35, cyan, 0, 0.2, 0.1);
-    this.addBox(g, 0.5, 0.025, 0.22, -0.7, 0.02, 0.35, cyan, 0, -0.2, -0.1);
+    // Dorsal spine ridge (predator line)
+    this.addBox(g, 0.05, 0.1, 1.1, 0, 0.2, 0.1, panel);
+    this.addBox(g, 0.08, 0.04, 0.5, 0, 0.24, -0.1, cyan);
+    // Sensor fin
+    this.addBox(g, 0.02, 0.22, 0.18, 0, 0.34, 0.35, hullMid, 0.15, 0, 0);
+    this.addBox(g, 0.015, 0.08, 0.06, 0, 0.46, 0.32, mag);
 
-    // Vertical stabilizers
-    this.addBox(g, 0.03, 0.28, 0.32, 0.18, 0.22, 0.45, hullMid, 0.2, 0, 0.15);
-    this.addBox(g, 0.03, 0.28, 0.32, -0.18, 0.22, 0.45, hullMid, 0.2, 0, -0.15);
-    this.addBox(g, 0.02, 0.12, 0.08, 0.18, 0.32, 0.4, mag);
-    this.addBox(g, 0.02, 0.12, 0.08, -0.18, 0.32, 0.4, mag);
+    // Side cheek armor (angular)
+    for (const side of [-1, 1]) {
+      this.addBox(g, 0.12, 0.18, 0.85, side * 0.28, 0.02, 0.0, hullDark, 0, 0, side * -0.35);
+      this.addBox(g, 0.08, 0.1, 0.55, side * 0.32, -0.02, -0.35, panel, 0, 0, side * -0.25);
+      // Intake scoops
+      this.addBox(g, 0.1, 0.08, 0.22, side * 0.26, -0.06, -0.15, panel, 0.2, 0, 0);
+      this.addBox(g, 0.06, 0.04, 0.12, side * 0.26, -0.06, -0.28, warn);
+    }
 
-    // Engine pods (port / starboard)
+    // Panel greebles / heat vents
+    for (const z of [-0.45, -0.1, 0.25, 0.55]) {
+      this.addBox(g, 0.42, 0.008, 0.018, 0, 0.14, z, panel);
+    }
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 4; i++) {
+        this.addBox(g, 0.04, 0.015, 0.06, side * 0.2, -0.14, 0.2 + i * 0.12, edge);
+      }
+    }
+
+    // Accent strips
+    this.addBox(g, 0.015, 0.025, 1.0, 0.2, 0.06, 0.0, cyan);
+    this.addBox(g, 0.015, 0.025, 1.0, -0.2, 0.06, 0.0, cyan);
+    this.addBox(g, 0.18, 0.015, 0.03, 0, -0.14, -0.7, mag);
+
+    // ── Forward-swept combat wings ──
+    for (const side of [-1, 1]) {
+      // Main wing — swept forward aggressively
+      this.addBox(g, 1.05, 0.03, 0.32, side * 0.62, -0.02, 0.05, hullLite, 0, side * 0.35, side * 0.22);
+      // Leading edge blade
+      this.addBox(g, 0.7, 0.02, 0.1, side * 0.75, 0.0, -0.12, edge, 0, side * 0.4, side * 0.15);
+      // Wing tip blade
+      this.addBox(g, 0.35, 0.02, 0.12, side * 1.05, 0.02, 0.18, cyan, 0, side * 0.25, side * 0.1);
+      // Underside hardpoint rail
+      this.addBox(g, 0.4, 0.04, 0.08, side * 0.55, -0.08, 0.08, panel);
+      // Tip light
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), mag);
+      tip.position.set(side * 1.15, 0.02, 0.22);
+      g.add(tip);
+    }
+
+    // Canard / forward fins
+    for (const side of [-1, 1]) {
+      this.addBox(g, 0.35, 0.02, 0.14, side * 0.28, 0.0, -0.75, hullMid, 0, side * -0.2, side * 0.3);
+      this.addBox(g, 0.12, 0.015, 0.06, side * 0.4, 0.01, -0.82, cyan);
+    }
+
+    // Vertical stabs — canted outward (aggressive)
+    for (const side of [-1, 1]) {
+      this.addBox(g, 0.025, 0.32, 0.28, side * 0.16, 0.26, 0.55, hullMid, 0.25, 0, side * 0.35);
+      this.addBox(g, 0.02, 0.14, 0.1, side * 0.18, 0.4, 0.5, mag);
+      // Rudder stripe
+      this.addBox(g, 0.012, 0.2, 0.04, side * 0.17, 0.28, 0.62, cyan);
+    }
+
+    // ── Engine cluster ──
     for (const side of [-1, 1]) {
       const pod = new THREE.Group();
-      pod.position.set(side * 0.38, -0.06, 0.35);
-      this.addCyl(pod, 0.1, 0.12, 0.55, 10, 0, 0, 0, hullDark, Math.PI / 2, 0, 0);
-      this.addCyl(pod, 0.08, 0.09, 0.2, 10, 0, 0, 0.28, panel, Math.PI / 2, 0, 0);
-      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.12, 10), eng);
+      pod.position.set(side * 0.36, -0.04, 0.55);
+
+      this.addCyl(pod, 0.09, 0.12, 0.5, 10, 0, 0, 0, hullDark, Math.PI / 2, 0, 0);
+      this.addCyl(pod, 0.07, 0.085, 0.18, 10, 0, 0, 0.28, panel, Math.PI / 2, 0, 0);
+      // Intake lip front of pod
+      this.addCyl(pod, 0.1, 0.08, 0.08, 10, 0, 0, -0.28, edge, Math.PI / 2, 0, 0);
+
+      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.08, 0.14, 10), eng);
       nozzle.rotation.x = Math.PI / 2;
-      nozzle.position.z = 0.42;
+      nozzle.position.z = 0.4;
       pod.add(nozzle);
       this.engineGlow.push(nozzle);
 
-      const glowCore = new THREE.Mesh(
-        new THREE.SphereGeometry(0.06, 8, 8),
+      const plume = new THREE.Mesh(
+        new THREE.ConeGeometry(0.06, 0.28, 8),
         new THREE.MeshBasicMaterial({
           color: COLORS.magenta,
           transparent: true,
-          opacity: 0.85,
+          opacity: 0.7,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         })
       );
-      glowCore.position.z = 0.5;
-      pod.add(glowCore);
-      this.engineGlow.push(glowCore);
+      plume.rotation.x = -Math.PI / 2;
+      plume.position.z = 0.58;
+      pod.add(plume);
+      this.engineGlow.push(plume);
 
-      // Pod pylons
-      this.addBox(pod, 0.04, 0.12, 0.08, -side * 0.08, 0.08, -0.05, hullMid);
+      this.addBox(pod, 0.05, 0.14, 0.1, -side * 0.1, 0.06, -0.1, hullMid);
       g.add(pod);
     }
 
-    // Center rear thruster
-    this.addCyl(g, 0.1, 0.14, 0.28, 10, 0, 0, 0.72, hullDark, Math.PI / 2, 0, 0);
-    const mainNozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 0.14, 10), eng);
-    mainNozzle.rotation.x = Math.PI / 2;
-    mainNozzle.position.set(0, 0, 0.88);
-    g.add(mainNozzle);
-    this.engineGlow.push(mainNozzle);
+    // Center afterburner
+    this.addCyl(g, 0.09, 0.13, 0.32, 10, 0, 0, 0.85, hullDark, Math.PI / 2, 0, 0);
+    const mainNoz = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.16, 10), eng);
+    mainNoz.rotation.x = Math.PI / 2;
+    mainNoz.position.set(0, 0, 1.02);
+    g.add(mainNoz);
+    this.engineGlow.push(mainNoz);
 
-    // Weapon hardpoints under chin
-    this.addBox(g, 0.1, 0.06, 0.25, 0.12, -0.12, -0.55, panel);
-    this.addBox(g, 0.1, 0.06, 0.25, -0.12, -0.12, -0.55, panel);
-    this.addCyl(g, 0.025, 0.025, 0.2, 6, 0.12, -0.12, -0.7, cyan, Math.PI / 2, 0, 0);
-    this.addCyl(g, 0.025, 0.025, 0.2, 6, -0.12, -0.12, -0.7, cyan, Math.PI / 2, 0, 0);
+    const mainPlume = new THREE.Mesh(
+      new THREE.ConeGeometry(0.08, 0.35, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xff66cc,
+        transparent: true,
+        opacity: 0.65,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    mainPlume.rotation.x = -Math.PI / 2;
+    mainPlume.position.set(0, 0, 1.22);
+    g.add(mainPlume);
+    this.engineGlow.push(mainPlume);
 
-    // Ventral thrusters
-    this.addBox(g, 0.15, 0.05, 0.15, 0.2, -0.16, 0.1, panel);
-    this.addBox(g, 0.15, 0.05, 0.15, -0.2, -0.16, 0.1, panel);
+    // Engine ring
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.012, 8, 20), cyan);
+    ring.rotation.y = Math.PI / 2;
+    ring.position.set(0, 0, 0.75);
+    g.add(ring);
 
-    // —— Headlight housings (front) ——
-    const lampMat = this.hull(0x222830, 0.5, 0.4);
+    // Ventral thruster banks
+    for (const side of [-1, 1]) {
+      this.addBox(g, 0.14, 0.05, 0.18, side * 0.18, -0.16, 0.25, panel);
+      this.addBox(g, 0.08, 0.02, 0.1, side * 0.18, -0.19, 0.25, mag);
+    }
+
+    // ── Headlights in cheek mounts ──
+    const lampMat = this.hull(0x1a2028, 0.5, 0.35);
     const lensMat = new THREE.MeshStandardMaterial({
       color: 0xffffee,
-      emissive: 0xfff5d0,
-      emissiveIntensity: 1.2,
-      metalness: 0.2,
-      roughness: 0.15,
+      emissive: 0xfff2c8,
+      emissiveIntensity: 1.4,
+      metalness: 0.15,
+      roughness: 0.12,
     });
     for (const side of [-1, 1]) {
-      this.addBox(g, 0.1, 0.08, 0.12, side * 0.16, -0.04, -0.95, lampMat);
-      const lens = new THREE.Mesh(new THREE.CircleGeometry(0.035, 12), lensMat);
-      lens.position.set(side * 0.16, -0.04, -1.02);
+      this.addBox(g, 0.09, 0.07, 0.1, side * 0.18, -0.02, -1.2, lampMat);
+      const lens = new THREE.Mesh(new THREE.CircleGeometry(0.032, 12), lensMat);
+      lens.position.set(side * 0.18, -0.02, -1.26);
       g.add(lens);
-      // glow disc
       const glow = new THREE.Mesh(
-        new THREE.CircleGeometry(0.05, 12),
+        new THREE.CircleGeometry(0.048, 12),
         new THREE.MeshBasicMaterial({
-          color: 0xfff2c8,
+          color: 0xfff0c0,
           transparent: true,
-          opacity: 0.55,
+          opacity: 0.5,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
           side: THREE.DoubleSide,
         })
       );
-      glow.position.set(side * 0.16, -0.04, -1.025);
+      glow.position.set(side * 0.18, -0.02, -1.265);
       g.add(glow);
     }
 
-    // Ring detail near engines
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.16, 0.015, 8, 20),
-      cyan
-    );
-    ring.rotation.y = Math.PI / 2;
-    ring.position.set(0, 0, 0.65);
-    g.add(ring);
+    // Kill markings / hazard stripe near rear
+    this.addBox(g, 0.35, 0.01, 0.04, 0, 0.16, 0.7, warn);
 
-    // Scale up slightly for third-person readability
-    g.scale.setScalar(1.15);
+    // Slight overall scale for third-person readability
+    g.scale.setScalar(1.12);
+    // Scale muzzle local to match body scale
+    this.muzzleLocal.multiplyScalar(1.12);
     return g;
   }
 
@@ -266,33 +355,45 @@ export class Ship {
     this.headTarget.position.set(0, 0, -40);
     this.group.add(this.headTarget);
 
-    // Twin frontal spotlights — bright, long throw onto the cube face
-    this.headLightL = new THREE.SpotLight(0xfff0d0, 48, 55, Math.PI / 7, 0.45, 1.15);
-    this.headLightR = new THREE.SpotLight(0xfff0d0, 48, 55, Math.PI / 7, 0.45, 1.15);
+    this.headLightL = new THREE.SpotLight(0xfff0d0, 52, 58, Math.PI / 7, 0.45, 1.15);
+    this.headLightR = new THREE.SpotLight(0xfff0d0, 52, 58, Math.PI / 7, 0.45, 1.15);
     for (const [light, x] of [
       [this.headLightL, -0.18],
       [this.headLightR, 0.18],
     ] as const) {
-      light.position.set(x, -0.02, -1.05);
+      light.position.set(x, -0.02, -1.2);
       light.target = this.headTarget;
-      light.castShadow = false;
       this.group.add(light);
     }
 
-    // Soft local fill so ship self-illuminates slightly in void
-    this.fillLight = new THREE.PointLight(0x66ccff, 1.1, 14, 2);
-    this.fillLight.position.set(0, 0.3, 0);
+    this.fillLight = new THREE.PointLight(0x66ccff, 1.0, 12, 2);
+    this.fillLight.position.set(0, 0.25, 0);
     this.group.add(this.fillLight);
 
-    // Narrow cyan accent beam down the nose (Tron read)
-    const accent = new THREE.SpotLight(COLORS.cyan, 8, 30, Math.PI / 12, 0.5, 1.4);
-    accent.position.set(0, 0.05, -1.1);
+    const accent = new THREE.SpotLight(COLORS.cyan, 10, 32, Math.PI / 14, 0.45, 1.3);
+    accent.position.set(0, 0, -1.5);
     accent.target = this.headTarget;
     this.group.add(accent);
   }
 
+  /**
+   * World-space position of the nose cannon aperture.
+   * Use this as main-gun projectile origin (not ship center).
+   */
+  getMuzzleWorldPosition(out = this._muzzleWorld): THREE.Vector3 {
+    out.copy(this.muzzleLocal);
+    this.group.localToWorld(out);
+    return out;
+  }
+
+  /** Forward direction in world space (toward cube / -local Z). */
+  getForward(out = new THREE.Vector3()): THREE.Vector3 {
+    // After lookAt(0,0,0), local -Z faces the cube
+    out.set(0, 0, -1).applyQuaternion(this.group.quaternion).normalize();
+    return out;
+  }
+
   update(camera: OrbitalCamera, dt: number): void {
-    // Orbit truth for combat; visual lag shrinks at high turn rate (anti rubber-band)
     camera.getShipPosition(this._desired);
     const posLag =
       typeof camera.getShipVisualLagRate === 'function'
@@ -307,32 +408,26 @@ export class Ship {
     const rotK = 1 - Math.exp(-ORBIT.shipRotLag * dt);
     this.group.quaternion.slerp(this._targetQuat, rotK);
 
-    // Aim headlights at cube center (local-space target)
     this._localOrigin.set(0, 0, 0);
     this.group.worldToLocal(this._localOrigin);
     this.headTarget.position.copy(this._localOrigin);
     this.headLightL.target.updateMatrixWorld();
     this.headLightR.target.updateMatrixWorld();
 
-    // Engine pulse with turn rate
     this.thrusterPulse += dt * (4 + camera.turnRate * 6);
     const pulse = 0.75 + Math.sin(this.thrusterPulse) * 0.15 + camera.turnRate * 0.2;
     for (const m of this.engineGlow) {
       if (m.material instanceof THREE.MeshStandardMaterial) {
-        m.material.emissiveIntensity = 0.7 + pulse * 0.5;
+        m.material.emissiveIntensity = 0.75 + pulse * 0.55;
       } else if (m.material instanceof THREE.MeshBasicMaterial) {
-        m.material.opacity = 0.55 + pulse * 0.35;
-        m.scale.setScalar(0.9 + pulse * 0.25);
+        m.material.opacity = 0.5 + pulse * 0.4;
+        m.scale.setScalar(0.85 + pulse * 0.3);
       }
     }
   }
 
   get position(): THREE.Vector3 {
     return this.group.position;
-  }
-
-  getForward(out = new THREE.Vector3()): THREE.Vector3 {
-    return out.set(0, 0, 0).sub(this.group.position).normalize();
   }
 
   dispose(): void {

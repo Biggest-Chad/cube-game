@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Cube Game</string>
-    <string name="title_activity_main">Cube Game</string>
-    <string name="package_name">com.biggestchad.cubegame</string>
-    <string name="custom_url_scheme">com.biggestchad.cubegame</string>
+    <string name="app_name">TheCube</string>
+    <string name="title_activity_main">TheCube</string>
+    <string name="package_name">com.biggestchad.thecube</string>
+    <string name="custom_url_scheme">com.biggestchad.thecube</string>
 </resources>

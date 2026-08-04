@@ -282,6 +282,20 @@ export class CubeManager {
     return ref.chunk.types[ref.localIndex] as BlockType;
   }
 
+  /** All live instance ids of a given block type (e.g. lattice turrets). */
+  collectIdsOfType(type: BlockType): number[] {
+    if (!this.mesh) return [];
+    const ids: number[] = [];
+    for (let id = 0; id < this.mesh.count; id++) {
+      if (this.getBlockType(id) === type) ids.push(id);
+    }
+    return ids;
+  }
+
+  hasInstance(id: number): boolean {
+    return !!this.mesh && id >= 0 && id < this.mesh.count && this.getBlockType(id) !== BlockType.Empty;
+  }
+
   applyDamage(instanceId: number, damage: number, now: number): DamageResult | null {
     if (!this.mesh || !this.generated || !this.level) return null;
     const ref = this.refs[instanceId];
@@ -412,30 +426,187 @@ export class CubeManager {
     }
   }
 
-  /**
-   * Remap all live block instance matrices after a 90° lattice rotation about origin.
-   * Visual group rotation should be identity after this (CubeAnimator handles that).
-   * axis: 'x' | 'y' | 'z', sign: +1 or -1 for direction of 90° turn.
-   */
-  commitLatticeRotation(axis: 'x' | 'y' | 'z', sign: 1 | -1): void {
-    if (!this.mesh || !this.generated) return;
-    const ang = (sign * Math.PI) / 2;
-    const q = new THREE.Quaternion();
-    if (axis === 'x') q.setFromAxisAngle(new THREE.Vector3(1, 0, 0), ang);
-    else if (axis === 'y') q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ang);
-    else q.setFromAxisAngle(new THREE.Vector3(0, 0, 1), ang);
-    _quat.identity();
+  get blockSize(): number {
+    return this.generated?.blockSize ?? 1;
+  }
 
+  /** Snap world position to integer lattice coords (0..size-1). */
+  worldToLattice(pos: THREE.Vector3): { ix: number; iy: number; iz: number } {
+    const n = Math.max(1, this.size);
+    const bs = this.blockSize;
+    const half = (n * bs) / 2;
+    const clamp = (v: number) => Math.max(0, Math.min(n - 1, Math.round(v)));
+    return {
+      ix: clamp((pos.x + half) / bs - 0.5),
+      iy: clamp((pos.y + half) / bs - 0.5),
+      iz: clamp((pos.z + half) / bs - 0.5),
+    };
+  }
+
+  latticeToWorld(ix: number, iy: number, iz: number, out = new THREE.Vector3()): THREE.Vector3 {
+    const n = Math.max(1, this.size);
+    const bs = this.blockSize;
+    const half = (n * bs) / 2;
+    return out.set(
+      (ix + 0.5) * bs - half,
+      (iy + 0.5) * bs - half,
+      (iz + 0.5) * bs - half
+    );
+  }
+
+  /**
+   * Rotate lattice indices 90° about cube center.
+   * sign +1 = right-hand 90° about +axis.
+   */
+  rotateLatticeCoord(
+    ix: number,
+    iy: number,
+    iz: number,
+    axis: 'x' | 'y' | 'z',
+    sign: 1 | -1
+  ): { ix: number; iy: number; iz: number } {
+    const n = Math.max(1, this.size);
+    const last = n - 1;
+    if (axis === 'y') {
+      return sign > 0
+        ? { ix: iz, iy, iz: last - ix }
+        : { ix: last - iz, iy, iz: ix };
+    }
+    if (axis === 'x') {
+      return sign > 0
+        ? { ix, iy: last - iz, iz: iy }
+        : { ix, iy: iz, iz: last - iy };
+    }
+    // z
+    return sign > 0
+      ? { ix: last - iy, iy: ix, iz }
+      : { ix: iy, iy: last - ix, iz };
+  }
+
+  /** Layer index along axis for a world position (0..size-1). */
+  layerIndexOf(pos: THREE.Vector3, axis: 'x' | 'y' | 'z'): number {
+    const L = this.worldToLattice(pos);
+    if (axis === 'x') return L.ix;
+    if (axis === 'y') return L.iy;
+    return L.iz;
+  }
+
+  /**
+   * Collect live instance ids whose lattice coord matches layer on axis.
+   */
+  collectSliceIds(axis: 'x' | 'y' | 'z', layer: number): number[] {
+    if (!this.mesh) return [];
+    const ids: number[] = [];
     for (let id = 0; id < this.mesh.count; id++) {
       this.mesh.getMatrixAt(id, _matrix);
       _pos.setFromMatrixPosition(_matrix);
-      _scale.setFromMatrixScale(_matrix);
-      _pos.applyQuaternion(q);
+      if (this.layerIndexOf(_pos, axis) === layer) ids.push(id);
+    }
+    return ids;
+  }
+
+  /** Layers that currently contain at least one live block. */
+  populatedLayers(axis: 'x' | 'y' | 'z'): number[] {
+    if (!this.mesh) return [];
+    const set = new Set<number>();
+    for (let id = 0; id < this.mesh.count; id++) {
+      this.mesh.getMatrixAt(id, _matrix);
+      _pos.setFromMatrixPosition(_matrix);
+      set.add(this.layerIndexOf(_pos, axis));
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }
+
+  getInstanceWorldPos(id: number, out = new THREE.Vector3()): THREE.Vector3 {
+    if (!this.mesh || id < 0 || id >= this.mesh.count) return out.copy(_zero);
+    this.mesh.getMatrixAt(id, _matrix);
+    return out.setFromMatrixPosition(_matrix);
+  }
+
+  getInstanceScale(id: number, out = new THREE.Vector3()): THREE.Vector3 {
+    if (!this.mesh || id < 0 || id >= this.mesh.count) return out.set(1, 1, 1);
+    this.mesh.getMatrixAt(id, _matrix);
+    return out.setFromMatrixScale(_matrix);
+  }
+
+  setInstanceWorldPos(id: number, pos: THREE.Vector3, scale?: THREE.Vector3): void {
+    if (!this.mesh || id < 0 || id >= this.mesh.count) return;
+    this.mesh.getMatrixAt(id, _matrix);
+    _scale.setFromMatrixScale(_matrix);
+    if (scale) _scale.copy(scale);
+    _quat.identity();
+    _matrix.compose(pos, _quat, _scale);
+    this.mesh.setMatrixAt(id, _matrix);
+  }
+
+  markInstanceMatrixDirty(): void {
+    if (this.mesh) this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * Snap a slice of blocks to final lattice positions after a 90° slice turn.
+   * Prefer `commitSliceFromStarts` after an animated turn (blocks leave the layer mid-spin).
+   */
+  commitSliceRotation(axis: 'x' | 'y' | 'z', layer: number, sign: 1 | -1): void {
+    if (!this.mesh) return;
+    const ids = this.collectSliceIds(axis, layer);
+    const starts: THREE.Vector3[] = [];
+    const scales: THREE.Vector3[] = [];
+    for (const id of ids) {
+      starts.push(this.getInstanceWorldPos(id, new THREE.Vector3()));
+      scales.push(this.getInstanceScale(id, new THREE.Vector3()));
+    }
+    this.commitSliceFromStarts(ids, starts, scales, axis, sign);
+  }
+
+  /**
+   * Commit using pre-spin world positions (correct after mid-animation).
+   */
+  commitSliceFromStarts(
+    ids: number[],
+    startPositions: THREE.Vector3[],
+    scales: THREE.Vector3[],
+    axis: 'x' | 'y' | 'z',
+    sign: 1 | -1
+  ): void {
+    if (!this.mesh) return;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      if (id < 0 || id >= this.mesh.count) continue;
+      const L = this.worldToLattice(startPositions[i]);
+      const r = this.rotateLatticeCoord(L.ix, L.iy, L.iz, axis, sign);
+      this.latticeToWorld(r.ix, r.iy, r.iz, _pos);
+      _scale.copy(scales[i] ?? new THREE.Vector3(1, 1, 1));
+      _quat.identity();
       _matrix.compose(_pos, _quat, _scale);
       this.mesh.setMatrixAt(id, _matrix);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
-    // Keep quaternion identity on group so future updates use world positions
+    this.group.quaternion.identity();
+  }
+
+  /**
+   * Remap ALL live blocks after a 90° whole-cube rotation (legacy / rare full scramble step).
+   */
+  commitLatticeRotation(axis: 'x' | 'y' | 'z', sign: 1 | -1): void {
+    if (!this.mesh || !this.generated) return;
+    const snaps: Array<{ id: number; ix: number; iy: number; iz: number; sx: number; sy: number; sz: number }> = [];
+    for (let id = 0; id < this.mesh.count; id++) {
+      this.mesh.getMatrixAt(id, _matrix);
+      _pos.setFromMatrixPosition(_matrix);
+      _scale.setFromMatrixScale(_matrix);
+      const L = this.worldToLattice(_pos);
+      snaps.push({ id, ix: L.ix, iy: L.iy, iz: L.iz, sx: _scale.x, sy: _scale.y, sz: _scale.z });
+    }
+    for (const s of snaps) {
+      const r = this.rotateLatticeCoord(s.ix, s.iy, s.iz, axis, sign);
+      this.latticeToWorld(r.ix, r.iy, r.iz, _pos);
+      _scale.set(s.sx, s.sy, s.sz);
+      _quat.identity();
+      _matrix.compose(_pos, _quat, _scale);
+      this.mesh.setMatrixAt(s.id, _matrix);
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
     this.group.quaternion.identity();
   }
 
