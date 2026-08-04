@@ -730,6 +730,8 @@ export class Game {
       this.mode = 'cinematic';
       this.hud.setVisible(false);
       this.reticle.setVisible(false);
+      this.ship.group.visible = false;
+      this.hardpoints.group.visible = false;
       this.hasSeenCinematic = true;
       this.cinematic.start({
         cube: this.cube,
@@ -769,14 +771,18 @@ export class Game {
     this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
     this.cameraCtrl.endCinematic();
 
+    // Place ship on orbit seat BEFORE unhiding (never spawn inside cube)
+    this.ship.group.visible = false;
+    for (let i = 0; i < 12; i++) this.ship.update(this.cameraCtrl, 0.08);
     this.ship.group.visible = true;
-    this.ship.update(this.cameraCtrl, 0.05);
+    this.hardpoints.group.visible = true;
 
     this.mode = 'playing';
     this.hud.setVisible(true);
     this.hud.setIntro(false);
     this.reticle.setVisible(true);
     this.cinematicRoot.classList.add('panel-hidden');
+    this.cinematicRoot.innerHTML = '';
     this.refreshShopPrompt();
     this.toast('ENGAGE');
   }
@@ -928,17 +934,20 @@ export class Game {
     this.ambient.update(dt);
 
     if (this.mode === 'menu') {
-      // Demo cube: slow orbit + continuous slice scrambles
-      this.cameraCtrl.yaw += dt * 0.12;
-      this.cameraCtrl.pitch = 0.32 + Math.sin(now * 0.2) * 0.08;
+      // Demo cube: camera orbits; only gentle pulse when NOT mid-slice (avoids jitter)
+      this.cameraCtrl.yaw += dt * 0.1;
+      this.cameraCtrl.pitch = 0.3 + Math.sin(now * 0.18) * 0.06;
       this.cameraCtrl.update(dt);
       this.cube.update(dt, now);
       this.cubeAnimator.update(dt);
-      // Gentle whole-cube pulse
-      const pulse = 1 + Math.sin(now * 1.4) * 0.02;
-      this.cube.group.scale.setScalar(pulse);
-      this.cube.group.rotation.y += dt * 0.08;
-      this.cube.group.rotation.x = Math.sin(now * 0.35) * 0.12;
+      if (!this.cubeAnimator.isRotating) {
+        const pulse = 1 + Math.sin(now * 1.1) * 0.015;
+        this.cube.group.scale.setScalar(pulse);
+        // Slow yaw only between slices — never during lattice animation
+        this.cube.group.rotation.y += dt * 0.05;
+      }
+      this.cube.group.rotation.x = 0.12;
+      this.cube.group.position.y = 0.35;
     } else if (this.mode === 'cinematic' && this.cinematic) {
       // Cube block regen/flash only — transform owned by cinematic director
       this.cube.update(dt, now);

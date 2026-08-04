@@ -32,7 +32,8 @@ const DEFAULT_CFG: CubeAnimatorConfig = {
   cooldownMax: 12,
   minLevel: 1,
   reducedMotion: false,
-  expandPeak: 0.22,
+  /** Mild expand — too high causes a hard snap on commit */
+  expandPeak: 0.1,
 };
 
 type Phase = 'idle' | 'telegraph' | 'spin' | 'cooldown';
@@ -47,6 +48,8 @@ interface SliceAnimState {
   move: SliceMove;
   ids: number[];
   startPos: THREE.Vector3[];
+  /** Exact lattice destinations — blend into these at end of spin (kills jitter pop) */
+  endPos: THREE.Vector3[];
   scales: THREE.Vector3[];
 }
 
@@ -69,7 +72,9 @@ export class CubeAnimator {
   private axisHelper: THREE.Group;
   private _axis = new THREE.Vector3();
   private _pos = new THREE.Vector3();
+  private _end = new THREE.Vector3();
   private _q = new THREE.Quaternion();
+  private _claimedIds = new Set<number>();
 
   constructor(cfg: Partial<CubeAnimatorConfig> = {}) {
     this.cfg = { ...DEFAULT_CFG, ...cfg };
@@ -341,15 +346,27 @@ export class CubeAnimator {
       sScale;
 
     this.active = [];
+    this._claimedIds.clear();
     for (const move of this.pendingMoves) {
-      const ids = this.cube.collectSliceIds(move.axis, move.layer);
+      const rawIds = this.cube.collectSliceIds(move.axis, move.layer);
+      // Exclusive ownership — no block in two concurrent slices (prevents double-write jitter)
+      const ids = rawIds.filter((id) => {
+        if (this._claimedIds.has(id)) return false;
+        this._claimedIds.add(id);
+        return true;
+      });
       const startPos: THREE.Vector3[] = [];
+      const endPos: THREE.Vector3[] = [];
       const scales: THREE.Vector3[] = [];
       for (const id of ids) {
-        startPos.push(this.cube.getInstanceWorldPos(id, new THREE.Vector3()));
+        const start = this.cube.getInstanceWorldPos(id, new THREE.Vector3());
+        startPos.push(start);
         scales.push(this.cube.getInstanceScale(id, new THREE.Vector3()));
+        const L = this.cube.worldToLattice(start);
+        const R = this.cube.rotateLatticeCoord(L.ix, L.iy, L.iz, move.axis, move.sign);
+        endPos.push(this.cube.latticeToWorld(R.ix, R.iy, R.iz, new THREE.Vector3()));
       }
-      if (ids.length) this.active.push({ move, ids, startPos, scales });
+      if (ids.length) this.active.push({ move, ids, startPos, endPos, scales });
     }
 
     if (this.cfg.reducedMotion || !this.active.length) {
@@ -386,10 +403,14 @@ export class CubeAnimator {
   private updateSpin(): void {
     if (!this.cube) return;
     const t = Math.min(1, this.timer / Math.max(1e-4, this.phaseDuration));
-    // Ease in-out for rotation
+    // Rotation ease
     const e = t * t * (3 - 2 * t);
-    // Expand mid-spin (alien decouple): peaks at t=0.5
-    const expand = 1 + Math.sin(t * Math.PI) * this.cfg.expandPeak;
+    // Soft expand mid-spin; fades out so end matches lattice (no pop)
+    const expandWave = Math.sin(t * Math.PI); // 0→1→0
+    const expand = 1 + expandWave * this.cfg.expandPeak;
+    // Settle blend into exact end positions over the last 40% of the spin
+    const settle = t < 0.55 ? 0 : (t - 0.55) / 0.45;
+    const settleE = settle * settle * (3 - 2 * settle);
 
     for (const slice of this.active) {
       const ang = e * (slice.move.sign * (Math.PI / 2));
@@ -397,12 +418,15 @@ export class CubeAnimator {
       this._q.setFromAxisAngle(this._axis, ang);
 
       for (let i = 0; i < slice.ids.length; i++) {
+        // Arc path from start
         this._pos.copy(slice.startPos[i]).applyQuaternion(this._q);
-        // Radial expand from cube origin then settle
         this._pos.multiplyScalar(expand);
+        // Blend into precomputed lattice destination — kills commit snap/jitter
+        this._end.copy(slice.endPos[i]);
+        this._pos.lerp(this._end, settleE);
+
         const s = slice.scales[i];
-        // Slight scale pulse
-        const sc = 1 + Math.sin(t * Math.PI) * 0.12;
+        const sc = 1 + expandWave * 0.06 * (1 - settleE);
         this.cube.setInstanceWorldPos(
           slice.ids[i],
           this._pos,
@@ -414,7 +438,7 @@ export class CubeAnimator {
 
     for (const plane of this.planePool) {
       if (!plane.visible) continue;
-      (plane.material as THREE.MeshBasicMaterial).opacity = 0.25 * (1 - t);
+      (plane.material as THREE.MeshBasicMaterial).opacity = 0.2 * (1 - t);
     }
   }
 
@@ -423,24 +447,23 @@ export class CubeAnimator {
       this.enterCooldown();
       return;
     }
+    // Snap to exact end lattice (should already be nearly there from settle blend)
     for (const a of this.active) {
-      this.cube.commitSliceFromStarts(
-        a.ids,
-        a.startPos,
-        a.scales,
-        a.move.axis,
-        a.move.sign
-      );
+      for (let i = 0; i < a.ids.length; i++) {
+        this.cube.setInstanceWorldPos(a.ids[i], a.endPos[i], a.scales[i]);
+      }
     }
+    this.cube.markInstanceMatrixDirty();
     this.finishVisuals();
     bus.emit('cube-rotation-complete', {
       moves: this.pendingMoves,
       concurrent: this.active.length,
       instant: false,
     });
-    bus.emit('camera-shake-request', { amount: 0.1 + this.active.length * 0.03 });
+    bus.emit('camera-shake-request', { amount: 0.06 + this.active.length * 0.02 });
     this.pendingMoves = [];
     this.active = [];
+    this._claimedIds.clear();
     this.enterCooldown();
   }
 
