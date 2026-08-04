@@ -1,5 +1,5 @@
 /**
- * Settings panel — graphics quality, audio.
+ * Settings panel — graphics, audio, reset progress.
  */
 import {
   GRAPHICS_QUALITIES,
@@ -17,6 +17,7 @@ export class SettingsUI {
   onGraphicsChange: ((q: GraphicsQuality) => void) | null = null;
   onMuteChange: ((muted: boolean) => void) | null = null;
   onVolumeChange: ((volume: number) => void) | null = null;
+  onReset: (() => void) | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -46,7 +47,7 @@ export class SettingsUI {
         <div class="shop-header tech-header">
           <div>
             <h2>SETTINGS</h2>
-            <div class="tech-header-sub">Graphics · audio</div>
+            <div class="tech-header-sub">Graphics · audio · data</div>
           </div>
           <button class="icon-btn" id="settings-close" type="button" aria-label="Close">✕</button>
         </div>
@@ -89,6 +90,14 @@ export class SettingsUI {
               <li><strong>HIGH</strong> — full bloom, max particles &amp; resolution</li>
             </ul>
           </section>
+
+          <section class="settings-section settings-danger">
+            <div class="settings-label">DATA</div>
+            <p class="settings-hint">Erase all progress, currencies, upgrades and loadouts. Cannot be undone.</p>
+            <button type="button" class="menu-btn magenta ui-btn" id="settings-reset">
+              RESET PROGRESS
+            </button>
+          </section>
         </div>
       </div>
     `;
@@ -121,6 +130,16 @@ export class SettingsUI {
       this.muted = !this.muted;
       this.onMuteChange?.(this.muted);
       this.render();
+    });
+
+    this.root.querySelector('#settings-reset')?.addEventListener('click', () => {
+      if (
+        confirm(
+          'Erase ALL progress?\n\nThis deletes fragments, upgrades, loadouts and sector progress.'
+        )
+      ) {
+        this.onReset?.();
+      }
     });
   }
 }

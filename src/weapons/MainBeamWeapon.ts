@@ -331,17 +331,19 @@ export class MainBeamWeapon implements WeaponBehavior {
     b.lastHitId = -1;
     b.root.visible = true;
     b.trail.visible = true;
+    // Punchier scale for satisfying plasma lances
+    b.root.scale.set(1.35, 1.35, 1.15);
 
     const coreCol = crit ? 0xffddff : 0xffffff;
     const sheathCol = crit ? COLORS.magenta : COLORS.cyan;
     (b.core.material as THREE.MeshBasicMaterial).color.setHex(coreCol);
     (b.core.material as THREE.MeshBasicMaterial).opacity = 1;
     (b.sheath.material as THREE.MeshBasicMaterial).color.setHex(sheathCol);
-    (b.sheath.material as THREE.MeshBasicMaterial).opacity = 0.5;
+    (b.sheath.material as THREE.MeshBasicMaterial).opacity = 0.65;
     (b.tip.material as THREE.MeshBasicMaterial).color.setHex(coreCol);
     const tmat = b.trail.material as THREE.LineBasicMaterial;
     tmat.color.setHex(sheathCol);
-    tmat.opacity = 0.75;
+    tmat.opacity = 0.9;
 
     this.orientBolt(b.root, b.pos, b.vel);
   }
@@ -427,7 +429,14 @@ export class MainBeamWeapon implements WeaponBehavior {
     result.x = point.x;
     result.y = point.y;
     result.z = point.z;
-    bus.emit('beam-hit', { ...result, crit: b.crit });
+    bus.emit('beam-hit', {
+      ...result,
+      crit: b.crit,
+      style: 'bolt' as const,
+      impactNx: point.x,
+      impactNy: point.y,
+      impactNz: point.z,
+    });
 
     if (result.destroyed && result.explosive) {
       const chain = cube.applyExplosiveChain(result.x, result.y, result.z, now);
@@ -455,11 +464,11 @@ export class MainBeamWeapon implements WeaponBehavior {
 
   private muzzleFlash(at: THREE.Vector3, dir: THREE.Vector3): void {
     const f = this.flashes.find((x) => x.life <= 0) ?? this.flashes[0];
-    f.life = 0.07;
+    f.life = 0.1;
     f.mesh.position.copy(at);
     f.mesh.visible = true;
-    // Stretch flash along fire direction
-    f.mesh.scale.set(0.9, 0.9, 2.2);
+    // Bigger punchy muzzle bloom
+    f.mesh.scale.set(1.4, 1.4, 2.8);
     this._look.copy(at).add(dir);
     f.mesh.lookAt(this._look);
     const mat = f.mesh.material as THREE.MeshBasicMaterial;

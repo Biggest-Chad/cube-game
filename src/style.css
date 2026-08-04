@@ -2623,3 +2623,10 @@ body.orientation-portrait #rotate-overlay {
   bottom: 0;
   border-top: 1px solid rgba(255, 0, 170, 0.1);
 }
+
+.settings-danger {
+  border-color: rgba(255, 0, 170, 0.35) !important;
+}
+.settings-danger .settings-label {
+  color: var(--magenta);
+}

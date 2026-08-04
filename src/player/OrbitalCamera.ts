@@ -52,6 +52,9 @@ export class OrbitalCamera {
   /** Angular velocity (rad/s) — integrator state */
   private velYaw = 0;
   private velPitch = 0;
+  /** Chase-camera motion sway (centered default; banks with turn rate) */
+  private swayX = 0;
+  private swayY = 0;
 
   /**
    * Top-speed multiplier from ship stats / upgrades.
@@ -279,6 +282,14 @@ export class OrbitalCamera {
     if (dt <= 0) return;
     const rk = 1 - Math.exp(-ORBIT.cameraLag * dt);
     this.radius += (this.targetRadius - this.radius) * rk;
+    // Sway lag with real dt (buildGameplayCamera uses a 1/60 placeholder blend)
+    const peak = ORBIT.yawSpeed * maxOrbitSpeedMul;
+    const tYaw = peak > 0 ? THREE.MathUtils.clamp(this.velYaw / peak, -1, 1) : 0;
+    const tPitch = peak > 0 ? THREE.MathUtils.clamp(this.velPitch / peak, -1, 1) : 0;
+    const swayAmt = ORBIT.cameraSway ?? 0.5;
+    const sk = 1 - Math.exp(-(ORBIT.cameraSwayLag ?? 5.5) * dt);
+    this.swayX += (-tYaw * swayAmt - this.swayX) * sk;
+    this.swayY += (tPitch * swayAmt * 0.45 - this.swayY) * sk;
     this.sync(false, dt);
   }
 
@@ -287,6 +298,8 @@ export class OrbitalCamera {
     this.velPitch = 0;
     this.smoothX = 0;
     this.smoothY = 0;
+    this.swayX = 0;
+    this.swayY = 0;
   }
 
   private spherePos(yaw: number, pitch: number, r: number, out: THREE.Vector3): THREE.Vector3 {
@@ -308,11 +321,12 @@ export class OrbitalCamera {
     }
     this.up.crossVectors(this.right, this.forward).normalize();
 
+    // Centered chase + motion sway (swayX/Y updated in update())
     out
       .copy(ship)
       .addScaledVector(this.forward, -ORBIT.cameraBack)
-      .addScaledVector(this.up, ORBIT.cameraHeight)
-      .addScaledVector(this.right, ORBIT.cameraSide);
+      .addScaledVector(this.up, ORBIT.cameraHeight + this.swayY)
+      .addScaledVector(this.right, ORBIT.cameraSide + this.swayX);
   }
 
   /**

@@ -11,6 +11,7 @@ export type TutorialStepId =
   | 'aim'
   | 'destroy'
   | 'shop_hint'
+  | 'shop_tip'
   | 'shop_buy'
   | 'complete'
   | 'loadout_intro'
@@ -71,9 +72,17 @@ const STAGE1_STEPS: TutorialStep[] = [
     cta: 'OPEN SHOP',
   },
   {
+    id: 'shop_tip',
+    title: 'SHOP TIP',
+    body: 'The shop has a lot of options. If you’re not sure what to buy, just buy the RECOMMENDED option above.',
+    highlight: '.shop-reco',
+    advance: 'purchase',
+    cta: 'GOT IT',
+  },
+  {
     id: 'shop_buy',
     title: 'FIRST PURCHASE',
-    body: 'Buy the highlighted upgrade (Pulse Amp or cheapest available). Every rank stacks.',
+    body: 'Pick anything affordable — or stick with RECOMMENDED. Every rank stacks power.',
     advance: 'purchase',
   },
   {
@@ -322,6 +331,11 @@ export class TutorialDirector {
       this.advance();
       return;
     }
+    // Shop tip can be dismissed without buying
+    if (step.id === 'shop_tip') {
+      this.advance();
+      return;
+    }
     if (
       step.advance === 'shop_open' ||
       step.id === 'loadout_buy' ||
@@ -347,10 +361,19 @@ export class TutorialDirector {
     if (!this.active) return;
     const step = this.currentStep;
     if (!step) return;
-    if (step.advance === 'purchase' || step.id === 'shop_buy') {
+    if (
+      step.advance === 'purchase' ||
+      step.id === 'shop_buy' ||
+      step.id === 'shop_tip'
+    ) {
       // Ensure UI is considered active even while shop is open
       this.visible = true;
       this.advance();
+      // If tip advanced into shop_buy and purchase already happened, clear buy too
+      const next = this.currentStep;
+      if (next && (next.id === 'shop_buy' || next.advance === 'purchase') && step.id === 'shop_tip') {
+        this.advance();
+      }
     }
   }
 
@@ -380,7 +403,8 @@ export class TutorialDirector {
       const needsTap =
         step.advance === 'tap' ||
         step.advance === 'shop_open' ||
-        step.advance === 'weapon_owned';
+        step.advance === 'weapon_owned' ||
+        step.id === 'shop_tip';
       cta.style.display = needsTap ? '' : 'none';
       cta.textContent = step.cta ?? 'CONTINUE';
     }

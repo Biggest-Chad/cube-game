@@ -176,6 +176,7 @@ export class Game {
     this.shatter = new ShatterSystem(this.particles);
     this.rings = new ImpactRings(bootPreset.impactRingCount);
     this.scene.add(this.particles.points);
+    this.scene.add(this.shatter.group);
     this.scene.add(this.rings.group);
     this.scene.add(this.reticle.group);
     this.cinematicRoot = document.getElementById('cinematic-root')!;
@@ -276,13 +277,6 @@ export class Game {
     this.menu.onLevels = () => this.openLevels();
     this.menu.onLoadout = () => this.openLoadout();
     this.menu.onSettings = () => this.openSettings();
-    this.menu.onReset = () => {
-      this.save.reset();
-      this.shopHintShown = false;
-      this.hasSeenCinematic = false;
-      this.loadProgress();
-      this.showMenu();
-    };
 
     const els = this.hud.elements;
     els.btnTech.addEventListener('click', () => this.openTech());
@@ -441,6 +435,16 @@ export class Game {
       this.save.data.masterVolume = v;
       this.persist();
     };
+    this.settingsUI.onReset = () => {
+      this.save.reset();
+      this.shopHintShown = false;
+      this.hasSeenCinematic = false;
+      this.settingsUI.hide();
+      this.loadProgress();
+      this.applyGraphics(this.graphicsQuality, false);
+      this.showMenu();
+      this.toast('PROGRESS RESET');
+    };
 
     this.adsUI.onAccepted = (placement) => {
       void this.handleAdReward(placement);
@@ -508,15 +512,35 @@ export class Game {
           z: number;
           fragments: number;
           crit?: boolean;
+          style?: 'beam' | 'bolt' | 'splash' | 'explosive' | 'default';
+          impactNx?: number;
+          impactNy?: number;
+          impactNz?: number;
         }) => {
           const len = Math.hypot(r.x, r.y, r.z) || 1;
-          // Damage pressure speeds up slice scrambles (reactive cube)
+          // Outward from cube center as default impact bias
+          const nx = r.impactNx ?? r.x / len;
+          const ny = r.impactNy ?? r.y / len;
+          const nz = r.impactNz ?? r.z / len;
           this.cubeAnimator.notifyDamage(r.destroyed ? 18 : 5);
 
           if (r.destroyed) {
-            this.shatter.shatter(r.x, r.y, r.z, r.type);
-            this.rings.spawn(r.x, r.y, r.z, colorForType(r.type), r.type === BlockType.Core ? 1.6 : 1);
-            this.cameraCtrl.shake(r.type === BlockType.Core ? 0.14 : 0.08);
+            const style =
+              r.style ??
+              (r.type === BlockType.Explosive
+                ? 'explosive'
+                : 'bolt');
+            this.shatter.shatter(r.x, r.y, r.z, r.type, style, nx, ny, nz);
+            this.rings.spawn(
+              r.x,
+              r.y,
+              r.z,
+              colorForType(r.type),
+              r.type === BlockType.Core ? 2.0 : 1.35
+            );
+            this.cameraCtrl.shake(
+              r.type === BlockType.Core ? 0.18 : r.crit ? 0.12 : 0.09
+            );
             this.audio.playDestroy();
             const gained = this.currency.addFragments(r.fragments, this.tech.stats.fragmentMul);
             this.save.data.totalBlocksDestroyed++;
@@ -526,8 +550,14 @@ export class Game {
             }
             this.refreshShopPrompt();
           } else {
-            this.shatter.impact(r.x, r.y, r.z, r.x / len, r.y / len, r.z / len, !!r.crit);
-            this.rings.spawn(r.x, r.y, r.z, r.crit ? COLORS.magenta : COLORS.cyan, 0.55);
+            this.shatter.impact(r.x, r.y, r.z, nx, ny, nz, !!r.crit);
+            this.rings.spawn(
+              r.x,
+              r.y,
+              r.z,
+              r.crit ? COLORS.magenta : COLORS.cyan,
+              r.crit ? 0.85 : 0.65
+            );
             this.audio.playHit();
           }
         }
@@ -1465,6 +1495,7 @@ export class Game {
     }
 
     this.particles.update(dt);
+    this.shatter.update(dt);
     this.rings.update(dt);
     this.post.render();
     this.maybeSave(dt);
@@ -1483,6 +1514,7 @@ export class Game {
     this.hardpoints.dispose();
     this.drones.dispose();
     this.particles.dispose();
+    this.shatter.dispose();
     this.rings.dispose();
     this.reticle.dispose();
     this.cinematic?.dispose();

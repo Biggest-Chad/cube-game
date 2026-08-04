@@ -43,9 +43,13 @@ export const ORBIT = {
   zoomSpeed: 0.05,
   /** Camera follow half-life rate; reduced further at high |ω| */
   cameraLag: 3.0,
-  cameraBack: 3.8,
-  cameraHeight: 2.25,
-  cameraSide: 2.55,
+  /** Chase cam: centered behind ship (side ≈ 0 for aim accuracy) */
+  cameraBack: 4.2,
+  cameraHeight: 1.65,
+  cameraSide: 0.05,
+  /** Motion sway amplitude (world units) when orbiting */
+  cameraSway: 0.55,
+  cameraSwayLag: 5.5,
   /**
    * Ship mesh visual lag only — combat origin uses OrbitalCamera.getShipPosition
    * / getOrbitPoint (orbit truth). Visual lag is reduced when |ω| is high.
