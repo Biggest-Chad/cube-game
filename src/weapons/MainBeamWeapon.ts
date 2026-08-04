@@ -237,23 +237,38 @@ export class MainBeamWeapon implements WeaponBehavior {
     const baseDmg = this.stats.damage * (isMain ? ctx.playerStats.damageMul : 1);
     const critChance = this.stats.critChance + (isMain ? ctx.playerStats.critChance : 0);
     const splash = this.stats.splashRadius + (isMain ? ctx.playerStats.splashAdd : 0);
-    const spreadExtra =
-      (this.stats.spread ?? 0) + (isMain ? ctx.playerStats.spreadAdd ?? 0 : 0);
+    // Main gun: ignore random spread for reliability (only gentle multi-shot fan)
+    const spreadExtra = isMain
+      ? 0
+      : (this.stats.spread ?? 0) + (ctx.playerStats.spreadAdd ?? 0);
     const pen =
       (this.stats.penetration ?? 0) +
       (isMain ? Math.floor(ctx.playerStats.penetrationAdd ?? 0) : 0);
     const armorPierce =
       this.stats.armorPierce + (isMain ? ctx.playerStats.armorPierceAdd ?? 0 : 0);
 
+    // Primary direction: exact aim (to locked target if provided)
+    const primaryDir = ctx.direction.clone().normalize();
+    if (isMain && ctx.aimTarget) {
+      primaryDir.copy(ctx.aimTarget).sub(ctx.origin).normalize();
+    }
+
     for (let s = 0; s < shots; s++) {
-      const fan = (s - (shots - 1) / 2) * 0.028;
-      const jitter = spreadExtra > 0 ? (Math.random() - 0.5) * spreadExtra * 0.1 : 0;
-      const spread = fan + jitter;
-      const axis =
-        Math.abs(ctx.direction.y) < 0.9
-          ? new THREE.Vector3(0, 1, 0)
-          : new THREE.Vector3(1, 0, 0);
-      const dir = ctx.direction.clone().applyAxisAngle(axis, spread).normalize();
+      let dir: THREE.Vector3;
+      if (isMain && s === 0) {
+        // First bolt is laser-true to crosshair / aim target
+        dir = primaryDir.clone();
+      } else {
+        // Extra multi-shot bolts: small fixed fan only (no random jitter on main)
+        const fan = (s - (shots - 1) / 2) * (isMain ? 0.018 : 0.028);
+        const jitter = !isMain && spreadExtra > 0 ? (Math.random() - 0.5) * spreadExtra * 0.08 : 0;
+        const spread = fan + jitter;
+        const axis =
+          Math.abs(primaryDir.y) < 0.9
+            ? new THREE.Vector3(0, 1, 0)
+            : new THREE.Vector3(1, 0, 0);
+        dir = primaryDir.clone().applyAxisAngle(axis, spread).normalize();
+      }
 
       const rolled = rollOutgoing({
         raw: baseDmg,
@@ -267,10 +282,14 @@ export class MainBeamWeapon implements WeaponBehavior {
       this.muzzleFlash(spawn, dir);
       this.fireBolt(spawn, dir, rolled.damage, splash, rolled.crit, armorPierce, pen);
 
-      const preview = ctx.cube.raycast(spawn, dir, this.stats.range);
-      const end = preview
-        ? preview.point
-        : spawn.clone().addScaledVector(dir, 32);
+      // Preview beam: for primary main shot use aim target / same ray as crosshair
+      let end: THREE.Vector3;
+      if (isMain && s === 0 && ctx.aimTarget) {
+        end = ctx.aimTarget.clone();
+      } else {
+        const preview = ctx.cube.raycast(spawn, dir, this.stats.range, -1, 0.55);
+        end = preview ? preview.point : spawn.clone().addScaledVector(dir, 32);
+      }
       this.showBeam(spawn, end, s % this.beamLines.length, rolled.crit);
     }
 
@@ -356,7 +375,14 @@ export class MainBeamWeapon implements WeaponBehavior {
       const move = this.dir.copy(b.pos).sub(prev);
       const dist = move.length();
       if (dist > 1e-5) {
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.4, b.lastHitId);
+        // Generous hit volume + lead so fast bolts don't tunnel past blocks
+        const hit = cube.raycast(
+          prev,
+          move.normalize(),
+          dist + 0.75,
+          b.lastHitId,
+          0.58
+        );
         if (hit) {
           this.resolveHit(b, cube, hit.instanceId, hit.point, now);
           continue;

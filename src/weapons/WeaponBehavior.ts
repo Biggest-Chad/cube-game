@@ -20,6 +20,9 @@ export interface WeaponFireContext {
   /** Optional ship vitals / defense targets for flak anti-drone */
   enemyTargets?: Array<{ position: THREE.Vector3; radius: number; id: string }>;
   onEnemyHit?: (id: string, damage: number) => void;
+  /** Main gun: exact world point crosshair is locked on */
+  aimTarget?: THREE.Vector3;
+  aimLocked?: boolean;
 }
 
 export interface WeaponBehavior {

@@ -209,11 +209,15 @@ export class CubeManager {
    * Raycast against axis-aligned blocks via ray-box on remaining instances (coarse but fine for mobile).
    * Returns approximate outward face normal for bounce / refract weapons.
    */
+  /**
+   * @param halfExtent Block AABB half-size for hit tests (default 0.52 = mild forgiveness).
+   */
   raycast(
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     maxDist: number,
-    ignoreId = -1
+    ignoreId = -1,
+    halfExtent = 0.52
   ): {
     instanceId: number;
     point: THREE.Vector3;
@@ -225,7 +229,7 @@ export class CubeManager {
     let bestDist = maxDist;
     let bestId = -1;
     let bestPoint: THREE.Vector3 | null = null;
-    const half = 0.48;
+    const half = halfExtent;
     const box = new THREE.Box3();
     const hitPt = new THREE.Vector3();
 

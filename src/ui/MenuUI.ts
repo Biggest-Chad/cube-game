@@ -21,33 +21,34 @@ export class MenuUI {
             <div class="menu-sub">Destroy · Orbit · Ascend</div>
           </div>
           <div class="menu-actions">
-            <button class="menu-btn primary ui-btn" id="m-play" type="button">
-              <span class="menu-btn-kicker">01</span>
-              <span class="menu-btn-label">Engage</span>
+            <button class="menu-btn menu-engage primary ui-btn" id="m-play" type="button">
+              <span class="menu-engage-glow" aria-hidden="true"></span>
+              <span class="menu-btn-kicker">ENGAGE</span>
+              <span class="menu-btn-label">START MISSION</span>
+              <span class="menu-engage-sub">Orbit · Aim · Destroy</span>
             </button>
-            <button class="menu-btn ui-btn" id="m-levels" type="button">
-              <span class="menu-btn-kicker">02</span>
-              <span class="menu-btn-label">Sectors</span>
-            </button>
-            <button class="menu-btn ui-btn" id="m-tech" type="button">
-              <span class="menu-btn-kicker">03</span>
-              <span class="menu-btn-label">Tech Shop</span>
-            </button>
-            <button class="menu-btn ui-btn" id="m-loadout" type="button">
-              <span class="menu-btn-kicker">04</span>
-              <span class="menu-btn-label">Loadout</span>
-            </button>
-            <button class="menu-btn ui-btn" id="m-settings" type="button">
-              <span class="menu-btn-kicker">05</span>
-              <span class="menu-btn-label">Settings</span>
-            </button>
-            <button class="menu-btn magenta ui-btn" id="m-reset" type="button">
-              <span class="menu-btn-kicker">//</span>
+
+            <div class="menu-subrow" role="group" aria-label="Submenus">
+              <button class="menu-btn menu-subbtn ui-btn" id="m-levels" type="button">
+                <span class="menu-btn-label">Sectors</span>
+              </button>
+              <button class="menu-btn menu-subbtn ui-btn" id="m-tech" type="button">
+                <span class="menu-btn-label">Shop</span>
+              </button>
+              <button class="menu-btn menu-subbtn ui-btn" id="m-loadout" type="button">
+                <span class="menu-btn-label">Loadout</span>
+              </button>
+              <button class="menu-btn menu-subbtn ui-btn" id="m-settings" type="button">
+                <span class="menu-btn-label">Settings</span>
+              </button>
+            </div>
+
+            <button class="menu-btn menu-reset-btn magenta ui-btn" id="m-reset" type="button">
               <span class="menu-btn-label">Reset Save</span>
             </button>
           </div>
           <div class="menu-hint">
-            Left stick: orbit · Right stick: aim cannon · Auto-fire armed
+            Left stick: orbit · Right stick: aim main gun · Auto-fire armed
           </div>
         </div>
         <div class="menu-right-fade" aria-hidden="true"></div>

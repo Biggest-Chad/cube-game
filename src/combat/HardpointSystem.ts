@@ -150,9 +150,7 @@ export class HardpointSystem {
     cube: CubeManager,
     playerStats: PlayerStats,
     now: number,
-    extras?: Pick<WeaponFireContext, 'enemyTargets' | 'onEnemyHit'> & {
-      aimDirection?: THREE.Vector3;
-    }
+    extras?: Pick<WeaponFireContext, 'enemyTargets' | 'onEnemyHit'>
   ): void {
     if (!this.loadout) return;
 
@@ -162,13 +160,14 @@ export class HardpointSystem {
 
       // World-space muzzle: pylon position
       this.pylons[i].getWorldPosition(this._origin);
-      // Prefer shared player aim so hardpoints track the HUD crosshair
-      if (extras?.aimDirection && extras.aimDirection.lengthSq() > 1e-6) {
-        this._dir.copy(extras.aimDirection).normalize();
-      } else {
-        this._dir.copy(shipWorldPos).multiplyScalar(-1).normalize();
-        if (this._dir.lengthSq() < 1e-6) this._dir.set(0, 0, -1);
+      // Hardpoints never use aim stick — always fire toward cube center.
+      // Homing weapons (missiles/torpedoes) steer themselves in their behaviors.
+      this._dir.set(0, 0, 0).sub(this._origin);
+      if (this._dir.lengthSq() < 1e-6) {
+        this._dir.copy(shipWorldPos).multiplyScalar(-1);
       }
+      if (this._dir.lengthSq() < 1e-6) this._dir.set(0, 0, -1);
+      else this._dir.normalize();
 
       b.update({
         dt,

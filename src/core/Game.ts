@@ -1077,16 +1077,14 @@ export class Game {
     }
   }
 
-  /** Project main-gun aim ray to HUD pixel coords (matches bolt trajectory). */
+  /** Project main-gun locked aim target to HUD (same point bolts fly toward). */
   private updateAimCrosshair(firing: boolean): void {
     this.weapon.getMuzzle(this._muzzle);
     this.weapon.getAimDirection(this._aimDir);
-    const hit = this.cube.raycast(this._muzzle, this._aimDir, 140);
-    if (hit) this._aimPoint.copy(hit.point);
-    else this._aimPoint.copy(this._muzzle).addScaledVector(this._aimDir, 48);
+    this.weapon.getAimTarget(this._aimPoint);
+    const locked = this.weapon.isAimLocked();
 
     this._ndc.copy(this._aimPoint).project(this.cameraCtrl.camera);
-    // Behind camera — park off-screen center fallback
     if (this._ndc.z > 1) {
       this.hud.updateCrosshairScreen(
         window.innerWidth * 0.5,
@@ -1102,7 +1100,7 @@ export class Game {
     const rect = root?.getBoundingClientRect();
     const x = rect ? sx - rect.left : sx;
     const y = rect ? sy - rect.top : sy;
-    this.hud.updateCrosshairScreen(x, y, firing, !!hit);
+    this.hud.updateCrosshairScreen(x, y, firing, locked);
   }
 
   private onLevelClear(): void {
@@ -1374,6 +1372,7 @@ export class Game {
               (this.loadout.weaponBuyCost('pulse_laser')?.fragments ?? Infinity),
         });
 
+        // Hardpoints: forward / guided only — never player aim stick
         this.hardpoints.update(
           dt,
           allowFire,
@@ -1384,7 +1383,6 @@ export class Game {
           {
             enemyTargets: this.cubeDefense.getEnemyTargetsForWeapons(),
             onEnemyHit: (id, dmg) => this.cubeDefense.damageEnemy(id, dmg),
-            aimDirection: this._aimDir,
           }
         );
 
