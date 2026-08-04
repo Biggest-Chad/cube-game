@@ -63,7 +63,7 @@ export class TorpedoWeapon implements WeaponBehavior {
     };
 
     this.chargeMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.25, 10, 10),
+      new THREE.SphereGeometry(0.38, 14, 14),
       new THREE.MeshBasicMaterial({
         color: 0xff00aa,
         transparent: true,
@@ -75,8 +75,8 @@ export class TorpedoWeapon implements WeaponBehavior {
     this.chargeMesh.visible = false;
     this.group.add(this.chargeMesh);
 
-    const bodyGeo = new THREE.CapsuleGeometry(0.14, 0.7, 4, 8);
-    const glowGeo = new THREE.SphereGeometry(0.2, 8, 8);
+    const bodyGeo = new THREE.CapsuleGeometry(0.16, 0.85, 5, 12);
+    const glowGeo = new THREE.SphereGeometry(0.32, 12, 12);
     for (let i = 0; i < POOL; i++) {
       const mesh = new THREE.Mesh(
         bodyGeo,
@@ -95,7 +95,7 @@ export class TorpedoWeapon implements WeaponBehavior {
         new THREE.MeshBasicMaterial({
           color: 0xff66cc,
           transparent: true,
-          opacity: 0.45,
+          opacity: 0.55,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         })

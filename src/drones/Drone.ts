@@ -6,16 +6,16 @@ import type { PlayerStats } from '../progression/TechTree';
 import { DRONE_ROLES, type DroneRole } from '../data/drones';
 import { applyToBlock } from '../combat/DamageModel';
 import { pickBestEnemy, targetPriority, type EnemyUnitRef } from './DroneAI';
+import { addMat, stdEmit, stdHull } from '../vfx/ProjectileVfx';
 
 export interface DroneCombatContext {
   enemies?: EnemyUnitRef[];
   onEnemyHit?: (id: string, damage: number) => void;
-  /** Optional player shield repair sink */
   onShieldRepair?: (amount: number) => void;
 }
 
 /**
- * Multi-role escort drone — mesh tinted by role.
+ * Multi-role escort drone — detailed mesh, thick volumetric fire beam.
  */
 export class Drone {
   readonly group = new THREE.Group();
@@ -25,7 +25,8 @@ export class Drone {
   private orbitHeight: number;
   private orbitRadius: number;
   private heat = 0;
-  private readonly beam: THREE.Line;
+  private beamCore: THREE.Mesh;
+  private beamGlow: THREE.Mesh;
   private beamLife = 0;
   private _target = new THREE.Vector3();
   private _pos = new THREE.Vector3();
@@ -33,12 +34,17 @@ export class Drone {
   private _targetQuat = new THREE.Quaternion();
   private _m = new THREE.Matrix4();
   private _up = new THREE.Vector3(0, 1, 0);
+  private _mid = new THREE.Vector3();
+  private _dir = new THREE.Vector3();
+  private _q = new THREE.Quaternion();
+  private _fwd = new THREE.Vector3(0, 1, 0);
   private rotor: THREE.Group | null = null;
   private eyeGlow: THREE.Mesh | null = null;
   private thrusters: THREE.Mesh[] = [];
   private spin = 0;
   private index: number;
   private roleColor: number;
+  private lamp!: THREE.PointLight;
 
   constructor(index: number, role: DroneRole = 'miner') {
     this.index = index;
@@ -52,126 +58,120 @@ export class Drone {
     this.rotor = this.group.getObjectByName('rotor') as THREE.Group | null;
     this.eyeGlow = this.group.getObjectByName('eye') as THREE.Mesh | null;
 
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-    this.beam = new THREE.Line(
-      g,
-      new THREE.LineBasicMaterial({
-        color: this.roleColor,
-        transparent: true,
-        opacity: 0.75,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      })
-    );
-    this.beam.visible = false;
-    this.group.add(this.beam);
+    const cyl = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+    this.beamCore = new THREE.Mesh(cyl, addMat(0xffffff, 0));
+    this.beamGlow = new THREE.Mesh(cyl, addMat(this.roleColor, 0));
+    this.beamCore.visible = this.beamGlow.visible = false;
+    this.group.add(this.beamGlow, this.beamCore);
 
-    const lamp = new THREE.PointLight(this.roleColor, 0.55, 6, 2);
-    lamp.position.set(0, 0.1, -0.15);
-    this.group.add(lamp);
-  }
-
-  private hull(c = 0x1a1520): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({
-      color: c,
-      metalness: 0.75,
-      roughness: 0.35,
-    });
-  }
-
-  private emit(c: number, i = 0.5): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({
-      color: c,
-      emissive: c,
-      emissiveIntensity: i,
-      metalness: 0.4,
-      roughness: 0.3,
-    });
+    this.lamp = new THREE.PointLight(this.roleColor, 0.85, 8, 2);
+    this.lamp.position.set(0, 0.12, -0.12);
+    this.group.add(this.lamp);
   }
 
   private buildMesh(): void {
     const g = this.group;
-    const body = this.hull(0x16101c);
-    const plate = this.hull(0x241830);
-    const accent = this.emit(this.roleColor, 0.55);
-    const cyan = this.emit(COLORS.cyan, 0.4);
+    const body = stdHull(0x14101a, 0.82, 0.28);
+    const plate = stdHull(0x221828, 0.78, 0.32);
+    const accent = stdEmit(this.roleColor, 0.85);
+    const cyan = stdEmit(COLORS.cyan, 0.55);
 
-    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), body);
-    core.scale.set(1.1, 0.7, 1.6);
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 1), body);
+    core.scale.set(1.15, 0.72, 1.65);
     g.add(core);
 
-    const top = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.4), plate);
-    top.position.y = 0.1;
+    // Armor ridges
+    const top = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.42), plate);
+    top.position.y = 0.11;
     g.add(top);
+    const chin = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.28), plate);
+    chin.position.set(0, -0.08, -0.15);
+    g.add(chin);
 
+    // Sensor eye + additive halo
     const eye = new THREE.Mesh(
-      new THREE.SphereGeometry(0.055, 12, 12),
-      new THREE.MeshStandardMaterial({
-        color: this.roleColor,
-        emissive: this.roleColor,
-        emissiveIntensity: 1.1,
-        metalness: 0.2,
-        roughness: 0.15,
-      })
+      new THREE.SphereGeometry(0.06, 14, 14),
+      stdEmit(this.roleColor, 1.25)
     );
     eye.name = 'eye';
-    eye.position.set(0, 0.02, -0.38);
+    eye.position.set(0, 0.02, -0.4);
     g.add(eye);
+    const eyeHalo = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 12, 12),
+      addMat(this.roleColor, 0.35)
+    );
+    eyeHalo.position.copy(eye.position);
+    g.add(eyeHalo);
 
     for (const side of [-1, 1]) {
-      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 0.16), plate);
-      wing.position.set(side * 0.28, 0, 0.05);
-      wing.rotation.z = side * 0.25;
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.035, 0.18), plate);
+      wing.position.set(side * 0.3, 0, 0.05);
+      wing.rotation.z = side * 0.28;
       g.add(wing);
-      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), accent);
-      tip.position.set(side * 0.55, 0.02, 0.08);
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.015, 0.04), accent);
+      edge.position.set(side * 0.3, 0.02, 0.05);
+      edge.rotation.z = side * 0.28;
+      g.add(edge);
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 10), addMat(this.roleColor, 0.85));
+      tip.position.set(side * 0.58, 0.02, 0.08);
       g.add(tip);
     }
 
-    // Role badge fin
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.18, 0.2), accent);
-    fin.position.set(0, 0.16, 0.1);
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.2, 0.22), accent);
+    fin.position.set(0, 0.18, 0.1);
     g.add(fin);
 
     const rotor = new THREE.Group();
     rotor.name = 'rotor';
-    rotor.position.set(0, 0, 0.28);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.02, 8, 18), cyan);
+    rotor.position.set(0, 0, 0.3);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.025, 8, 22), cyan);
     ring.rotation.y = Math.PI / 2;
     rotor.add(ring);
+    const ring2 = new THREE.Mesh(
+      new THREE.TorusGeometry(0.1, 0.012, 6, 16),
+      addMat(COLORS.cyan, 0.45)
+    );
+    ring2.rotation.y = Math.PI / 2;
+    rotor.add(ring2);
     const nozzle = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.05, 0.07, 0.1, 10),
-      this.emit(this.roleColor, 0.85)
+      new THREE.CylinderGeometry(0.055, 0.08, 0.12, 12),
+      stdEmit(this.roleColor, 1.05)
     );
     nozzle.rotation.x = Math.PI / 2;
-    nozzle.position.z = 0.08;
+    nozzle.position.z = 0.09;
     rotor.add(nozzle);
-    this.thrusters.push(nozzle);
+    const plume = new THREE.Mesh(
+      new THREE.ConeGeometry(0.06, 0.2, 8),
+      addMat(this.roleColor, 0.55)
+    );
+    plume.rotation.x = -Math.PI / 2;
+    plume.position.z = 0.2;
+    rotor.add(plume);
+    this.thrusters.push(nozzle, plume);
     g.add(rotor);
 
-    // Fighter gets wing guns; guardian gets shield dish
     if (this.role === 'fighter') {
       for (const side of [-1, 1]) {
-        const gun = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.28), accent);
-        gun.position.set(side * 0.2, -0.08, -0.2);
+        const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.32, 8), accent);
+        gun.rotation.x = Math.PI / 2;
+        gun.position.set(side * 0.22, -0.08, -0.22);
         g.add(gun);
       }
     } else if (this.role === 'guardian') {
       const dish = new THREE.Mesh(
-        new THREE.SphereGeometry(0.16, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
-        this.emit(COLORS.green, 0.4)
+        new THREE.SphereGeometry(0.18, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.5),
+        stdEmit(COLORS.green, 0.55)
       );
-      dish.position.set(0, 0.22, 0);
+      dish.position.set(0, 0.24, 0);
       g.add(dish);
     } else if (this.role === 'breaker') {
-      const drill = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.22, 6), accent);
+      const drill = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.26, 8), accent);
       drill.rotation.x = Math.PI / 2;
-      drill.position.set(0, -0.05, -0.45);
+      drill.position.set(0, -0.05, -0.48);
       g.add(drill);
     }
 
-    g.scale.setScalar(0.95);
+    g.scale.setScalar(1.05);
   }
 
   update(
@@ -203,18 +203,31 @@ export class Drone {
     if (this.rotor) this.rotor.rotation.z = this.spin;
 
     if (this.eyeGlow?.material instanceof THREE.MeshStandardMaterial) {
-      this.eyeGlow.material.emissiveIntensity = 0.7 + Math.sin(now * 5 + this.index) * 0.4;
+      this.eyeGlow.material.emissiveIntensity =
+        0.85 + Math.sin(now * 5 + this.index) * 0.45 + this.heat * 0.3;
+    }
+    this.lamp.intensity = 0.6 + Math.sin(now * 4 + this.index) * 0.25;
+    for (const t of this.thrusters) {
+      if (t.material instanceof THREE.MeshStandardMaterial) {
+        t.material.emissiveIntensity = 0.7 + Math.sin(now * 7 + this.index) * 0.35;
+      } else if (t.material instanceof THREE.MeshBasicMaterial) {
+        t.material.opacity = 0.4 + Math.sin(now * 9 + this.index) * 0.2;
+      }
     }
 
     if (this.beamLife > 0) {
       this.beamLife -= dt;
-      if (this.beamLife <= 0) this.beam.visible = false;
+      const t = Math.max(0, this.beamLife / 0.1);
+      (this.beamCore.material as THREE.MeshBasicMaterial).opacity = t * 0.95;
+      (this.beamGlow.material as THREE.MeshBasicMaterial).opacity = t * 0.45;
+      if (this.beamLife <= 0) {
+        this.beamCore.visible = this.beamGlow.visible = false;
+      }
     }
 
     if (hidden) this.heat = Math.min(1, this.heat + dt * 0.08);
     else this.heat = Math.max(0, this.heat - dt * 0.15);
 
-    // Guardian passive repair
     if (this.role === 'guardian' && combat?.onShieldRepair && def.shieldRepairPerSec > 0) {
       combat.onShieldRepair(def.shieldRepairPerSec * dt);
     }
@@ -225,13 +238,8 @@ export class Drone {
     const rate = 2.2 * stats.droneFireRateMul * def.fireRateMul * (1 - this.heat * 0.5);
     this.cooldown = 1 / Math.max(0.4, rate);
 
-    // Fighter: prioritize enemy drones
     if (this.role === 'fighter' && combat?.enemies && combat.enemies.length > 0) {
-      const enemy = pickBestEnemy(
-        combat.enemies,
-        this.group.position,
-        80
-      );
+      const enemy = pickBestEnemy(combat.enemies, this.group.position, 80);
       if (enemy && combat.onEnemyHit) {
         this._target.set(enemy.position.x, enemy.position.y, enemy.position.z);
         this.showBeam(this.group.position, this._target);
@@ -242,8 +250,7 @@ export class Drone {
       }
     }
 
-    // Block targeting for miner / breaker / guardian (and fighter fallback)
-    if (this.role === 'fighter') return; // idle patrol if no enemies
+    if (this.role === 'fighter') return;
 
     const nearest = cube.findNearest(this.group.position, 80, (t) =>
       targetPriority(t, stats, this.role)
@@ -261,7 +268,7 @@ export class Drone {
     );
     const result = cube.applyDamage(nearest.instanceId, applied.finalDamage, now);
     if (result) {
-      bus.emit('beam-hit', result);
+      bus.emit('beam-hit', { ...result, style: 'beam' as const });
       if (result.destroyed && result.explosive) {
         cube.applyExplosiveChain(result.x, result.y, result.z, now);
       }
@@ -269,15 +276,26 @@ export class Drone {
   }
 
   private showBeam(from: THREE.Vector3, to: THREE.Vector3): void {
-    const pos = this.beam.geometry.attributes.position as THREE.BufferAttribute;
+    // Beams live in drone local space
     const localFrom = this.group.worldToLocal(from.clone());
     const localTo = this.group.worldToLocal(to.clone());
-    pos.setXYZ(0, localFrom.x, localFrom.y, localFrom.z);
-    pos.setXYZ(1, localTo.x, localTo.y, localTo.z);
-    pos.needsUpdate = true;
-    this.beam.geometry.computeBoundingSphere();
-    this.beam.visible = true;
-    this.beamLife = 0.07;
+    const len = Math.max(0.15, localFrom.distanceTo(localTo));
+    this._mid.copy(localFrom).add(localTo).multiplyScalar(0.5);
+    this._dir.copy(localTo).sub(localFrom).normalize();
+    this._q.setFromUnitVectors(this._fwd, this._dir);
+
+    for (const [mesh, w] of [
+      [this.beamCore, 0.035],
+      [this.beamGlow, 0.11],
+    ] as const) {
+      mesh.position.copy(this._mid);
+      mesh.quaternion.copy(this._q);
+      mesh.scale.set(w, len, w);
+      mesh.visible = true;
+    }
+    (this.beamCore.material as THREE.MeshBasicMaterial).opacity = 0.95;
+    (this.beamGlow.material as THREE.MeshBasicMaterial).opacity = 0.5;
+    this.beamLife = 0.1;
   }
 
   dispose(): void {

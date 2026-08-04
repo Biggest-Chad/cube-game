@@ -29,6 +29,8 @@ export class Ship {
   private thrusterLocals: THREE.Vector3[] = [];
   private thrusterLights: THREE.PointLight[] = [];
   private plumeMeshes: THREE.Mesh[] = [];
+  private accentMats: THREE.MeshStandardMaterial[] = [];
+  private runningLights: THREE.Mesh[] = [];
   private readonly _thrusterWorld = new THREE.Vector3();
 
   constructor() {
@@ -38,33 +40,34 @@ export class Ship {
     this.setupThrusterLights();
   }
 
-  private hull(color = 0x1a2430, metal = 0.78, rough = 0.32): THREE.MeshStandardMaterial {
+  private hull(color = 0x1a2430, metal = 0.82, rough = 0.26): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({
       color,
       metalness: metal,
       roughness: rough,
+      envMapIntensity: 0.9,
     });
   }
 
-  private accent(color: number, intensity = 0.45): THREE.MeshStandardMaterial {
+  private accent(color: number, intensity = 0.75): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({
       color,
       emissive: color,
       emissiveIntensity: intensity,
-      metalness: 0.4,
-      roughness: 0.22,
+      metalness: 0.35,
+      roughness: 0.18,
     });
   }
 
   private glass(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({
-      color: 0x4ec8e8,
-      metalness: 0.2,
-      roughness: 0.08,
+      color: 0x6ad8f0,
+      metalness: 0.15,
+      roughness: 0.05,
       transparent: true,
-      opacity: 0.78,
-      emissive: 0x0a3040,
-      emissiveIntensity: 0.4,
+      opacity: 0.72,
+      emissive: 0x1488aa,
+      emissiveIntensity: 0.65,
     });
   }
 
@@ -116,11 +119,12 @@ export class Ship {
     const hullLite = this.hull(0x243444, 0.7, 0.4);
     const panel = this.hull(0x080c12, 0.9, 0.45);
     const edge = this.hull(0x2a3848, 0.75, 0.3);
-    const cyan = this.accent(COLORS.cyan, 0.55);
-    const mag = this.accent(COLORS.magenta, 0.65);
-    const white = this.accent(COLORS.white, 0.7);
-    const eng = this.accent(0xff44bb, 1.1);
-    const warn = this.accent(0xff6622, 0.5);
+    const cyan = this.accent(COLORS.cyan, 0.85);
+    const mag = this.accent(COLORS.magenta, 0.95);
+    const white = this.accent(COLORS.white, 0.9);
+    const eng = this.accent(0xff44bb, 1.35);
+    const warn = this.accent(0xff6622, 0.7);
+    this.accentMats.push(cyan, mag, white, eng, warn);
 
     // ═══════════════════════════════════════════
     // AGGRESSIVE DAGGER FUSELAGE (front = -Z)
@@ -355,6 +359,36 @@ export class Ship {
       this.addBox(g, 0.08, 0.02, 0.1, side * 0.18, -0.19, 0.25, mag);
     }
 
+    // Wingtip / nav running lights (bloom catchers)
+    for (const side of [-1, 1]) {
+      const nav = new THREE.Mesh(
+        new THREE.SphereGeometry(0.035, 10, 10),
+        new THREE.MeshBasicMaterial({
+          color: side > 0 ? COLORS.magenta : COLORS.cyan,
+          transparent: true,
+          opacity: 0.9,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      nav.position.set(side * 0.72, 0.02, 0.15);
+      g.add(nav);
+      this.runningLights.push(nav);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08, 10, 10),
+        new THREE.MeshBasicMaterial({
+          color: side > 0 ? COLORS.magenta : COLORS.cyan,
+          transparent: true,
+          opacity: 0.25,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      halo.position.copy(nav.position);
+      g.add(halo);
+      this.runningLights.push(halo);
+    }
+
     // ── Headlights in cheek mounts ──
     const lampMat = this.hull(0x1a2028, 0.5, 0.35);
     const lensMat = new THREE.MeshStandardMaterial({
@@ -491,25 +525,40 @@ export class Ship {
     this.motionIntensity += (targetMotion - this.motionIntensity) * mK;
 
     this.thrusterPulse += dt * (5 + this.motionIntensity * 10);
-    const flicker = 0.85 + Math.sin(this.thrusterPulse) * 0.15 + Math.sin(this.thrusterPulse * 2.3) * 0.08;
+    const flicker =
+      0.85 +
+      Math.sin(this.thrusterPulse) * 0.15 +
+      Math.sin(this.thrusterPulse * 2.3) * 0.08;
     const boost = this.motionIntensity;
 
     for (const m of this.engineGlow) {
       if (m.material instanceof THREE.MeshStandardMaterial) {
-        m.material.emissiveIntensity = 0.55 + flicker * 0.5 + boost * 1.1;
+        m.material.emissiveIntensity = 0.7 + flicker * 0.65 + boost * 1.35;
       } else if (m.material instanceof THREE.MeshBasicMaterial) {
-        m.material.opacity = 0.35 + flicker * 0.35 + boost * 0.4;
+        m.material.opacity = 0.4 + flicker * 0.4 + boost * 0.45;
       }
     }
     for (const p of this.plumeMeshes) {
-      const s = 0.7 + boost * 1.15 + Math.sin(this.thrusterPulse * 1.7) * 0.12;
-      p.scale.set(s * 0.85, s * 0.85, s * (1.1 + boost * 0.9));
+      const s = 0.75 + boost * 1.35 + Math.sin(this.thrusterPulse * 1.7) * 0.14;
+      p.scale.set(s * 0.9, s * 0.9, s * (1.15 + boost * 1.05));
       if (p.material instanceof THREE.MeshBasicMaterial) {
-        p.material.opacity = 0.25 + boost * 0.55 + flicker * 0.15;
+        p.material.opacity = 0.3 + boost * 0.6 + flicker * 0.18;
       }
     }
     for (const L of this.thrusterLights) {
-      L.intensity = (0.4 + boost * 4.5) * flicker;
+      L.intensity = (0.55 + boost * 5.5) * flicker;
+    }
+    // Accent strips + nav lights breathe with thrusters
+    for (const mat of this.accentMats) {
+      mat.emissiveIntensity = 0.55 + flicker * 0.35 + boost * 0.45;
+    }
+    for (const n of this.runningLights) {
+      if (n.material instanceof THREE.MeshBasicMaterial) {
+        n.material.opacity = 0.35 + flicker * 0.45 + boost * 0.25;
+      }
+    }
+    if (this.fillLight) {
+      this.fillLight.intensity = 0.35 + boost * 0.55;
     }
 
     // Exhaust particles while moving / turning

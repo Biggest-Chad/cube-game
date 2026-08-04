@@ -59,9 +59,9 @@ export class RailgunWeapon implements WeaponBehavior {
     };
 
     this.chargeRing = new THREE.Mesh(
-      new THREE.TorusGeometry(0.18, 0.02, 6, 20),
+      new THREE.TorusGeometry(0.28, 0.035, 10, 32),
       new THREE.MeshBasicMaterial({
-        color: 0x4488ff,
+        color: 0x66aaff,
         transparent: true,
         opacity: 0,
         blending: THREE.AdditiveBlending,
@@ -70,13 +70,27 @@ export class RailgunWeapon implements WeaponBehavior {
     );
     this.chargeRing.visible = false;
     this.group.add(this.chargeRing);
+    // Outer charge halo
+    const chargeOuter = new THREE.Mesh(
+      new THREE.TorusGeometry(0.4, 0.02, 8, 28),
+      new THREE.MeshBasicMaterial({
+        color: 0x4488ff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    chargeOuter.name = 'charge_outer';
+    chargeOuter.visible = false;
+    this.group.add(chargeOuter);
 
-    const geo = new THREE.BoxGeometry(0.06, 0.06, 0.7);
+    const geo = new THREE.BoxGeometry(0.09, 0.09, 1.1);
     for (let i = 0; i < POOL; i++) {
       const mesh = new THREE.Mesh(
         geo,
         new THREE.MeshBasicMaterial({
-          color: 0x88bbff,
+          color: 0xaaccff,
           transparent: true,
           opacity: 1,
           blending: THREE.AdditiveBlending,
@@ -85,14 +99,27 @@ export class RailgunWeapon implements WeaponBehavior {
       );
       mesh.visible = false;
       this.group.add(mesh);
+      // Outer glow shell on slug
+      const shell = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.16, 0.95),
+        new THREE.MeshBasicMaterial({
+          color: 0x4488ff,
+          transparent: true,
+          opacity: 0.35,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      shell.name = 'shell';
+      mesh.add(shell);
       const trailGeo = new THREE.BufferGeometry();
-      trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(18), 3));
       const trail = new THREE.Line(
         trailGeo,
         new THREE.LineBasicMaterial({
-          color: 0x4488ff,
+          color: 0x66aaff,
           transparent: true,
-          opacity: 0.7,
+          opacity: 0.85,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         })

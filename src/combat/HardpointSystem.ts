@@ -46,46 +46,75 @@ export class HardpointSystem {
     g.name = `hardpoint_${index}`;
 
     const dark = new THREE.MeshStandardMaterial({
-      color: 0x1a1520,
-      metalness: 0.8,
-      roughness: 0.4,
+      color: 0x16121c,
+      metalness: 0.88,
+      roughness: 0.28,
     });
     const accent = new THREE.MeshStandardMaterial({
-      color: 0x334455,
+      color: 0x2a3a48,
       emissive: 0x00f0ff,
-      emissiveIntensity: 0.15,
-      metalness: 0.5,
-      roughness: 0.35,
+      emissiveIntensity: 0.45,
+      metalness: 0.55,
+      roughness: 0.28,
     });
 
     // Clamp base
-    const base = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.18), dark);
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.07, 0.2), dark);
     g.add(base);
+    // Side armor plates
+    for (const s of [-1, 1]) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.16), dark);
+      plate.position.set(s * 0.08, 0, 0);
+      g.add(plate);
+    }
     // Pylon spar
-    const spar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.22), accent);
-    spar.position.set(0, -0.02, -0.12);
+    const spar = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.26), accent);
+    spar.position.set(0, -0.02, -0.14);
     g.add(spar);
-    // Empty muzzle ring
+    // Muzzle housing
+    const housing = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.055, 0.1, 10),
+      dark
+    );
+    housing.rotation.x = Math.PI / 2;
+    housing.position.set(0, -0.02, -0.26);
+    g.add(housing);
+    // Empty muzzle ring (glows when weapon equipped via tint)
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.04, 0.008, 6, 12),
+      new THREE.TorusGeometry(0.05, 0.012, 8, 16),
       new THREE.MeshBasicMaterial({
-        color: 0x445566,
+        color: 0x00f0ff,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
       })
     );
     ring.rotation.y = Math.PI / 2;
-    ring.position.set(0, -0.02, -0.28);
+    ring.position.set(0, -0.02, -0.32);
     ring.name = 'empty_ring';
     g.add(ring);
+    // Status LED
+    const led = new THREE.Mesh(
+      new THREE.SphereGeometry(0.018, 8, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0x00f0ff,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    led.position.set(0.05, 0.04, 0.02);
+    g.add(led);
 
     // Cable
     const cable = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.008, 0.008, 0.2, 4),
+      new THREE.CylinderGeometry(0.01, 0.01, 0.22, 6),
       dark
     );
     cable.rotation.z = Math.PI / 2;
-    cable.position.set(0.08, 0.02, 0.05);
+    cable.position.set(0.09, 0.02, 0.05);
     g.add(cable);
 
     return g;

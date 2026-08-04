@@ -37,58 +37,46 @@ function makePlasmaBoltGeometry(): {
   tip: THREE.Mesh;
 } {
   const root = new THREE.Group();
+  const add = (color: number, opacity: number) =>
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
 
-  // Long thin core along local +Z (flight direction after orientation)
-  // Cylinder default = Y; rotate so axis = Z
-  const coreMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 1,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.85, 6), coreMat);
+  // Hot white core
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.04, 1.05, 10), add(0xffffff, 1));
   core.rotation.x = Math.PI / 2;
   root.add(core);
 
-  // Outer plasma sheath — slightly larger, cyan/magenta tinted
-  const sheathMat = new THREE.MeshBasicMaterial({
-    color: COLORS.cyan,
-    transparent: true,
-    opacity: 0.45,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const sheath = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.75, 8), sheathMat);
+  // Cyan / magenta plasma sheath
+  const sheath = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.1, 0.95, 12),
+    add(COLORS.cyan, 0.55)
+  );
   sheath.rotation.x = Math.PI / 2;
   root.add(sheath);
 
+  // Soft outer bloom volume
+  const outer = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14, 0.17, 0.8, 12),
+    add(COLORS.cyan, 0.22)
+  );
+  outer.rotation.x = Math.PI / 2;
+  root.add(outer);
+
   // Leading tip flare
-  const tipMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.95,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), tipMat);
-  tip.position.z = 0.42;
-  tip.scale.set(0.7, 0.7, 1.4);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), add(0xffffff, 0.95));
+  tip.position.z = 0.52;
+  tip.scale.set(0.75, 0.75, 1.45);
   root.add(tip);
 
   // Soft rear glow
-  const tail = new THREE.Mesh(
-    new THREE.SphereGeometry(0.05, 6, 6),
-    new THREE.MeshBasicMaterial({
-      color: COLORS.cyan,
-      transparent: true,
-      opacity: 0.5,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-  );
-  tail.position.z = -0.4;
-  tail.scale.set(1.2, 1.2, 0.6);
+  const tail = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 10), add(COLORS.cyan, 0.55));
+  tail.position.z = -0.48;
+  tail.scale.set(1.35, 1.35, 0.7);
   root.add(tail);
 
   return { root, core, sheath, tip };

@@ -8,11 +8,14 @@ import { BlockType } from '../cube/BlockTypes';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
 import type { WeaponBehavior, WeaponFireContext } from './WeaponBehavior';
+import { makeMissileBody, makeTrail, orientZForward } from '../vfx/ProjectileVfx';
 
 interface Missile {
   active: boolean;
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   trail: THREE.Line;
+  trailSet: (i: number, p: THREE.Vector3) => void;
+  trailHist: THREE.Vector3[];
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;
@@ -21,6 +24,7 @@ interface Missile {
   crit: boolean;
   armorPierce: number;
   targetId: number;
+  glow: THREE.PointLight;
 }
 
 const POOL = 20;
@@ -58,38 +62,20 @@ export class MissileWeapon implements WeaponBehavior {
       flags: new Set(),
     };
 
-    const geo = new THREE.CapsuleGeometry(0.07, 0.4, 3, 6);
     for (let i = 0; i < POOL; i++) {
-      const mesh = new THREE.Mesh(
-        geo,
-        new THREE.MeshBasicMaterial({
-          color: 0xaa66ff,
-          transparent: true,
-          opacity: 0.95,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
+      const mesh = makeMissileBody(0xaa66ff, 0.5, 0.075);
       mesh.visible = false;
       this.group.add(mesh);
-      const trailGeo = new THREE.BufferGeometry();
-      trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-      const trail = new THREE.Line(
-        trailGeo,
-        new THREE.LineBasicMaterial({
-          color: 0xcc88ff,
-          transparent: true,
-          opacity: 0.55,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
-      trail.visible = false;
-      this.group.add(trail);
+      const tr = makeTrail(0xcc88ff, 10, 0.8);
+      this.group.add(tr.line);
+      const glow = new THREE.PointLight(0xaa66ff, 0, 9, 2);
+      this.group.add(glow);
       this.missiles.push({
         active: false,
         mesh,
-        trail,
+        trail: tr.line,
+        trailSet: tr.set,
+        trailHist: Array.from({ length: 10 }, () => new THREE.Vector3()),
         pos: new THREE.Vector3(),
         vel: new THREE.Vector3(),
         life: 0,
@@ -98,6 +84,7 @@ export class MissileWeapon implements WeaponBehavior {
         crit: false,
         armorPierce: 0,
         targetId: -1,
+        glow,
       });
     }
   }
@@ -163,6 +150,10 @@ export class MissileWeapon implements WeaponBehavior {
     m.mesh.visible = true;
     m.trail.visible = true;
     m.mesh.position.copy(m.pos);
+    orientZForward(m.mesh, dir);
+    for (const h of m.trailHist) h.copy(m.pos);
+    m.glow.intensity = crit ? 12 : 7;
+    m.glow.position.copy(m.pos);
   }
 
   private sim(dt: number, cube: CubeManager, now: number): void {
@@ -185,18 +176,20 @@ export class MissileWeapon implements WeaponBehavior {
       const prev = this.tmp.copy(m.pos);
       m.pos.addScaledVector(m.vel, dt);
       m.mesh.position.copy(m.pos);
-      m.mesh.lookAt(m.pos.clone().add(m.vel));
+      orientZForward(m.mesh, m.vel);
+      m.glow.position.copy(m.pos);
+      m.glow.intensity = 6 + Math.sin(m.life * 18) * 2.5;
 
-      const attr = m.trail.geometry.attributes.position as THREE.BufferAttribute;
-      attr.setXYZ(0, prev.x, prev.y, prev.z);
-      attr.setXYZ(1, m.pos.x, m.pos.y, m.pos.z);
-      attr.needsUpdate = true;
+      for (let i = m.trailHist.length - 1; i > 0; i--) m.trailHist[i].copy(m.trailHist[i - 1]);
+      m.trailHist[0].copy(m.pos);
+      for (let i = 0; i < m.trailHist.length; i++) m.trailSet(i, m.trailHist[i]);
+      (m.trail.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
       m.trail.geometry.computeBoundingSphere();
 
       const move = this.move.copy(m.pos).sub(prev);
       const dist = move.length();
       if (dist > 1e-5) {
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.45);
+        const hit = cube.raycast(prev, move.normalize(), dist + 0.45, -1, 0.55);
         if (hit) {
           this.impact(m, cube, hit.instanceId, hit.point, now);
           continue;
@@ -231,11 +224,18 @@ export class MissileWeapon implements WeaponBehavior {
       result.x = point.x;
       result.y = point.y;
       result.z = point.z;
-      bus.emit('beam-hit', { ...result, crit: m.crit });
+      bus.emit('beam-hit', {
+        ...result,
+        crit: m.crit,
+        style: 'bolt' as const,
+        impactNx: point.x,
+        impactNy: point.y,
+        impactNz: point.z,
+      });
     }
     if (m.splash > 0) {
       for (const h of cube.applySplash(point, m.splash, m.damage * 0.3, now)) {
-        bus.emit('beam-hit', h);
+        bus.emit('beam-hit', { ...h, style: 'splash' as const });
       }
     }
   }
@@ -244,6 +244,7 @@ export class MissileWeapon implements WeaponBehavior {
     m.active = false;
     m.mesh.visible = false;
     m.trail.visible = false;
+    m.glow.intensity = 0;
   }
 
   getHeat(): number {
@@ -257,12 +258,14 @@ export class MissileWeapon implements WeaponBehavior {
   }
 
   dispose(): void {
-    for (const m of this.missiles) {
-      m.mesh.geometry.dispose();
-      (m.mesh.material as THREE.Material).dispose();
-      m.trail.geometry.dispose();
-      (m.trail.material as THREE.Material).dispose();
-    }
+    this.group.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
+        o.geometry.dispose();
+        if (Array.isArray(o.material)) o.material.forEach((x) => x.dispose());
+        else (o.material as THREE.Material).dispose();
+      }
+      if (o instanceof THREE.Light) o.dispose();
+    });
     this.group.clear();
   }
 }

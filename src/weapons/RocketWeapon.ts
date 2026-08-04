@@ -1,5 +1,5 @@
 /**
- * Rocket Pod — slow dumb-fire splash projectiles.
+ * Rocket Pod — slow dumb-fire splash projectiles with thick exhaust trails.
  */
 import * as THREE from 'three';
 import type { WeaponStats } from '../data/weapons';
@@ -7,11 +7,14 @@ import type { CubeManager } from '../cube/CubeManager';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
 import type { WeaponBehavior, WeaponFireContext } from './WeaponBehavior';
+import { makeMissileBody, makeTrail, orientZForward } from '../vfx/ProjectileVfx';
 
 interface Rocket {
   active: boolean;
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   trail: THREE.Line;
+  trailSet: (i: number, p: THREE.Vector3) => void;
+  trailHist: THREE.Vector3[];
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;
@@ -19,6 +22,7 @@ interface Rocket {
   splash: number;
   crit: boolean;
   armorPierce: number;
+  glow: THREE.PointLight;
 }
 
 const POOL = 24;
@@ -36,41 +40,21 @@ export class RocketWeapon implements WeaponBehavior {
 
   constructor() {
     this.stats = emptyStats(0xff6622);
-    const bodyGeo = new THREE.ConeGeometry(0.1, 0.55, 6);
     for (let i = 0; i < POOL; i++) {
-      const mesh = new THREE.Mesh(
-        bodyGeo,
-        new THREE.MeshBasicMaterial({
-          color: 0xff6622,
-          transparent: true,
-          opacity: 0.95,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
+      const mesh = makeMissileBody(0xff6622, 0.55, 0.09);
       mesh.visible = false;
-      mesh.rotation.x = Math.PI / 2;
       this.group.add(mesh);
-
-      const trailGeo = new THREE.BufferGeometry();
-      trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-      const trail = new THREE.Line(
-        trailGeo,
-        new THREE.LineBasicMaterial({
-          color: 0xff8844,
-          transparent: true,
-          opacity: 0.5,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
-      trail.visible = false;
-      this.group.add(trail);
-
+      const tr = makeTrail(0xff8844, 8, 0.75);
+      this.group.add(tr.line);
+      const glow = new THREE.PointLight(0xff6622, 0, 8, 2);
+      this.group.add(glow);
+      const hist = Array.from({ length: 8 }, () => new THREE.Vector3());
       this.rockets.push({
         active: false,
         mesh,
-        trail,
+        trail: tr.line,
+        trailSet: tr.set,
+        trailHist: hist,
         pos: new THREE.Vector3(),
         vel: new THREE.Vector3(),
         life: 0,
@@ -78,6 +62,7 @@ export class RocketWeapon implements WeaponBehavior {
         splash: 0,
         crit: false,
         armorPierce: 0,
+        glow,
       });
     }
   }
@@ -130,8 +115,10 @@ export class RocketWeapon implements WeaponBehavior {
     r.mesh.visible = true;
     r.trail.visible = true;
     r.mesh.position.copy(r.pos);
-    const mat = r.mesh.material as THREE.MeshBasicMaterial;
-    mat.color.setHex(crit ? 0xff00aa : 0xff6622);
+    orientZForward(r.mesh, dir);
+    for (const h of r.trailHist) h.copy(r.pos);
+    r.glow.intensity = crit ? 10 : 6;
+    r.glow.position.copy(r.pos);
   }
 
   private sim(dt: number, cube: CubeManager, now: number): void {
@@ -141,18 +128,21 @@ export class RocketWeapon implements WeaponBehavior {
       const prev = this.tmp.copy(r.pos);
       r.pos.addScaledVector(r.vel, dt);
       r.mesh.position.copy(r.pos);
-      r.mesh.lookAt(r.pos.clone().add(r.vel));
+      orientZForward(r.mesh, r.vel);
+      r.glow.position.copy(r.pos);
+      r.glow.intensity = 5 + Math.sin(r.life * 20) * 2;
 
-      const attr = r.trail.geometry.attributes.position as THREE.BufferAttribute;
-      attr.setXYZ(0, prev.x, prev.y, prev.z);
-      attr.setXYZ(1, r.pos.x, r.pos.y, r.pos.z);
-      attr.needsUpdate = true;
+      // Scroll trail history
+      for (let i = r.trailHist.length - 1; i > 0; i--) r.trailHist[i].copy(r.trailHist[i - 1]);
+      r.trailHist[0].copy(r.pos);
+      for (let i = 0; i < r.trailHist.length; i++) r.trailSet(i, r.trailHist[i]);
+      (r.trail.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
       r.trail.geometry.computeBoundingSphere();
 
       const move = this.move.copy(r.pos).sub(prev);
       const dist = move.length();
       if (dist > 1e-5) {
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.5);
+        const hit = cube.raycast(prev, move.normalize(), dist + 0.5, -1, 0.55);
         if (hit) {
           this.detonate(r, cube, hit.instanceId, hit.point, now);
           continue;
@@ -180,12 +170,19 @@ export class RocketWeapon implements WeaponBehavior {
       result.x = point.x;
       result.y = point.y;
       result.z = point.z;
-      bus.emit('beam-hit', { ...result, crit: r.crit });
+      bus.emit('beam-hit', {
+        ...result,
+        crit: r.crit,
+        style: 'splash' as const,
+        impactNx: point.x,
+        impactNy: point.y,
+        impactNz: point.z,
+      });
     }
     if (r.splash > 0) {
       const splashDmg = r.damage * 0.45;
       const hits = cube.applySplash(point, r.splash, splashDmg, now);
-      for (const h of hits) bus.emit('beam-hit', h);
+      for (const h of hits) bus.emit('beam-hit', { ...h, style: 'splash' as const });
     }
     bus.emit('explosion', { x: point.x, y: point.y, z: point.z, radius: r.splash, family: 'rocket' });
   }
@@ -194,6 +191,7 @@ export class RocketWeapon implements WeaponBehavior {
     r.active = false;
     r.mesh.visible = false;
     r.trail.visible = false;
+    r.glow.intensity = 0;
   }
 
   getHeat(): number {
@@ -207,12 +205,14 @@ export class RocketWeapon implements WeaponBehavior {
   }
 
   dispose(): void {
-    for (const r of this.rockets) {
-      r.mesh.geometry.dispose();
-      (r.mesh.material as THREE.Material).dispose();
-      r.trail.geometry.dispose();
-      (r.trail.material as THREE.Material).dispose();
-    }
+    this.group.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
+        o.geometry.dispose();
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else (o.material as THREE.Material).dispose();
+      }
+      if (o instanceof THREE.Light) o.dispose();
+    });
     this.group.clear();
   }
 }

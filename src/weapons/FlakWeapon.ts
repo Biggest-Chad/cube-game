@@ -54,19 +54,30 @@ export class FlakWeapon implements WeaponBehavior {
       flags: new Set(),
     };
 
-    const geo = new THREE.SphereGeometry(0.08, 6, 6);
+    const geo = new THREE.SphereGeometry(0.1, 10, 10);
     for (let i = 0; i < POOL; i++) {
       const mesh = new THREE.Mesh(
         geo,
         new THREE.MeshBasicMaterial({
-          color: 0xffd060,
+          color: 0xffe080,
           transparent: true,
-          opacity: 0.9,
+          opacity: 0.95,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         })
       );
       mesh.visible = false;
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 10, 10),
+        new THREE.MeshBasicMaterial({
+          color: 0xffaa40,
+          transparent: true,
+          opacity: 0.35,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      mesh.add(halo);
       this.group.add(mesh);
       this.shells.push({
         active: false,
