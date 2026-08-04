@@ -229,6 +229,7 @@ export class TutorialDirector {
       this.advance();
       return;
     }
+    // Purchase can also be driven by notifyPurchase() while shop is open
     if (step.advance === 'purchase' && ctx.purchasedThisSession) {
       this.advance();
       return;
@@ -327,7 +328,40 @@ export class TutorialDirector {
       step.advance === 'weapon_owned'
     ) {
       this.onRequestShop?.();
+      // Advance shop_open immediately so opening the shop never soft-locks
+      if (step.advance === 'shop_open') this.advance();
     }
+  }
+
+  /** Call when player opens the tech shop (any path). */
+  notifyShopOpened(): void {
+    if (!this.active || !this.visible) return;
+    if (this.currentStep?.advance === 'shop_open') this.advance();
+  }
+
+  /**
+   * Call on ANY shop purchase (upgrade, weapon, hardpoint, branch).
+   * Advances the stage-1 "first purchase" step without requiring a specific node.
+   */
+  notifyPurchase(): void {
+    if (!this.active) return;
+    const step = this.currentStep;
+    if (!step) return;
+    if (step.advance === 'purchase' || step.id === 'shop_buy') {
+      // Ensure UI is considered active even while shop is open
+      this.visible = true;
+      this.advance();
+    }
+  }
+
+  /** True while stage-1 welcome (first popup) is still on screen. */
+  isAwaitingWelcomeAck(): boolean {
+    return this.active === 'stage1' && this.currentStep?.id === 'welcome';
+  }
+
+  /** True if stage-1 tutorial is running (any step). */
+  isStage1Active(): boolean {
+    return this.active === 'stage1';
   }
 
   private renderStep(): void {

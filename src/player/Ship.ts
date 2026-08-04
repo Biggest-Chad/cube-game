@@ -24,11 +24,18 @@ export class Ship {
   private _m = new THREE.Matrix4();
   private _localOrigin = new THREE.Vector3();
   private thrusterPulse = 0;
+  private motionIntensity = 0;
+  /** Local-space thruster exhaust origins (rear of ship). */
+  private thrusterLocals: THREE.Vector3[] = [];
+  private thrusterLights: THREE.PointLight[] = [];
+  private plumeMeshes: THREE.Mesh[] = [];
+  private readonly _thrusterWorld = new THREE.Vector3();
 
   constructor() {
     this.body = this.buildMesh();
     this.group.add(this.body);
     this.setupLights();
+    this.setupThrusterLights();
   }
 
   private hull(color = 0x1a2430, metal = 0.78, rough = 0.32): THREE.MeshStandardMaterial {
@@ -259,19 +266,38 @@ export class Ship {
       this.engineGlow.push(nozzle);
 
       const plume = new THREE.Mesh(
-        new THREE.ConeGeometry(0.06, 0.28, 8),
+        new THREE.ConeGeometry(0.07, 0.38, 8),
         new THREE.MeshBasicMaterial({
           color: COLORS.magenta,
           transparent: true,
-          opacity: 0.7,
+          opacity: 0.75,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         })
       );
       plume.rotation.x = -Math.PI / 2;
-      plume.position.z = 0.58;
+      plume.position.z = 0.62;
       pod.add(plume);
       this.engineGlow.push(plume);
+      this.plumeMeshes.push(plume);
+      // Exhaust spawn (world via localToWorld later) — pod local
+      this.thrusterLocals.push(new THREE.Vector3(side * 0.36, -0.04, 0.55 + 0.72));
+
+      // Outer glow shell on plume
+      const shell = new THREE.Mesh(
+        new THREE.ConeGeometry(0.11, 0.45, 8),
+        new THREE.MeshBasicMaterial({
+          color: 0xaa44ff,
+          transparent: true,
+          opacity: 0.28,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      shell.rotation.x = -Math.PI / 2;
+      shell.position.z = 0.68;
+      pod.add(shell);
+      this.plumeMeshes.push(shell);
 
       this.addBox(pod, 0.05, 0.14, 0.1, -side * 0.1, 0.06, -0.1, hullMid);
       g.add(pod);
@@ -286,19 +312,36 @@ export class Ship {
     this.engineGlow.push(mainNoz);
 
     const mainPlume = new THREE.Mesh(
-      new THREE.ConeGeometry(0.08, 0.35, 8),
+      new THREE.ConeGeometry(0.1, 0.5, 8),
       new THREE.MeshBasicMaterial({
         color: 0xff66cc,
         transparent: true,
-        opacity: 0.65,
+        opacity: 0.72,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
     );
     mainPlume.rotation.x = -Math.PI / 2;
-    mainPlume.position.set(0, 0, 1.22);
+    mainPlume.position.set(0, 0, 1.28);
     g.add(mainPlume);
     this.engineGlow.push(mainPlume);
+    this.plumeMeshes.push(mainPlume);
+    this.thrusterLocals.push(new THREE.Vector3(0, 0, 1.45));
+
+    const mainShell = new THREE.Mesh(
+      new THREE.ConeGeometry(0.16, 0.62, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xff00aa,
+        transparent: true,
+        opacity: 0.22,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    mainShell.rotation.x = -Math.PI / 2;
+    mainShell.position.set(0, 0, 1.35);
+    g.add(mainShell);
+    this.plumeMeshes.push(mainShell);
 
     // Engine ring
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.012, 8, 20), cyan);
@@ -393,7 +436,35 @@ export class Ship {
     return out;
   }
 
-  update(camera: OrbitalCamera, dt: number): void {
+  private setupThrusterLights(): void {
+    for (let i = 0; i < 3; i++) {
+      const L = new THREE.PointLight(i === 2 ? 0xff44bb : 0xaa44ff, 0, 6, 2);
+      L.position.copy(
+        this.thrusterLocals[i] ?? new THREE.Vector3(0, 0, 1.2)
+      );
+      this.group.add(L);
+      this.thrusterLights.push(L);
+    }
+  }
+
+  /**
+   * @param particles optional pool for exhaust sparks while maneuvering
+   */
+  update(
+    camera: OrbitalCamera,
+    dt: number,
+    particles?: {
+      spawn: (
+        x: number,
+        y: number,
+        z: number,
+        color: number,
+        count: number,
+        speed?: number,
+        style?: 'spark' | 'debris' | 'glow' | 'ember'
+      ) => void;
+    } | null
+  ): void {
     camera.getShipPosition(this._desired);
     const posLag =
       typeof camera.getShipVisualLagRate === 'function'
@@ -414,16 +485,60 @@ export class Ship {
     this.headLightL.target.updateMatrixWorld();
     this.headLightR.target.updateMatrixWorld();
 
-    this.thrusterPulse += dt * (4 + camera.turnRate * 6);
-    const pulse = 0.75 + Math.sin(this.thrusterPulse) * 0.15 + camera.turnRate * 0.2;
+    // Motion intensity: turn rate + subtle idle cruise
+    const targetMotion = THREE.MathUtils.clamp(camera.turnRate * 1.8 + 0.12, 0.08, 1.4);
+    const mK = 1 - Math.exp(-6 * dt);
+    this.motionIntensity += (targetMotion - this.motionIntensity) * mK;
+
+    this.thrusterPulse += dt * (5 + this.motionIntensity * 10);
+    const flicker = 0.85 + Math.sin(this.thrusterPulse) * 0.15 + Math.sin(this.thrusterPulse * 2.3) * 0.08;
+    const boost = this.motionIntensity;
+
     for (const m of this.engineGlow) {
       if (m.material instanceof THREE.MeshStandardMaterial) {
-        m.material.emissiveIntensity = 0.75 + pulse * 0.55;
+        m.material.emissiveIntensity = 0.55 + flicker * 0.5 + boost * 1.1;
       } else if (m.material instanceof THREE.MeshBasicMaterial) {
-        m.material.opacity = 0.5 + pulse * 0.4;
-        m.scale.setScalar(0.85 + pulse * 0.3);
+        m.material.opacity = 0.35 + flicker * 0.35 + boost * 0.4;
       }
     }
+    for (const p of this.plumeMeshes) {
+      const s = 0.7 + boost * 1.15 + Math.sin(this.thrusterPulse * 1.7) * 0.12;
+      p.scale.set(s * 0.85, s * 0.85, s * (1.1 + boost * 0.9));
+      if (p.material instanceof THREE.MeshBasicMaterial) {
+        p.material.opacity = 0.25 + boost * 0.55 + flicker * 0.15;
+      }
+    }
+    for (const L of this.thrusterLights) {
+      L.intensity = (0.4 + boost * 4.5) * flicker;
+    }
+
+    // Exhaust particles while moving / turning
+    if (particles && this.group.visible && boost > 0.15) {
+      const rate = 18 + boost * 45;
+      if (Math.random() < rate * dt) {
+        const idx = Math.floor(Math.random() * this.thrusterLocals.length);
+        const local = this.thrusterLocals[idx] ?? this.thrusterLocals[0];
+        this._thrusterWorld.copy(local);
+        this.group.localToWorld(this._thrusterWorld);
+        // Slight rearward bias in world (ship +Z is aft)
+        const aft = new THREE.Vector3(0, 0, 1).applyQuaternion(this.group.quaternion);
+        this._thrusterWorld.addScaledVector(aft, 0.15 + Math.random() * 0.2);
+        const col = Math.random() < 0.55 ? COLORS.magenta : 0xff66cc;
+        particles.spawn(
+          this._thrusterWorld.x,
+          this._thrusterWorld.y,
+          this._thrusterWorld.z,
+          col,
+          1 + (boost > 0.7 ? 1 : 0),
+          2 + boost * 5,
+          Math.random() < 0.4 ? 'glow' : 'ember'
+        );
+      }
+    }
+  }
+
+  getMotionIntensity(): number {
+    return this.motionIntensity;
   }
 
   get position(): THREE.Vector3 {

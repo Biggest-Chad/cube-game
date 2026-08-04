@@ -165,16 +165,48 @@ export class HUD {
   }
 
   /**
-   * Offset crosshair slightly with aim stick so players read intent,
-   * while keeping it fixed-depth on the HUD (no world z-fighting).
+   * Place crosshair at screen pixel coords relative to the HUD root
+   * (projected from the main-gun aim ray — matches where bolts fly).
    */
-  updateCrosshair(aimX: number, aimY: number, firing = false): void {
+  updateCrosshairScreen(
+    xPx: number,
+    yPx: number,
+    firing = false,
+    onTarget = false
+  ): void {
     if (!this.crosshair || this.crosshair.classList.contains('panel-hidden')) return;
-    const maxPx = 28;
-    const x = Math.max(-1, Math.min(1, aimX)) * maxPx;
-    const y = Math.max(-1, Math.min(1, aimY)) * maxPx;
-    this.crosshair.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px))`;
+    this.crosshair.style.left = `${xPx.toFixed(1)}px`;
+    this.crosshair.style.top = `${yPx.toFixed(1)}px`;
+    this.crosshair.style.transform = 'translate(-50%, -50%)';
     this.crosshair.classList.toggle('firing', firing);
+    this.crosshair.classList.toggle('on-target', onTarget);
+  }
+
+  /** @deprecated use updateCrosshairScreen */
+  updateCrosshair(aimX: number, aimY: number, firing = false): void {
+    const maxPx = 28;
+    const x = window.innerWidth * 0.5 + Math.max(-1, Math.min(1, aimX)) * maxPx;
+    const y = window.innerHeight * 0.5 + Math.max(-1, Math.min(1, aimY)) * maxPx;
+    this.updateCrosshairScreen(x, y, firing, false);
+  }
+
+  setWarmupVisible(show: boolean, secondsLeft = 0): void {
+    let el = this.root.querySelector('#hud-warmup') as HTMLElement | null;
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'hud-warmup';
+      el.className = 'hud-warmup panel-hidden';
+      this.root.appendChild(el);
+    }
+    if (!show) {
+      el.classList.add('panel-hidden');
+      return;
+    }
+    el.classList.remove('panel-hidden');
+    el.textContent =
+      secondsLeft > 0.05
+        ? `WEAPONS ARMING · ${secondsLeft.toFixed(1)}s`
+        : 'WEAPONS HOLD';
   }
 
   updateCurrency(fragments: number, core: number): void {

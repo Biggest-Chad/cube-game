@@ -127,6 +127,12 @@ export class Game {
   private sessionBlocksDestroyed = 0;
   private sessionPurchased = false;
   private shopOpen = false;
+  /** Seconds remaining before weapons may fire (3s level warm-up). */
+  private combatWarmup = 0;
+  /** Tutorial: fire blocked until welcome ack or movement. */
+  private tutorialFireUnlocked = false;
+  private readonly _aimPoint = new THREE.Vector3();
+  private readonly _ndc = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -299,6 +305,8 @@ export class Game {
       this.shopUI.hide();
       this.shopOpen = false;
       this.hud.hideShopHint();
+      // If purchase happened while shop was open, ensure tutorial advances
+      if (this.sessionPurchased) this.tutorial.notifyPurchase();
       if (this.pendingReturnMode === 'playing' || this.mode === 'tech') {
         this.mode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
         if (this.mode === 'playing') {
@@ -323,6 +331,8 @@ export class Game {
       if (!check.ok) return false;
       if (!this.currency.spendFragments(check.cost)) return false;
       this.loadout.upgradeBranch(slot, branchId);
+      this.sessionPurchased = true;
+      this.tutorial.notifyPurchase();
       this.hardpoints.rebuildFromLoadout();
       this.syncLoadoutToSave();
       this.persist();
@@ -338,6 +348,8 @@ export class Game {
         this.currency.coreEnergy += finalCost;
         return false;
       }
+      this.sessionPurchased = true;
+      this.tutorial.notifyPurchase();
       this.hardpoints.celebrateUnlock(slot);
       this.hardpoints.rebuildFromLoadout();
       this.syncLoadoutToSave();
@@ -520,17 +532,15 @@ export class Game {
       bus.on('weapon-fire', () => this.audio.playFire()),
       bus.on('upgrade-purchased', () => {
         this.audio.playPurchase();
+        this.sessionPurchased = true;
+        this.tutorial.notifyPurchase();
         this.applyStatsToSystems();
         this.shopHintShown = true;
         this.hud.hideShopHint();
         this.persist();
         this.refreshShopPrompt();
       }),
-      bus.on('cube-rotation-start', (p: { concurrent?: number }) => {
-        if (this.mode === 'playing') {
-          if ((p?.concurrent ?? 1) > 1) this.toast('MULTI-SLICE REALIGN');
-        }
-      }),
+      // Cube scramble: silent (no toast spam)
       // Single shake path only (animator emits camera-shake-request on complete)
       bus.on('camera-shake-request', (p: { amount?: number }) => {
         if (this.mode === 'playing' || this.mode === 'cinematic') {
@@ -808,6 +818,7 @@ export class Game {
     this.hud.setVisible(false);
     this.hud.hideShopHint();
     this.shopHintShown = true;
+    this.tutorial.notifyShopOpened();
     this.shopUI.setVitals(this.vitals.snapshot());
     this.shopUI.setLoadoutContext(this.loadout, this.save.data.highestLevel);
     this.shopUI.show(this.tech, this.currency, tab);
@@ -832,6 +843,7 @@ export class Game {
   private buyUpgrade(node: UpgradeNodeDef): void {
     if (this.tech.purchase(node, this.currency)) {
       this.sessionPurchased = true;
+      this.tutorial.notifyPurchase();
       if (node.effects.hardpointAdd) {
         this.loadout.hardpointUnlocks = Math.max(
           this.loadout.hardpointUnlocks,
@@ -868,6 +880,8 @@ export class Game {
     else if (this.loadout.hardpointUnlocks > 0 && !this.loadout.slots[0]) {
       this.loadout.equip(0, defId);
     }
+    this.sessionPurchased = true;
+    this.tutorial.notifyPurchase();
     this.hardpoints.rebuildFromLoadout();
     this.syncLoadoutToSave();
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
@@ -995,16 +1009,18 @@ export class Game {
     this.mode = 'playing';
     this.sessionBlocksDestroyed = 0;
     this.sessionPurchased = false;
+    this.combatWarmup = 3;
+    this.tutorialFireUnlocked = false;
     this.hud.setVisible(true);
     this.hud.setIntro(false);
     this.hud.setCrosshairVisible(true);
+    this.hud.setWarmupVisible(true, 3);
     this.reticle.setVisible(false);
     this.cinematicRoot.classList.add('panel-hidden');
     this.cinematicRoot.style.display = '';
     this.cinematicRoot.innerHTML = '';
     document.getElementById('cin-overlay-live')?.remove();
     this.refreshShopPrompt();
-    this.toast('ENGAGE');
     // Stage-1 guided briefing after first combat seat
     if (this.currentLevelId === 1) {
       this.tutorial.setFlags(
@@ -1012,7 +1028,81 @@ export class Game {
         this.save.data.tutorialLoadoutDone
       );
       this.tutorial.tryStartStage1();
+      // Tutorial: hold fire until welcome is acknowledged or player moves
+      if (this.tutorial.isStage1Active()) {
+        this.tutorialFireUnlocked = false;
+      } else {
+        this.tutorialFireUnlocked = true;
+      }
+    } else {
+      this.tutorialFireUnlocked = true;
     }
+  }
+
+  /** Whether main gun / hardpoints may fire this frame. */
+  private canFireWeapons(): boolean {
+    if (this.combatWarmup > 0) return false;
+    if (this.currentLevelId === 1 && this.tutorial.isStage1Active()) {
+      if (!this.tutorialFireUnlocked) return false;
+    }
+    return true;
+  }
+
+  private updateCombatWarmup(dt: number): void {
+    if (this.combatWarmup > 0) {
+      this.combatWarmup = Math.max(0, this.combatWarmup - dt);
+    }
+    // Tutorial unlock via movement / aim before or during warmup
+    if (!this.tutorialFireUnlocked) {
+      if (!this.tutorial.isAwaitingWelcomeAck()) {
+        this.tutorialFireUnlocked = true;
+      }
+      const moved =
+        Math.hypot(this.input.axisX, this.input.axisY) > 0.12 ||
+        Math.hypot(this.input.aimX, this.input.aimY) > 0.12;
+      if (moved) this.tutorialFireUnlocked = true;
+    }
+    const hold =
+      this.combatWarmup > 0 ||
+      (this.currentLevelId === 1 &&
+        this.tutorial.isStage1Active() &&
+        !this.tutorialFireUnlocked);
+    if (hold) {
+      this.hud.setWarmupVisible(
+        true,
+        this.combatWarmup > 0 ? this.combatWarmup : 0
+      );
+    } else {
+      this.hud.setWarmupVisible(false);
+    }
+  }
+
+  /** Project main-gun aim ray to HUD pixel coords (matches bolt trajectory). */
+  private updateAimCrosshair(firing: boolean): void {
+    this.weapon.getMuzzle(this._muzzle);
+    this.weapon.getAimDirection(this._aimDir);
+    const hit = this.cube.raycast(this._muzzle, this._aimDir, 140);
+    if (hit) this._aimPoint.copy(hit.point);
+    else this._aimPoint.copy(this._muzzle).addScaledVector(this._aimDir, 48);
+
+    this._ndc.copy(this._aimPoint).project(this.cameraCtrl.camera);
+    // Behind camera — park off-screen center fallback
+    if (this._ndc.z > 1) {
+      this.hud.updateCrosshairScreen(
+        window.innerWidth * 0.5,
+        window.innerHeight * 0.5,
+        firing,
+        false
+      );
+      return;
+    }
+    const sx = (this._ndc.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (-this._ndc.y * 0.5 + 0.5) * window.innerHeight;
+    const root = document.getElementById('hud-root');
+    const rect = root?.getBoundingClientRect();
+    const x = rect ? sx - rect.left : sx;
+    const y = rect ? sy - rect.top : sy;
+    this.hud.updateCrosshairScreen(x, y, firing, !!hit);
   }
 
   private onLevelClear(): void {
@@ -1243,14 +1333,17 @@ export class Game {
         );
       }
       this.cameraCtrl.update(dt);
-      this.ship.update(this.cameraCtrl, dt);
+      this.ship.update(this.cameraCtrl, dt, this.particles);
 
       if (this.mode === 'playing') {
         this.vitals.update(dt);
+        this.updateCombatWarmup(dt);
+        const allowFire = this.canFireWeapons() && this.input.isFiring;
 
+        // Always update aim (so crosshair tracks); fire only when armed
         this.weapon.update(
           dt,
-          this.input.isFiring,
+          allowFire,
           this.ship,
           this.cube,
           this.tech.stats,
@@ -1259,10 +1352,9 @@ export class Game {
           this.input.aimY
         );
 
-        this.weapon.getMuzzle(this._muzzle);
         this.weapon.getAimDirection(this._aimDir);
-        this.hud.updateCrosshair(this.input.aimX, this.input.aimY, this.input.isFiring);
         this.hud.setCrosshairVisible(true);
+        this.updateAimCrosshair(allowFire);
 
         // Guided tutorial progress
         const orbitMag = Math.hypot(this.input.axisX, this.input.axisY);
@@ -1284,7 +1376,7 @@ export class Game {
 
         this.hardpoints.update(
           dt,
-          this.input.isFiring,
+          allowFire,
           this.ship.position,
           this.cube,
           this.tech.stats,
