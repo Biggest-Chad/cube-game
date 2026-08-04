@@ -372,7 +372,7 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
   }
 
   private spawnBeamParticles(from: THREE.Vector3, to: THREE.Vector3, depth: number): void {
-    const n = 4 + Math.floor(Math.random() * 4);
+    const n = 7 + Math.floor(Math.random() * 6);
     for (let i = 0; i < n; i++) {
       const t = Math.random();
       this._tmp.copy(from).lerp(to, t);
@@ -430,18 +430,18 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
   private spawnImpact(point: THREE.Vector3, depth: number): void {
     const imp = this.impacts[this.nextImpact % MAX_IMPACTS];
     this.nextImpact++;
-    imp.life = 0.14;
+    imp.life = 0.18;
     imp.mesh.position.copy(point);
     imp.mesh.visible = true;
-    imp.mesh.scale.setScalar(0.6 + Math.random() * 0.5);
+    imp.mesh.scale.setScalar(0.9 + Math.random() * 0.7);
     const mat = imp.mesh.material as THREE.MeshBasicMaterial;
-    mat.opacity = 0.9;
+    mat.opacity = 1;
     mat.color.setHex(depth > 0 ? 0xffaaff : 0xffffff);
     imp.light.position.copy(point);
-    imp.light.intensity = 28 + Math.sin(this.pulse) * 6;
+    imp.light.intensity = 42 + Math.sin(this.pulse) * 10;
     imp.light.color.setHex(depth > 0 ? 0xff44cc : COLORS.magenta);
     // Burst particles at impact
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 14; i++) {
       this.emitParticle(
         point.x + (Math.random() - 0.5) * 0.3,
         point.y + (Math.random() - 0.5) * 0.3,

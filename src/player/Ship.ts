@@ -510,6 +510,15 @@ export class Ship {
     this._look.set(0, 0, 0);
     this._m.lookAt(this.group.position, this._look, this._up);
     this._targetQuat.setFromRotationMatrix(this._m);
+    // Bank into turn for epic dogfight silhouette
+    const yawV =
+      typeof camera.yawVelocity === 'number' ? camera.yawVelocity : 0;
+    const bank = THREE.MathUtils.clamp(-yawV * 0.55, -0.45, 0.45);
+    const pitchBob = Math.sin(this.thrusterPulse * 0.7) * 0.02 * (0.4 + this.motionIntensity);
+    const bankQ = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(pitchBob, 0, bank, 'YXZ')
+    );
+    this._targetQuat.multiply(bankQ);
     const rotK = 1 - Math.exp(-ORBIT.shipRotLag * dt);
     this.group.quaternion.slerp(this._targetQuat, rotK);
 

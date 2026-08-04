@@ -185,11 +185,14 @@ export class Drone {
     const def = DRONE_ROLES[this.role];
     const half = cube.halfExtent;
     this.orbitRadius = half * 1.55 + 2 + (this.role === 'guardian' ? 1.5 : 0);
-    this.orbitAngle += dt * (0.22 + stats.droneFireRateMul * 0.06);
+    this.orbitAngle += dt * (0.28 + stats.droneFireRateMul * 0.08);
+    // Dynamic weaving orbit — feels more alive
+    const weave = Math.sin(this.orbitAngle * 2.1 + this.index) * 1.4;
+    const bob = Math.sin(this.orbitAngle * 0.7 + this.index * 0.5) * 1.6;
     this._pos.set(
-      Math.cos(this.orbitAngle) * this.orbitRadius,
-      this.orbitHeight + Math.sin(this.orbitAngle * 0.7) * 1.2,
-      Math.sin(this.orbitAngle) * this.orbitRadius
+      Math.cos(this.orbitAngle) * (this.orbitRadius + weave * 0.3),
+      this.orbitHeight + bob,
+      Math.sin(this.orbitAngle) * (this.orbitRadius + weave * 0.3)
     );
     const k = 1 - Math.exp(-3.2 * dt);
     this.group.position.lerp(this._pos, k);

@@ -61,11 +61,11 @@ export const ORBIT = {
 } as const;
 
 export const COMBAT = {
-  baseFireRate: 5.5,
-  baseDamage: 12,
+  baseFireRate: 5.8,
+  baseDamage: 13,
   beamRange: 120,
-  beamDuration: 0.12,
-  projectileSpeed: 95,
+  beamDuration: 0.14,
+  projectileSpeed: 105,
   multiShotBase: 1,
   splashRadius: 0,
   autoFire: true,

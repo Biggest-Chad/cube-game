@@ -184,16 +184,23 @@ export class Game {
     this.scene.add(this.cinematic.group);
     this.orientLock = document.getElementById('orientation-lock');
 
-    const amb = new THREE.AmbientLight(0x1a2830, 0.75);
+    // Dramatic neon arena lighting — readable cube + punchy emissives
+    const amb = new THREE.AmbientLight(0x142030, 0.55);
     this.scene.add(amb);
-    const hemi = new THREE.HemisphereLight(0x3a5a6a, 0x080810, 0.55);
+    const hemi = new THREE.HemisphereLight(0x4a7a9a, 0x100818, 0.7);
     this.scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xc8e8f0, 0.85);
-    key.position.set(18, 28, 14);
+    const key = new THREE.DirectionalLight(0xd8f4ff, 1.05);
+    key.position.set(18, 32, 16);
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0x8866aa, 0.25);
-    rim.position.set(-16, -6, -12);
+    const rim = new THREE.DirectionalLight(0xaa44cc, 0.45);
+    rim.position.set(-18, -4, -14);
     this.scene.add(rim);
+    const fillCyan = new THREE.PointLight(COLORS.cyan, 18, 90, 2);
+    fillCyan.position.set(0, 14, 0);
+    this.scene.add(fillCyan);
+    const fillMag = new THREE.PointLight(COLORS.magenta, 12, 70, 2);
+    fillMag.position.set(-12, -6, 10);
+    this.scene.add(fillMag);
 
     this.cubeAnimator.bind(this.cube);
     this.cubeDefense.bind(this.cube);
@@ -539,7 +546,7 @@ export class Game {
               r.type === BlockType.Core ? 2.0 : 1.35
             );
             this.cameraCtrl.shake(
-              r.type === BlockType.Core ? 0.18 : r.crit ? 0.12 : 0.09
+              r.type === BlockType.Core ? 0.24 : r.crit ? 0.16 : 0.12
             );
             this.audio.playDestroy();
             const gained = this.currency.addFragments(r.fragments, this.tech.stats.fragmentMul);
@@ -563,6 +570,18 @@ export class Game {
         }
       ),
       bus.on('weapon-fire', () => this.audio.playFire()),
+      bus.on(
+        'explosion',
+        (p: { x: number; y: number; z: number; radius?: number; family?: string }) => {
+          const r = p.radius ?? 2;
+          this.rings.spawn(p.x, p.y, p.z, COLORS.magenta, 1.2 + r * 0.35);
+          this.rings.spawn(p.x, p.y, p.z, COLORS.gold, 0.8 + r * 0.25);
+          this.particles.spawn(p.x, p.y, p.z, 0xff6622, 18, 14, 'ember');
+          this.particles.spawn(p.x, p.y, p.z, 0xffffff, 10, 8, 'glow');
+          this.particles.spawn(p.x, p.y, p.z, COLORS.gold, 12, 11, 'spark');
+          this.cameraCtrl.shake(0.1 + Math.min(0.2, r * 0.04));
+        }
+      ),
       bus.on('upgrade-purchased', () => {
         this.audio.playPurchase();
         this.sessionPurchased = true;

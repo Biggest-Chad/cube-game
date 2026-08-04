@@ -212,8 +212,22 @@ export class FlakWeapon implements WeaponBehavior {
     const hits = cube.applySplash(point, s.splash, s.damage * 0.85, now);
     // Apply armor model on primary nearest if any
     for (const h of hits) {
-      bus.emit('beam-hit', { ...h, crit: s.crit });
+      bus.emit('beam-hit', {
+        ...h,
+        crit: s.crit,
+        style: 'explosive' as const,
+        impactNx: point.x,
+        impactNy: point.y,
+        impactNz: point.z,
+      });
     }
+    bus.emit('explosion', {
+      x: point.x,
+      y: point.y,
+      z: point.z,
+      radius: s.splash,
+      family: 'flak',
+    });
     // Also direct hit attempt
     const near = cube.findNearest(point, s.splash);
     if (near && hits.length === 0) {

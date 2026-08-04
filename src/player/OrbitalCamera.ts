@@ -421,6 +421,11 @@ export class OrbitalCamera {
     return Math.hypot(this.velYaw, this.velPitch);
   }
 
+  /** Signed yaw angular velocity (rad/s) — ship bank / camera sway */
+  get yawVelocity(): number {
+    return this.velYaw;
+  }
+
   /** Instantaneous angular velocity components (rad/s). */
   getAngularVelocity(out?: { yaw: number; pitch: number }): { yaw: number; pitch: number } {
     if (out) {
