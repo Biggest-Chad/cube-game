@@ -69,11 +69,11 @@ export const COMBAT = {
 
 export const PERF = {
   targetFps: 50,
-  lowFpsThreshold: 28,
-  lowFpsSeconds: 2,
-  maxParticles: 1200,
-  lowMaxParticles: 400,
-  maxProjectiles: 48,
+  lowFpsThreshold: 30,
+  lowFpsSeconds: 1.6,
+  maxParticles: 900,
+  lowMaxParticles: 280,
+  maxProjectiles: 40,
   instanceRebuildBudgetMs: 4,
 } as const;
 

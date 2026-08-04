@@ -46,6 +46,10 @@ export interface SaveData {
   adsWatchedToday: Record<string, number>;
   /** YYYY-MM-DD local day key for adsWatchedToday rollover */
   adsDayKey: string;
+
+  // --- tutorials ---
+  tutorialStage1Done: boolean;
+  tutorialLoadoutDone: boolean;
 }
 
 export function defaultSave(): SaveData {
@@ -77,6 +81,9 @@ export function defaultSave(): SaveData {
 
     adsWatchedToday: {},
     adsDayKey: todayKey(),
+
+    tutorialStage1Done: false,
+    tutorialLoadoutDone: false,
   };
 }
 

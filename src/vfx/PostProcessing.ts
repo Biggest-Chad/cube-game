@@ -4,12 +4,19 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 
-/** Subtle bloom only — high threshold keeps block faces readable. */
+/**
+ * Gentle cinematic bloom — readable blocks, soft neon glow on emissives/VFX.
+ * Adaptive strength for mid-range mobile.
+ */
 export class PostProcessing {
   composer: EffectComposer;
   bloom: UnrealBloomPass;
-  private highStrength = 0.22;
-  private lowStrength = 0.1;
+  private highStrength = 0.34;
+  private lowStrength = 0.16;
+  private highThreshold = 0.62;
+  private lowThreshold = 0.78;
+  private highRadius = 0.42;
+  private lowRadius = 0.28;
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -19,8 +26,12 @@ export class PostProcessing {
     this.composer = new EffectComposer(renderer);
     this.composer.addPass(new RenderPass(scene, camera));
     const size = renderer.getSize(new THREE.Vector2());
-    // strength, radius, threshold
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.22, 0.25, 0.72);
+    this.bloom = new UnrealBloomPass(
+      new THREE.Vector2(size.x, size.y),
+      this.highStrength,
+      this.highRadius,
+      this.highThreshold
+    );
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
   }
@@ -32,8 +43,17 @@ export class PostProcessing {
 
   setQuality(high: boolean): void {
     this.bloom.strength = high ? this.highStrength : this.lowStrength;
-    this.bloom.threshold = high ? 0.72 : 0.85;
+    this.bloom.threshold = high ? this.highThreshold : this.lowThreshold;
+    this.bloom.radius = high ? this.highRadius : this.lowRadius;
     this.bloom.enabled = true;
+  }
+
+  /** Slightly richer bloom during menu / cinematic (presentation). */
+  setPresentation(boost: boolean): void {
+    if (boost) {
+      this.bloom.strength = this.highStrength * 1.15;
+      this.bloom.threshold = Math.max(0.55, this.highThreshold - 0.05);
+    }
   }
 
   render(): void {

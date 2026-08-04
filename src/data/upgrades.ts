@@ -49,6 +49,12 @@ export interface UpgradeEffect {
   idleCapMul?: number;
   critChance?: number;
   beamWidth?: number;
+  /** Gentle main-gun cone spread */
+  spreadAdd?: number;
+  /** Main gun blocks pierced */
+  penetrationAdd?: number;
+  /** Main gun armor pierce 0–1 */
+  armorPierceAdd?: number;
   unlockDrones?: boolean;
   unlockAutoFire?: boolean;
   /** Ship vitals */
@@ -56,7 +62,7 @@ export interface UpgradeEffect {
   maxShieldAdd?: number;
   armorRatingAdd?: number;
   shieldRegenAdd?: number;
-  /** Hardpoint unlocks (P4 placeholder stats) */
+  /** Hardpoint unlocks */
   hardpointAdd?: number;
 }
 
@@ -114,13 +120,13 @@ export const BRANCH_TO_TAB: Record<UpgradeBranch, ShopTabId> = {
 
 /** Soft/hard caps referenced by TechTree recompute. */
 export const STAT_CAPS = {
-  damageMul: 4.0,
-  fireRateMul: 2.75,
-  orbitSpeedMul: 1.85,
-  fragmentMul: 2.25,
-  coreEnergyMul: 2.25,
-  critChance: 0.4,
-  critMult: 2.25,
+  damageMul: 5.0,
+  fireRateMul: 3.0,
+  orbitSpeedMul: 1.95,
+  fragmentMul: 2.5,
+  coreEnergyMul: 2.5,
+  critChance: 0.45,
+  critMult: 2.4,
   armorEffective: 0.55,
   armorK: 100,
   droneCount: 24,
@@ -171,77 +177,108 @@ export const UPGRADES: UpgradeNodeDef[] = [
   // ═══════════════════════════════════════════
   ...chainNodes('ship_speed', 'ship', [
     { id: 'ship_speed_1', name: 'Thrusters', description: '+10% orbit speed', cost: 45, effects: { orbitSpeedAdd: 0.1 } },
-    { id: 'ship_speed_2', name: 'Thrusters', description: '+12% orbit speed', cost: 110, effects: { orbitSpeedAdd: 0.12 } },
-    { id: 'ship_speed_3', name: 'Thrusters', description: '+12% orbit speed', cost: 220, effects: { orbitSpeedAdd: 0.12 } },
-    { id: 'ship_speed_4', name: 'Thrusters', description: '+14% orbit speed', cost: 400, effects: { orbitSpeedAdd: 0.14 } },
-    { id: 'ship_speed_5', name: 'Thrusters', description: '+14% orbit speed (cap band)', cost: 700, effects: { orbitSpeedAdd: 0.14 } },
+    { id: 'ship_speed_2', name: 'Thrusters', description: '+11% orbit speed', cost: 100, effects: { orbitSpeedAdd: 0.11 } },
+    { id: 'ship_speed_3', name: 'Thrusters', description: '+12% orbit speed', cost: 200, effects: { orbitSpeedAdd: 0.12 } },
+    { id: 'ship_speed_4', name: 'Thrusters', description: '+12% orbit speed', cost: 360, effects: { orbitSpeedAdd: 0.12 } },
+    { id: 'ship_speed_5', name: 'Thrusters', description: '+13% orbit speed', cost: 600, effects: { orbitSpeedAdd: 0.13 } },
+    { id: 'ship_speed_6', name: 'Thrusters', description: '+13% orbit speed', cost: 950, effects: { orbitSpeedAdd: 0.13 } },
+    { id: 'ship_speed_7', name: 'Thrusters', description: '+14% orbit speed (cap band)', cost: 1400, effects: { orbitSpeedAdd: 0.14 } },
   ]),
   ...chainNodes('ship_accel', 'ship', [
-    { id: 'ship_accel_1', name: 'Vector Coils', description: '+15% angular accel', cost: 60, effects: { accelAdd: 0.15 } },
-    { id: 'ship_accel_2', name: 'Vector Coils', description: '+15% angular accel', cost: 150, effects: { accelAdd: 0.15 } },
-    { id: 'ship_accel_3', name: 'Vector Coils', description: '+18% angular accel', cost: 320, effects: { accelAdd: 0.18 } },
+    { id: 'ship_accel_1', name: 'Vector Coils', description: '+14% angular accel', cost: 55, effects: { accelAdd: 0.14 } },
+    { id: 'ship_accel_2', name: 'Vector Coils', description: '+14% angular accel', cost: 130, effects: { accelAdd: 0.14 } },
+    { id: 'ship_accel_3', name: 'Vector Coils', description: '+16% angular accel', cost: 280, effects: { accelAdd: 0.16 } },
+    { id: 'ship_accel_4', name: 'Vector Coils', description: '+16% angular accel', cost: 480, effects: { accelAdd: 0.16 } },
+    { id: 'ship_accel_5', name: 'Vector Coils', description: '+18% angular accel', cost: 780, effects: { accelAdd: 0.18 } },
   ]),
   ...chainNodes('ship_hull', 'ship', [
     { id: 'ship_hull_1', name: 'Hull Plating', description: '+40 max hull', cost: 55, effects: { maxHullAdd: 40 } },
-    { id: 'ship_hull_2', name: 'Hull Plating', description: '+55 max hull', cost: 140, effects: { maxHullAdd: 55 } },
-    { id: 'ship_hull_3', name: 'Hull Plating', description: '+70 max hull', cost: 280, effects: { maxHullAdd: 70 } },
-    { id: 'ship_hull_4', name: 'Hull Plating', description: '+90 max hull', cost: 500, effects: { maxHullAdd: 90 } },
-    { id: 'ship_hull_5', name: 'Hull Plating', description: '+120 max hull', cost: 850, effects: { maxHullAdd: 120 } },
+    { id: 'ship_hull_2', name: 'Hull Plating', description: '+50 max hull', cost: 130, effects: { maxHullAdd: 50 } },
+    { id: 'ship_hull_3', name: 'Hull Plating', description: '+65 max hull', cost: 260, effects: { maxHullAdd: 65 } },
+    { id: 'ship_hull_4', name: 'Hull Plating', description: '+80 max hull', cost: 450, effects: { maxHullAdd: 80 } },
+    { id: 'ship_hull_5', name: 'Hull Plating', description: '+100 max hull', cost: 750, effects: { maxHullAdd: 100 } },
+    { id: 'ship_hull_6', name: 'Hull Plating', description: '+120 max hull', cost: 1100, effects: { maxHullAdd: 120 } },
   ]),
   ...chainNodes('ship_shield', 'ship', [
     { id: 'ship_shield_1', name: 'Shield Matrix', description: '+30 max shield · +2 regen', cost: 70, effects: { maxShieldAdd: 30, shieldRegenAdd: 2 } },
-    { id: 'ship_shield_2', name: 'Shield Matrix', description: '+40 max shield · +2 regen', cost: 160, effects: { maxShieldAdd: 40, shieldRegenAdd: 2 } },
-    { id: 'ship_shield_3', name: 'Shield Matrix', description: '+55 max shield · +3 regen', cost: 340, effects: { maxShieldAdd: 55, shieldRegenAdd: 3 } },
-    { id: 'ship_shield_4', name: 'Shield Matrix', description: '+70 max shield · +3 regen', cost: 600, effects: { maxShieldAdd: 70, shieldRegenAdd: 3 } },
+    { id: 'ship_shield_2', name: 'Shield Matrix', description: '+40 max shield · +2 regen', cost: 150, effects: { maxShieldAdd: 40, shieldRegenAdd: 2 } },
+    { id: 'ship_shield_3', name: 'Shield Matrix', description: '+50 max shield · +3 regen', cost: 300, effects: { maxShieldAdd: 50, shieldRegenAdd: 3 } },
+    { id: 'ship_shield_4', name: 'Shield Matrix', description: '+65 max shield · +3 regen', cost: 520, effects: { maxShieldAdd: 65, shieldRegenAdd: 3 } },
+    { id: 'ship_shield_5', name: 'Shield Matrix', description: '+80 max shield · +4 regen', cost: 850, effects: { maxShieldAdd: 80, shieldRegenAdd: 4 } },
   ]),
   ...chainNodes('ship_armor', 'ship', [
     { id: 'ship_armor_1', name: 'Ablative Weave', description: '+25 armor rating', cost: 80, effects: { armorRatingAdd: 25 } },
-    { id: 'ship_armor_2', name: 'Ablative Weave', description: '+30 armor rating', cost: 180, effects: { armorRatingAdd: 30 } },
-    { id: 'ship_armor_3', name: 'Ablative Weave', description: '+35 armor rating', cost: 360, effects: { armorRatingAdd: 35 } },
-    { id: 'ship_armor_4', name: 'Ablative Weave', description: '+40 armor rating', cost: 650, effects: { armorRatingAdd: 40 } },
-    { id: 'ship_armor_5', name: 'Ablative Weave', description: '+45 armor rating (~55% DR soft)', cost: 1000, effects: { armorRatingAdd: 45 } },
+    { id: 'ship_armor_2', name: 'Ablative Weave', description: '+28 armor rating', cost: 170, effects: { armorRatingAdd: 28 } },
+    { id: 'ship_armor_3', name: 'Ablative Weave', description: '+32 armor rating', cost: 320, effects: { armorRatingAdd: 32 } },
+    { id: 'ship_armor_4', name: 'Ablative Weave', description: '+36 armor rating', cost: 560, effects: { armorRatingAdd: 36 } },
+    { id: 'ship_armor_5', name: 'Ablative Weave', description: '+40 armor rating', cost: 880, effects: { armorRatingAdd: 40 } },
+    { id: 'ship_armor_6', name: 'Ablative Weave', description: '+45 armor rating', cost: 1300, effects: { armorRatingAdd: 45 } },
   ]),
   ...chainNodes('ship_zoom', 'ship', [
     { id: 'ship_zoom_1', name: 'Long Lens', description: 'Extended zoom range', cost: 90, effects: { zoomRangeAdd: 12 } },
-    { id: 'ship_zoom_2', name: 'Deep Focus', description: 'More zoom for large cubes', cost: 260, effects: { zoomRangeAdd: 18 } },
+    { id: 'ship_zoom_2', name: 'Deep Focus', description: 'More zoom for large cubes', cost: 240, effects: { zoomRangeAdd: 16 } },
+    { id: 'ship_zoom_3', name: 'Far Scan', description: 'Max zoom extension', cost: 520, effects: { zoomRangeAdd: 20 } },
   ]),
   ...chainNodes('ship_beam', 'ship', [
-    { id: 'ship_beam_1', name: 'Focus Coil', description: 'Wider beam hit tolerance', cost: 180, effects: { beamWidth: 1.25 }, extraPrereq: ['ship_speed_1'] },
+    { id: 'ship_beam_1', name: 'Focus Coil', description: 'Wider beam hit tolerance', cost: 160, effects: { beamWidth: 1.2 }, extraPrereq: ['ship_speed_1'] },
+    { id: 'ship_beam_2', name: 'Focus Coil', description: 'Even wider hit tolerance', cost: 400, effects: { beamWidth: 1.15 } },
   ]),
 
   // ═══════════════════════════════════════════
-  // MAIN GUN — additive damage ranks
+  // MAIN GUN — damage, rate, unique modifiers
   // ═══════════════════════════════════════════
   ...chainNodes('off_damage', 'offense', [
-    { id: 'off_damage_1', name: 'Pulse Amp', description: '+14% beam damage', cost: 40, effects: { damageAdd: 0.14 } },
-    { id: 'off_damage_2', name: 'Pulse Amp', description: '+16% beam damage', cost: 100, effects: { damageAdd: 0.16 } },
-    { id: 'off_damage_3', name: 'Pulse Amp', description: '+16% beam damage', cost: 220, effects: { damageAdd: 0.16 } },
-    { id: 'off_damage_4', name: 'Pulse Amp', description: '+18% beam damage', cost: 420, effects: { damageAdd: 0.18 } },
-    { id: 'off_damage_5', name: 'Pulse Amp', description: '+18% beam damage', cost: 750, effects: { damageAdd: 0.18 } },
-    { id: 'off_damage_6', name: 'Pulse Amp', description: '+20% beam damage', cost: 1200, effects: { damageAdd: 0.2 } },
+    { id: 'off_damage_1', name: 'Pulse Amp', description: '+14% main gun damage', cost: 40, effects: { damageAdd: 0.14 } },
+    { id: 'off_damage_2', name: 'Pulse Amp', description: '+14% main gun damage', cost: 95, effects: { damageAdd: 0.14 } },
+    { id: 'off_damage_3', name: 'Pulse Amp', description: '+15% main gun damage', cost: 200, effects: { damageAdd: 0.15 } },
+    { id: 'off_damage_4', name: 'Pulse Amp', description: '+15% main gun damage', cost: 380, effects: { damageAdd: 0.15 } },
+    { id: 'off_damage_5', name: 'Pulse Amp', description: '+16% main gun damage', cost: 650, effects: { damageAdd: 0.16 } },
+    { id: 'off_damage_6', name: 'Pulse Amp', description: '+16% main gun damage', cost: 1000, effects: { damageAdd: 0.16 } },
+    { id: 'off_damage_7', name: 'Pulse Amp', description: '+18% main gun damage', cost: 1500, effects: { damageAdd: 0.18 } },
+    { id: 'off_damage_8', name: 'Pulse Amp', description: '+18% main gun damage', cost: 2200, effects: { damageAdd: 0.18 } },
   ]),
   ...chainNodes('off_rate', 'offense', [
     { id: 'off_rate_1', name: 'Cycle Boost', description: '+12% fire rate', cost: 50, effects: { fireRateAdd: 0.12 } },
-    { id: 'off_rate_2', name: 'Cycle Boost', description: '+14% fire rate', cost: 140, effects: { fireRateAdd: 0.14 } },
-    { id: 'off_rate_3', name: 'Cycle Boost', description: '+14% fire rate', cost: 300, effects: { fireRateAdd: 0.14 } },
-    { id: 'off_rate_4', name: 'Cycle Boost', description: '+16% fire rate', cost: 550, effects: { fireRateAdd: 0.16 } },
+    { id: 'off_rate_2', name: 'Cycle Boost', description: '+12% fire rate', cost: 130, effects: { fireRateAdd: 0.12 } },
+    { id: 'off_rate_3', name: 'Cycle Boost', description: '+13% fire rate', cost: 280, effects: { fireRateAdd: 0.13 } },
+    { id: 'off_rate_4', name: 'Cycle Boost', description: '+14% fire rate', cost: 500, effects: { fireRateAdd: 0.14 } },
+    { id: 'off_rate_5', name: 'Cycle Boost', description: '+14% fire rate', cost: 820, effects: { fireRateAdd: 0.14 } },
+    { id: 'off_rate_6', name: 'Cycle Boost', description: '+15% fire rate', cost: 1200, effects: { fireRateAdd: 0.15 } },
   ]),
   ...chainNodes('off_multi', 'offense', [
-    { id: 'off_multi_1', name: 'Split Beam', description: '+1 concurrent beam', cost: 200, effects: { multiShotAdd: 1 }, extraPrereq: ['off_rate_1'] },
-    { id: 'off_multi_2', name: 'Tri-Beam', description: '+1 concurrent beam', cost: 520, effects: { multiShotAdd: 1 } },
+    { id: 'off_multi_1', name: 'Split Beam', description: '+1 concurrent bolt', cost: 180, effects: { multiShotAdd: 1 }, extraPrereq: ['off_rate_1'] },
+    { id: 'off_multi_2', name: 'Tri-Beam', description: '+1 concurrent bolt', cost: 480, effects: { multiShotAdd: 1 } },
+    { id: 'off_multi_3', name: 'Quad Lattice', description: '+1 concurrent bolt', cost: 980, effects: { multiShotAdd: 1 } },
+  ]),
+  ...chainNodes('off_spread', 'offense', [
+    { id: 'off_spread_1', name: 'Soft Cone', description: 'Gentle bolt spread for wider coverage', cost: 160, effects: { spreadAdd: 0.2 }, extraPrereq: ['off_multi_1'] },
+    { id: 'off_spread_2', name: 'Soft Cone', description: 'Slightly wider coverage cone', cost: 380, effects: { spreadAdd: 0.18 } },
+    { id: 'off_spread_3', name: 'Soft Cone', description: 'Controlled fan for dense faces', cost: 720, effects: { spreadAdd: 0.16 } },
+  ]),
+  ...chainNodes('off_pen', 'offense', [
+    { id: 'off_pen_1', name: 'Needle Core', description: 'Bolts pierce +1 block', cost: 220, effects: { penetrationAdd: 1 }, extraPrereq: ['off_damage_2'] },
+    { id: 'off_pen_2', name: 'Needle Core', description: 'Pierce +1 additional block', cost: 560, effects: { penetrationAdd: 1 } },
+    { id: 'off_pen_3', name: 'Needle Core', description: 'Pierce +1 additional block', cost: 1100, effects: { penetrationAdd: 1 } },
+  ]),
+  ...chainNodes('off_pierce', 'offense', [
+    { id: 'off_pierce_1', name: 'Armor Borer', description: '+8% armor pierce vs heavy blocks', cost: 200, effects: { armorPierceAdd: 0.08 }, extraPrereq: ['off_damage_2'] },
+    { id: 'off_pierce_2', name: 'Armor Borer', description: '+8% armor pierce', cost: 450, effects: { armorPierceAdd: 0.08 } },
+    { id: 'off_pierce_3', name: 'Armor Borer', description: '+10% armor pierce', cost: 900, effects: { armorPierceAdd: 0.1 } },
   ]),
   ...chainNodes('off_splash', 'offense', [
-    { id: 'off_splash_1', name: 'Shock Halo', description: 'Small splash radius', cost: 240, effects: { splashAdd: 1.2 }, extraPrereq: ['off_damage_2'] },
-    { id: 'off_splash_2', name: 'Nova Ring', description: 'Larger splash', cost: 680, effects: { splashAdd: 1.5 } },
+    { id: 'off_splash_1', name: 'Shock Halo', description: 'Small splash radius', cost: 220, effects: { splashAdd: 1.1 }, extraPrereq: ['off_damage_2'] },
+    { id: 'off_splash_2', name: 'Nova Ring', description: 'Larger splash', cost: 520, effects: { splashAdd: 1.3 } },
+    { id: 'off_splash_3', name: 'Cascade Halo', description: 'Wide detonation ring', cost: 1000, effects: { splashAdd: 1.4 } },
   ]),
   ...chainNodes('off_crit', 'offense', [
-    { id: 'off_crit_1', name: 'Overcharge', description: '+8% crit chance', cost: 280, effects: { critChance: 0.08 }, extraPrereq: ['off_damage_2'] },
-    { id: 'off_crit_2', name: 'Overcharge', description: '+8% crit chance', cost: 500, effects: { critChance: 0.08 } },
-    { id: 'off_crit_3', name: 'Overcharge', description: '+8% crit chance (soft cap)', cost: 900, effects: { critChance: 0.08 } },
+    { id: 'off_crit_1', name: 'Overcharge', description: '+7% crit chance', cost: 260, effects: { critChance: 0.07 }, extraPrereq: ['off_damage_2'] },
+    { id: 'off_crit_2', name: 'Overcharge', description: '+7% crit chance', cost: 480, effects: { critChance: 0.07 } },
+    { id: 'off_crit_3', name: 'Overcharge', description: '+7% crit chance', cost: 820, effects: { critChance: 0.07 } },
+    { id: 'off_crit_4', name: 'Overcharge', description: '+6% crit chance (soft cap)', cost: 1300, effects: { critChance: 0.06 } },
   ]),
 
   // ═══════════════════════════════════════════
-  // LOADOUTS — hardpoint placeholders (P4)
+  // LOADOUTS — hardpoint bays (weapons bought in Loadouts tab UI)
   // ═══════════════════════════════════════════
   ...chainNodes('hardpoint', 'loadouts', [
     {
@@ -251,7 +288,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
       cost: 80,
       costCurrency: 'coreEnergy',
       effects: { hardpointAdd: 1 },
-      extraPrereq: ['off_damage_3'],
+      extraPrereq: ['off_damage_1'],
     },
     {
       id: 'hardpoint_3',
@@ -262,19 +299,6 @@ export const UPGRADES: UpgradeNodeDef[] = [
       effects: { hardpointAdd: 1 },
     },
   ]),
-  // Teaser / placeholder until P4/P5
-  node({
-    id: 'loadout_coming',
-    name: 'Weapon Modules',
-    description: 'Modular weapons unlock in later sectors',
-    branch: 'loadouts',
-    chain: 'loadout_teaser',
-    rank: 1,
-    cost: 99999,
-    costCurrency: 'fragments',
-    prerequisites: ['hardpoint_2'],
-    effects: {},
-  }),
 
   // ═══════════════════════════════════════════
   // DRONES

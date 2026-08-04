@@ -6,6 +6,7 @@ interface Ring {
   life: number;
   maxLife: number;
   active: boolean;
+  baseScale: number;
 }
 
 /** Expanding emissive rings at impact / destroy points. */
@@ -28,7 +29,7 @@ export class ImpactRings {
       mesh.visible = false;
       mesh.frustumCulled = false;
       this.group.add(mesh);
-      this.pool.push({ mesh, life: 0, maxLife: 0.35, active: false });
+      this.pool.push({ mesh, life: 0, maxLife: 0.35, active: false, baseScale: 1 });
     }
   }
 
@@ -38,14 +39,14 @@ export class ImpactRings {
     ring.active = true;
     ring.life = 0.28 + Math.random() * 0.12;
     ring.maxLife = ring.life;
+    ring.baseScale = scale;
     ring.mesh.position.set(x, y, z);
-    ring.mesh.scale.setScalar(0.4 * scale);
+    ring.mesh.scale.setScalar(0.35 * scale);
     ring.mesh.visible = true;
-    // Face outward from cube center roughly
     ring.mesh.lookAt(0, 0, 0);
     const mat = ring.mesh.material as THREE.MeshBasicMaterial;
     mat.color.setHex(color);
-    mat.opacity = 0.85;
+    mat.opacity = 0.7;
   }
 
   update(dt: number): void {
@@ -53,10 +54,11 @@ export class ImpactRings {
       if (!r.active) continue;
       r.life -= dt;
       const t = Math.max(0, r.life / r.maxLife);
-      const grow = 1 + (1 - t) * 3.2;
+      const age = 1 - t;
+      const grow = r.baseScale * (0.35 + age * 3.2);
       r.mesh.scale.setScalar(grow);
       const mat = r.mesh.material as THREE.MeshBasicMaterial;
-      mat.opacity = t * 0.75;
+      mat.opacity = t * t * 0.85;
       if (r.life <= 0) {
         r.active = false;
         r.mesh.visible = false;

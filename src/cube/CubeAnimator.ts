@@ -30,7 +30,7 @@ const DEFAULT_CFG: CubeAnimatorConfig = {
   cooldownMax: 12,
   minLevel: 1,
   reducedMotion: false,
-  expandPeak: 0.06,
+  expandPeak: 0.045,
 };
 
 type Phase = 'idle' | 'telegraph' | 'spin' | 'cooldown';

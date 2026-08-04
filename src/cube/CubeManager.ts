@@ -207,37 +207,64 @@ export class CubeManager {
 
   /**
    * Raycast against axis-aligned blocks via ray-box on remaining instances (coarse but fine for mobile).
+   * Returns approximate outward face normal for bounce / refract weapons.
    */
-  raycast(origin: THREE.Vector3, direction: THREE.Vector3, maxDist: number): {
+  raycast(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    maxDist: number,
+    ignoreId = -1
+  ): {
     instanceId: number;
     point: THREE.Vector3;
     distance: number;
+    normal: THREE.Vector3;
   } | null {
     if (!this.mesh || this.mesh.count === 0 || !this.generated) return null;
     const dir = direction.clone().normalize();
     let bestDist = maxDist;
     let bestId = -1;
+    let bestPoint: THREE.Vector3 | null = null;
     const half = 0.48;
     const box = new THREE.Box3();
+    const hitPt = new THREE.Vector3();
 
     for (let id = 0; id < this.mesh.count; id++) {
+      if (id === ignoreId) continue;
       this.mesh.getMatrixAt(id, _matrix);
       _pos.setFromMatrixPosition(_matrix);
       box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
       box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
-      const hit = new THREE.Ray(origin, dir).intersectBox(box, new THREE.Vector3());
+      const hit = new THREE.Ray(origin, dir).intersectBox(box, hitPt);
       if (!hit) continue;
       const d = origin.distanceTo(hit);
-      if (d < bestDist) {
+      if (d < bestDist && d > 1e-4) {
         bestDist = d;
         bestId = id;
+        bestPoint = hit.clone();
       }
     }
-    if (bestId < 0) return null;
+    if (bestId < 0 || !bestPoint) return null;
+
+    // Face normal from nearest axis of hit relative to block center
+    this.mesh.getMatrixAt(bestId, _matrix);
+    _pos.setFromMatrixPosition(_matrix);
+    const lx = bestPoint.x - _pos.x;
+    const ly = bestPoint.y - _pos.y;
+    const lz = bestPoint.z - _pos.z;
+    const ax = Math.abs(lx);
+    const ay = Math.abs(ly);
+    const az = Math.abs(lz);
+    const normal = new THREE.Vector3();
+    if (ax >= ay && ax >= az) normal.set(Math.sign(lx) || 1, 0, 0);
+    else if (ay >= ax && ay >= az) normal.set(0, Math.sign(ly) || 1, 0);
+    else normal.set(0, 0, Math.sign(lz) || 1);
+
     return {
       instanceId: bestId,
-      point: origin.clone().addScaledVector(dir, bestDist),
+      point: bestPoint,
       distance: bestDist,
+      normal,
     };
   }
 

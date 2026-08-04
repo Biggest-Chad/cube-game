@@ -17,6 +17,7 @@ export class HUD {
   private shopHint!: HTMLElement;
   private introBanner!: HTMLElement;
   private controlsLayer!: HTMLElement;
+  private crosshair!: HTMLElement;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -76,6 +77,15 @@ export class HUD {
           <div class="intro-sub" id="intro-sub">Mapping cube topology…</div>
         </div>
 
+        <!-- Neon HUD crosshair (screen-space — never painted on 3D blocks) -->
+        <div class="hud-crosshair panel-hidden" id="hud-crosshair" aria-hidden="true">
+          <div class="hx-ring"></div>
+          <div class="hx-ring outer"></div>
+          <div class="hx-bar h"></div>
+          <div class="hx-bar v"></div>
+          <div class="hx-dot"></div>
+        </div>
+
         <div class="hud-controls" id="controls-layer">
           <div class="control-cluster left">
             <div class="control-label">ORBIT</div>
@@ -116,6 +126,7 @@ export class HUD {
     this.shopHint = this.root.querySelector('#shop-hint')!;
     this.introBanner = this.root.querySelector('#intro-banner')!;
     this.controlsLayer = this.root.querySelector('#controls-layer')!;
+    this.crosshair = this.root.querySelector('#hud-crosshair')!;
   }
 
   get elements() {
@@ -135,16 +146,35 @@ export class HUD {
 
   setVisible(v: boolean): void {
     this.root.style.display = v ? '' : 'none';
+    if (!v) this.setCrosshairVisible(false);
   }
 
   setIntro(active: boolean, subtitle?: string): void {
     this.introBanner.classList.toggle('panel-hidden', !active);
     this.controlsLayer.style.opacity = active ? '0.2' : '1';
     this.controlsLayer.style.pointerEvents = active ? 'none' : '';
+    this.setCrosshairVisible(!active && this.root.style.display !== 'none');
     if (subtitle) {
       const el = this.root.querySelector('#intro-sub');
       if (el) el.textContent = subtitle;
     }
+  }
+
+  setCrosshairVisible(v: boolean): void {
+    this.crosshair?.classList.toggle('panel-hidden', !v);
+  }
+
+  /**
+   * Offset crosshair slightly with aim stick so players read intent,
+   * while keeping it fixed-depth on the HUD (no world z-fighting).
+   */
+  updateCrosshair(aimX: number, aimY: number, firing = false): void {
+    if (!this.crosshair || this.crosshair.classList.contains('panel-hidden')) return;
+    const maxPx = 28;
+    const x = Math.max(-1, Math.min(1, aimX)) * maxPx;
+    const y = Math.max(-1, Math.min(1, aimY)) * maxPx;
+    this.crosshair.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px))`;
+    this.crosshair.classList.toggle('firing', firing);
   }
 
   updateCurrency(fragments: number, core: number): void {

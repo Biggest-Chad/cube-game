@@ -28,6 +28,12 @@ export interface PlayerStats {
   idleCapMul: number;
   critChance: number;
   beamWidth: number;
+  /** Gentle main-gun cone spread */
+  spreadAdd: number;
+  /** Main gun block penetration count */
+  penetrationAdd: number;
+  /** Main gun armor pierce add */
+  armorPierceAdd: number;
   dronesUnlocked: boolean;
   /** Vitals bonuses (consumed by ShipVitals.syncFromStats). */
   maxHullAdd: number;
@@ -58,6 +64,9 @@ export function defaultStats(): PlayerStats {
     idleCapMul: 1,
     critChance: 0,
     beamWidth: 1,
+    spreadAdd: 0,
+    penetrationAdd: 0,
+    armorPierceAdd: 0,
     dronesUnlocked: false,
     maxHullAdd: 0,
     maxShieldAdd: 0,
@@ -141,6 +150,9 @@ function applyEffect(stats: PlayerStats, acc: Accumulators, e: UpgradeEffect): v
   if (e.idleCapMul) acc.idleCapMulProd *= e.idleCapMul;
   if (e.critChance) stats.critChance += e.critChance;
   if (e.beamWidth) stats.beamWidth *= e.beamWidth;
+  if (e.spreadAdd) stats.spreadAdd += e.spreadAdd;
+  if (e.penetrationAdd) stats.penetrationAdd += e.penetrationAdd;
+  if (e.armorPierceAdd) stats.armorPierceAdd += e.armorPierceAdd;
   if (e.unlockDrones) stats.dronesUnlocked = true;
   if (e.maxHullAdd) stats.maxHullAdd += e.maxHullAdd;
   if (e.maxShieldAdd) stats.maxShieldAdd += e.maxShieldAdd;

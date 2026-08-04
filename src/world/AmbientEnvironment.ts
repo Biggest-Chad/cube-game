@@ -51,7 +51,7 @@ export class AmbientEnvironment {
     for (const m of mats) {
       const mat = m as THREE.Material;
       mat.transparent = true;
-      mat.opacity = 0.11;
+      mat.opacity = 0.16;
       mat.depthWrite = false;
       if ('color' in mat) {
         (mat as THREE.LineBasicMaterial).color.setHex(COLORS.cyan);

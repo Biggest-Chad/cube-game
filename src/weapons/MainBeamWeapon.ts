@@ -26,6 +26,8 @@ interface Bolt {
   splash: number;
   crit: boolean;
   armorPierce: number;
+  penLeft: number;
+  lastHitId: number;
 }
 
 function makePlasmaBoltGeometry(): {
@@ -166,6 +168,8 @@ export class MainBeamWeapon implements WeaponBehavior {
         splash: 0,
         crit: false,
         armorPierce: 0,
+        penLeft: 0,
+        lastHitId: -1,
       });
     }
 
@@ -233,9 +237,18 @@ export class MainBeamWeapon implements WeaponBehavior {
     const baseDmg = this.stats.damage * (isMain ? ctx.playerStats.damageMul : 1);
     const critChance = this.stats.critChance + (isMain ? ctx.playerStats.critChance : 0);
     const splash = this.stats.splashRadius + (isMain ? ctx.playerStats.splashAdd : 0);
+    const spreadExtra =
+      (this.stats.spread ?? 0) + (isMain ? ctx.playerStats.spreadAdd ?? 0 : 0);
+    const pen =
+      (this.stats.penetration ?? 0) +
+      (isMain ? Math.floor(ctx.playerStats.penetrationAdd ?? 0) : 0);
+    const armorPierce =
+      this.stats.armorPierce + (isMain ? ctx.playerStats.armorPierceAdd ?? 0 : 0);
 
     for (let s = 0; s < shots; s++) {
-      const spread = (s - (shots - 1) / 2) * 0.028;
+      const fan = (s - (shots - 1) / 2) * 0.028;
+      const jitter = spreadExtra > 0 ? (Math.random() - 0.5) * spreadExtra * 0.1 : 0;
+      const spread = fan + jitter;
       const axis =
         Math.abs(ctx.direction.y) < 0.9
           ? new THREE.Vector3(0, 1, 0)
@@ -252,7 +265,7 @@ export class MainBeamWeapon implements WeaponBehavior {
       // Spawn slightly past muzzle so mesh never embeds in hull
       const spawn = this.tmp.copy(ctx.origin).addScaledVector(dir, 0.15);
       this.muzzleFlash(spawn, dir);
-      this.fireBolt(spawn, dir, rolled.damage, splash, rolled.crit, this.stats.armorPierce);
+      this.fireBolt(spawn, dir, rolled.damage, splash, rolled.crit, armorPierce, pen);
 
       const preview = ctx.cube.raycast(spawn, dir, this.stats.range);
       const end = preview
@@ -281,7 +294,8 @@ export class MainBeamWeapon implements WeaponBehavior {
     damage: number,
     splash: number,
     crit: boolean,
-    armorPierce: number
+    armorPierce: number,
+    penLeft = 0
   ): void {
     const b = this.bolts[this.nextBolt % this.bolts.length];
     this.nextBolt++;
@@ -294,6 +308,8 @@ export class MainBeamWeapon implements WeaponBehavior {
     b.splash = splash;
     b.crit = crit;
     b.armorPierce = armorPierce;
+    b.penLeft = penLeft;
+    b.lastHitId = -1;
     b.root.visible = true;
     b.trail.visible = true;
 
@@ -340,7 +356,7 @@ export class MainBeamWeapon implements WeaponBehavior {
       const move = this.dir.copy(b.pos).sub(prev);
       const dist = move.length();
       if (dist > 1e-5) {
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.4);
+        const hit = cube.raycast(prev, move.normalize(), dist + 0.4, b.lastHitId);
         if (hit) {
           this.resolveHit(b, cube, hit.instanceId, hit.point, now);
           continue;
@@ -369,7 +385,15 @@ export class MainBeamWeapon implements WeaponBehavior {
       type
     );
     const result = cube.applyDamage(instanceId, applied.finalDamage, now);
-    this.deactivateBolt(b);
+    b.lastHitId = instanceId;
+    // Penetration: continue through remaining blocks at reduced damage
+    if (b.penLeft > 0) {
+      b.penLeft--;
+      b.damage *= 0.78;
+      b.pos.copy(point).addScaledVector(b.vel.clone().normalize(), 0.55);
+    } else {
+      this.deactivateBolt(b);
+    }
     if (!result) {
       bus.emit('beam-miss-impact', { x: point.x, y: point.y, z: point.z });
       return;

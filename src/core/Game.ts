@@ -37,6 +37,8 @@ import { ShopUI } from '../ui/ShopUI';
 import { LevelSelectUI } from '../ui/LevelSelectUI';
 import { LoadoutUI } from '../ui/LoadoutUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
+import { TutorialDirector } from '../ui/TutorialDirector';
+import { cheapestPurchasableWeapon, weaponUnlockCost } from '../data/weapons';
 
 type Mode =
   | 'menu'
@@ -87,6 +89,7 @@ export class Game {
   private levelUI: LevelSelectUI;
   private loadoutUI: LoadoutUI;
   private adsUI: AdsOfferUI;
+  private tutorial!: TutorialDirector;
   private overlay: HTMLElement;
   private cinematicRoot: HTMLElement;
   private orientLock: HTMLElement | null = null;
@@ -109,24 +112,34 @@ export class Game {
   private saveAccum = 0;
   private clearRewardMul = 1;
   private pendingReturnMode: Mode = 'playing';
+  private sessionBlocksDestroyed = 0;
+  private sessionPurchased = false;
+  private shopOpen = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
+    const isMobile =
+      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && window.innerWidth < 1200);
+    this.highQuality = !isMobile;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: !isMobile,
       powerPreference: 'high-performance',
       alpha: false,
+      stencil: false,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const dprCap = isMobile ? 1.25 : 1.75;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.92;
+    this.renderer.toneMappingExposure = isMobile ? 0.95 : 0.98;
     this.renderer.setClearColor(COLORS.black, 1);
 
     this.cameraCtrl = new OrbitalCamera(window.innerWidth / window.innerHeight);
     this.post = new PostProcessing(this.renderer, this.scene, this.cameraCtrl.camera);
+    this.post.setQuality(this.highQuality);
 
     this.ambient.applyToScene(this.scene);
     this.scene.add(this.cube.group);
@@ -139,8 +152,9 @@ export class Game {
     this.scene.add(this.drones.group);
 
     this.particles = new ParticlePool(PERF.maxParticles);
+    if (!this.highQuality) this.particles.setBudget(PERF.lowMaxParticles);
     this.shatter = new ShatterSystem(this.particles);
-    this.rings = new ImpactRings(28);
+    this.rings = new ImpactRings(isMobile ? 16 : 28);
     this.scene.add(this.particles.points);
     this.scene.add(this.rings.group);
     this.scene.add(this.reticle.group);
@@ -176,6 +190,10 @@ export class Game {
     this.loadoutUI = new LoadoutUI(document.getElementById('loadout-root')!);
     this.adsUI = new AdsOfferUI(document.getElementById('ads-root')!);
     this.overlay = document.getElementById('overlay-root')!;
+    this.tutorial = new TutorialDirector(document.getElementById('hud-root')!, {
+      stage1Done: false,
+      loadoutDone: false,
+    });
 
     const els = this.hud.elements;
     this.input.bind(els.joyZone, els.stickEl, els.aimZone, els.aimStickEl);
@@ -262,19 +280,70 @@ export class Game {
       this.openTech();
     });
 
-    // Extra loadout button via tech shop loadouts tab is enough; also bind double-tap menu for loadout
     this.shopUI.onClose = () => {
       this.shopUI.hide();
+      this.shopOpen = false;
       this.hud.hideShopHint();
       if (this.pendingReturnMode === 'playing' || this.mode === 'tech') {
         this.mode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
-        if (this.mode === 'playing') this.hud.setVisible(true);
-        else this.showMenu();
+        if (this.mode === 'playing') {
+          this.hud.setVisible(true);
+          this.hud.setCrosshairVisible(true);
+          this.tutorial.showIfActive();
+        } else this.showMenu();
       } else {
         this.showMenu();
       }
     };
     this.shopUI.onPurchase = (node) => this.buyUpgrade(node);
+    this.shopUI.onBuyWeapon = (defId) => this.buyWeapon(defId);
+    this.shopUI.onEquipWeapon = (slot, defId) => {
+      this.loadout.equip(slot, defId);
+      this.hardpoints.rebuildFromLoadout();
+      this.syncLoadoutToSave();
+      this.persist();
+    };
+    this.shopUI.onUpgradeBranch = (slot, branchId) => {
+      const check = this.loadout.canUpgradeBranch(slot, branchId, this.currency.dataFragments);
+      if (!check.ok) return false;
+      if (!this.currency.spendFragments(check.cost)) return false;
+      this.loadout.upgradeBranch(slot, branchId);
+      this.hardpoints.rebuildFromLoadout();
+      this.syncLoadoutToSave();
+      this.persist();
+      this.audio.playPurchase();
+      return true;
+    };
+    this.shopUI.onUnlockHardpoint = (slot) => {
+      const cost = this.loadout.hardpointCost(slot);
+      const discount = this.ads.consumeHardpointDiscount();
+      const finalCost = Math.round(cost * (1 - discount));
+      if (!this.currency.spendCoreEnergy(finalCost)) return false;
+      if (this.loadout.unlockHardpoint(slot, this.save.data.highestLevel) < 0) {
+        this.currency.coreEnergy += finalCost;
+        return false;
+      }
+      this.hardpoints.celebrateUnlock(slot);
+      this.hardpoints.rebuildFromLoadout();
+      this.syncLoadoutToSave();
+      this.persist();
+      this.audio.playPurchase();
+      return true;
+    };
+
+    this.tutorial.onRequestShop = () => {
+      const step = this.tutorial.currentStep;
+      if (step?.id === 'loadout_buy' || step?.advance === 'weapon_owned') {
+        this.openTech('loadouts');
+      } else {
+        this.openTech();
+      }
+    };
+    this.tutorial.onComplete = (id) => {
+      if (id === 'stage1') this.save.data.tutorialStage1Done = true;
+      if (id === 'loadout') this.save.data.tutorialLoadoutDone = true;
+      this.persist();
+    };
 
     this.levelUI.onClose = () => {
       this.levelUI.hide();
@@ -294,11 +363,10 @@ export class Game {
       this.startLevel(1);
     };
 
+    // Legacy standalone loadout still redirects into shop tab
     this.loadoutUI.onClose = () => {
       this.loadoutUI.hide();
-      this.mode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
-      if (this.mode === 'playing') this.hud.setVisible(true);
-      else this.showMenu();
+      this.openTech('loadouts');
     };
     this.loadoutUI.onChanged = () => {
       this.hardpoints.rebuildFromLoadout();
@@ -356,6 +424,7 @@ export class Game {
             this.audio.playDestroy();
             const gained = this.currency.addFragments(r.fragments, this.tech.stats.fragmentMul);
             this.save.data.totalBlocksDestroyed++;
+            this.sessionBlocksDestroyed++;
             if (gained > 0) {
               this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
             }
@@ -378,13 +447,14 @@ export class Game {
       }),
       bus.on('cube-rotation-start', (p: { concurrent?: number }) => {
         if (this.mode === 'playing') {
-          this.cameraCtrl.shake(0.1);
           if ((p?.concurrent ?? 1) > 1) this.toast('MULTI-SLICE REALIGN');
         }
       }),
-      bus.on('cube-rotation-complete', () => this.cameraCtrl.shake(0.08)),
+      // Single shake path only (animator emits camera-shake-request on complete)
       bus.on('camera-shake-request', (p: { amount?: number }) => {
-        this.cameraCtrl.shake(p?.amount ?? 0.1);
+        if (this.mode === 'playing' || this.mode === 'cinematic') {
+          this.cameraCtrl.shake(Math.min(0.12, p?.amount ?? 0.08));
+        }
       })
     );
   }
@@ -483,12 +553,33 @@ export class Game {
       return;
     }
     const rec = this.cheapestAffordable();
-    const canBuy = !!rec;
-    const firstTime = canBuy && !this.shopHintShown && this.tech.owned.size === 0;
-    const hint = rec
-      ? `You can buy “${rec.name}” (${rec.cost} ${rec.costCurrency === 'coreEnergy' ? 'CORE' : 'FRAG'}) — ${rec.description}`
-      : '';
-    this.hud.setShopAffordable(canBuy, firstTime, hint);
+    const weapon = cheapestPurchasableWeapon(
+      this.loadout.ownedWeapons,
+      this.currency.dataFragments
+    );
+    const canBuy = !!rec || !!weapon;
+    const firstUpgrade =
+      !!rec && !this.shopHintShown && this.tech.owned.size === 0 && !this.tutorial.isActive;
+    const firstWeapon =
+      !!weapon &&
+      weapon.id === 'pulse_laser' &&
+      !this.loadout.isOwned('pulse_laser') &&
+      !this.save.data.tutorialLoadoutDone;
+
+    let hint = '';
+    if (firstWeapon && weapon) {
+      const c = weaponUnlockCost(weapon);
+      hint = `Arc Beam ready — ${c.fragments} FRAG. Open SHOP → LOADOUTS to purchase your first hardpoint weapon.`;
+      this.tutorial.tryStartLoadout();
+    } else if (rec) {
+      hint = `You can buy “${rec.name}” (${rec.cost} ${
+        rec.costCurrency === 'coreEnergy' ? 'CORE' : 'FRAG'
+      }) — ${rec.description}`;
+    } else if (weapon) {
+      const c = weaponUnlockCost(weapon);
+      hint = `Weapon available: ${weapon.name} · ${c.fragments} FRAG in LOADOUTS`;
+    }
+    this.hud.setShopAffordable(canBuy, firstUpgrade || firstWeapon, hint);
   }
 
   private loadProgress(): void {
@@ -510,6 +601,10 @@ export class Game {
     });
     this.loadout.syncLevelUnlocks(data.highestLevel);
     this.hardpoints.bindLoadout(this.loadout);
+    this.tutorial.setFlags(
+      !!data.tutorialStage1Done,
+      !!data.tutorialLoadoutDone
+    );
 
     this.vitals.syncFromStats(this.tech.stats);
     // Restore fill from save if present
@@ -611,7 +706,7 @@ export class Game {
     this.hardpoints.group.visible = true;
   }
 
-  private openTech(): void {
+  private openTech(tab?: 'ship' | 'main_gun' | 'loadouts' | 'drones' | 'economy' | 'global'): void {
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
@@ -619,21 +714,18 @@ export class Game {
     this.loadoutUI.hide();
     this.pendingReturnMode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
     this.mode = 'tech';
+    this.shopOpen = true;
     this.hud.setVisible(false);
     this.hud.hideShopHint();
     this.shopHintShown = true;
     this.shopUI.setVitals(this.vitals.snapshot());
-    this.shopUI.show(this.tech, this.currency);
+    this.shopUI.setLoadoutContext(this.loadout, this.save.data.highestLevel);
+    this.shopUI.show(this.tech, this.currency, tab);
   }
 
   private openLoadout(): void {
-    void this.audio.resume();
-    this.audio.playUi();
-    this.menu.hide();
-    this.shopUI.hide();
-    this.mode = 'loadout';
-    this.hud.setVisible(false);
-    this.loadoutUI.show(this.loadout, this.currency, this.save.data.highestLevel);
+    // Loadout is a dedicated shop tab — same design language
+    this.openTech('loadouts');
   }
 
   private openLevels(): void {
@@ -648,8 +740,8 @@ export class Game {
   }
 
   private buyUpgrade(node: UpgradeNodeDef): void {
-    // Hardpoint unlocks via shop also sync loadout
     if (this.tech.purchase(node, this.currency)) {
+      this.sessionPurchased = true;
       if (node.effects.hardpointAdd) {
         this.loadout.hardpointUnlocks = Math.max(
           this.loadout.hardpointUnlocks,
@@ -659,10 +751,40 @@ export class Game {
       }
       this.applyStatsToSystems();
       this.shopUI.setVitals(this.vitals.snapshot());
+      this.shopUI.setLoadoutContext(this.loadout, this.save.data.highestLevel);
       this.shopUI.render(this.tech, this.currency);
       this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+      this.audio.playPurchase();
       this.persist();
     }
+  }
+
+  private buyWeapon(defId: string): boolean {
+    const cost = this.loadout.weaponBuyCost(defId);
+    if (!cost) return false;
+    if (cost.fragments > 0 && !this.currency.spendFragments(cost.fragments)) return false;
+    if (cost.core > 0 && !this.currency.spendCoreEnergy(cost.core)) {
+      if (cost.fragments > 0) this.currency.dataFragments += cost.fragments;
+      return false;
+    }
+    if (!this.loadout.unlockWeapon(defId)) {
+      if (cost.fragments > 0) this.currency.dataFragments += cost.fragments;
+      if (cost.core > 0) this.currency.coreEnergy += cost.core;
+      return false;
+    }
+    // Auto-equip to first empty hardpoint
+    const empty = this.loadout.firstEmptySlot();
+    if (empty >= 0) this.loadout.equip(empty, defId);
+    else if (this.loadout.hardpointUnlocks > 0 && !this.loadout.slots[0]) {
+      this.loadout.equip(0, defId);
+    }
+    this.hardpoints.rebuildFromLoadout();
+    this.syncLoadoutToSave();
+    this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+    this.audio.playPurchase();
+    this.toast(`${defId === 'pulse_laser' ? 'ARC BEAM' : 'WEAPON'} ACQUIRED`);
+    this.persist();
+    return true;
   }
 
   private startLevel(id: number): void {
@@ -781,16 +903,26 @@ export class Game {
     this.hardpoints.group.visible = true;
 
     this.mode = 'playing';
+    this.sessionBlocksDestroyed = 0;
+    this.sessionPurchased = false;
     this.hud.setVisible(true);
     this.hud.setIntro(false);
-    this.reticle.setVisible(true);
+    this.hud.setCrosshairVisible(true);
+    this.reticle.setVisible(false);
     this.cinematicRoot.classList.add('panel-hidden');
     this.cinematicRoot.style.display = '';
     this.cinematicRoot.innerHTML = '';
-    // Strip any body-level cinematic overlay left behind
     document.getElementById('cin-overlay-live')?.remove();
     this.refreshShopPrompt();
     this.toast('ENGAGE');
+    // Stage-1 guided briefing after first combat seat
+    if (this.currentLevelId === 1) {
+      this.tutorial.setFlags(
+        this.save.data.tutorialStage1Done,
+        this.save.data.tutorialLoadoutDone
+      );
+      this.tutorial.tryStartStage1();
+    }
   }
 
   private onLevelClear(): void {
@@ -932,6 +1064,7 @@ export class Game {
         this.particles.setBudget(PERF.lowMaxParticles);
         this.ambient.setQuality(true);
         this.renderer.setPixelRatio(1);
+        this.rings.group.visible = true;
       }
     } else {
       this.lowFpsTimer = 0;
@@ -940,14 +1073,13 @@ export class Game {
     this.ambient.update(dt);
 
     if (this.mode === 'menu') {
-      // Demo cube: camera orbits. Never touch group.scale during/after slices
-      // (scale pulse was reading as a "reset pop" when scrambles finished).
+      // Demo cube: smooth orbit presentation
+      this.post.setPresentation(true);
       this.cameraCtrl.yaw += dt * 0.1;
       this.cameraCtrl.pitch = 0.3 + Math.sin(now * 0.18) * 0.06;
       this.cameraCtrl.update(dt);
       this.cube.update(dt, now);
       this.cubeAnimator.update(dt);
-      // Keep a stable presentation pose; only ease yaw between lattice spins
       this.cube.group.scale.setScalar(1);
       this.cube.group.position.y = 0.35;
       this.cube.group.rotation.x = 0.12;
@@ -956,6 +1088,7 @@ export class Game {
         this.cube.group.rotation.y += dt * 0.045;
       }
     } else if (this.mode === 'cinematic' && this.cinematic) {
+      this.post.setPresentation(true);
       // Cube block regen/flash only — transform + ship owned by cinematic director
       this.cube.update(dt, now);
       // Enforce ship hide every frame (prevents mid-cut ghost at origin)
@@ -993,6 +1126,7 @@ export class Game {
       );
       if (progress >= 1) this.finishIntro();
     } else if (this.mode === 'playing' || this.mode === 'levelclear') {
+      this.post.setQuality(this.highQuality);
       this.input.update(dt);
       const zoom = this.input.consumeZoom();
       if (this.mode === 'playing') {
@@ -1023,13 +1157,26 @@ export class Game {
 
         this.weapon.getMuzzle(this._muzzle);
         this.weapon.getAimDirection(this._aimDir);
-        this.reticle.update(
-          dt,
-          this._muzzle,
-          this._aimDir,
-          this.cube,
-          this.cameraCtrl.camera
-        );
+        this.hud.updateCrosshair(this.input.aimX, this.input.aimY, this.input.isFiring);
+        this.hud.setCrosshairVisible(true);
+
+        // Guided tutorial progress
+        const orbitMag = Math.hypot(this.input.axisX, this.input.axisY);
+        const aimMag = Math.hypot(this.input.aimX, this.input.aimY);
+        this.tutorial.update(dt, {
+          orbitMag,
+          aimMag,
+          blocksDestroyedSession: this.sessionBlocksDestroyed,
+          shopOpen: this.shopOpen,
+          purchasedThisSession: this.sessionPurchased,
+          ownsArcBeam: this.loadout.isOwned('pulse_laser'),
+          hasEquippedWeapon: this.loadout.allDerived().length > 0,
+          canAffordShop: !!this.cheapestAffordable(),
+          canAffordArcBeam:
+            !this.loadout.isOwned('pulse_laser') &&
+            this.currency.dataFragments >=
+              (this.loadout.weaponBuyCost('pulse_laser')?.fragments ?? Infinity),
+        });
 
         this.hardpoints.update(
           dt,
@@ -1041,6 +1188,7 @@ export class Game {
           {
             enemyTargets: this.cubeDefense.getEnemyTargetsForWeapons(),
             onEnemyHit: (id, dmg) => this.cubeDefense.damageEnemy(id, dmg),
+            aimDirection: this._aimDir,
           }
         );
 

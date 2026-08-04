@@ -9,7 +9,9 @@ import {
   branchRankCost,
   computeWeaponStats,
   getWeaponDef,
+  isWeaponPurchasable,
   isWeaponUnlocked,
+  weaponUnlockCost,
   type WeaponDef,
   type WeaponStats,
 } from '../data/weapons';
@@ -38,11 +40,11 @@ export class LoadoutState {
   hardpointUnlocks = 1;
   /** Equipped weapons, length MAX_HARDPOINTS */
   slots: Array<WeaponInstance | null> = [null, null, null];
-  /** Unlocked weapon def ids (owned catalog) */
-  ownedWeapons = new Set<string>(['pulse_laser']);
+  /** Unlocked weapon def ids (owned catalog) — Arc Beam is shop-purchased, not free */
+  ownedWeapons = new Set<string>();
 
   constructor() {
-    // Default: rocket pod auto-granted when unlocked by level — equip nothing until player chooses
+    // Empty catalog until player buys Arc Beam (or other modules) in the shop
   }
 
   static default(): LoadoutState {
@@ -67,8 +69,7 @@ export class LoadoutState {
         }
       }
     }
-    this.ownedWeapons = new Set(snap.ownedWeapons?.length ? snap.ownedWeapons : ['pulse_laser']);
-    this.ownedWeapons.add('pulse_laser');
+    this.ownedWeapons = new Set(snap.ownedWeapons ?? []);
   }
 
   toJSON(): LoadoutSnapshot {
@@ -81,7 +82,7 @@ export class LoadoutState {
     };
   }
 
-  /** Sync catalog unlocks from campaign progress (level gates). */
+  /** Sync catalog unlocks from campaign progress (level gates only — shop weapons stay locked). */
   syncLevelUnlocks(highestLevel: number): string[] {
     const newly: string[] = [];
     for (const w of WEAPONS) {
@@ -101,6 +102,26 @@ export class LoadoutState {
     this.ownedWeapons.add(id);
     bus.emit('weapons-unlocked', [id]);
     return true;
+  }
+
+  /** Cost to unlock a shop weapon, or null if not purchasable. */
+  weaponBuyCost(id: string): { fragments: number; core: number } | null {
+    const def = getWeaponDef(id);
+    if (!def || !isWeaponPurchasable(def, this.ownedWeapons)) return null;
+    return weaponUnlockCost(def);
+  }
+
+  /** All weapons visible in shop catalog (owned + purchasable). */
+  shopCatalog(): WeaponDef[] {
+    return WEAPONS.slice();
+  }
+
+  /** First empty unlocked hardpoint, or -1. */
+  firstEmptySlot(): number {
+    for (let i = 0; i < this.hardpointUnlocks; i++) {
+      if (!this.slots[i]) return i;
+    }
+    return -1;
   }
 
   isOwned(id: string): boolean {
