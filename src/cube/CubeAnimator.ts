@@ -1,7 +1,6 @@
 /**
  * Rubik-style slice scrambles — multi-layer / multi-axis simultaneous turns.
- * Blocks decouple & expand outward before locking into new lattice slots.
- * Damage pressure accelerates the cube's reactive rearrangements.
+ * Blocks decouple slightly mid-spin, then settle to exact lattice slots (no pop).
  */
 import * as THREE from 'three';
 import type { CubeManager } from './CubeManager';
@@ -18,22 +17,20 @@ export interface CubeAnimatorConfig {
   cooldownMax: number;
   minLevel: number;
   reducedMotion: boolean;
-  /** Outward expand factor at mid-spin (alien decouple) */
+  /** Peak outward expand (kept low — high values cause visible settle artifacts) */
   expandPeak: number;
 }
 
 const DEFAULT_CFG: CubeAnimatorConfig = {
   telegraphMin: 0.4,
   telegraphMax: 0.75,
-  spinMin: 0.55,
-  spinMax: 0.95,
-  // ~25% more frequent than prior 7–16s baseline
+  spinMin: 0.6,
+  spinMax: 1.0,
   cooldownMin: 5.2,
   cooldownMax: 12,
   minLevel: 1,
   reducedMotion: false,
-  /** Mild expand — too high causes a hard snap on commit */
-  expandPeak: 0.1,
+  expandPeak: 0.06,
 };
 
 type Phase = 'idle' | 'telegraph' | 'spin' | 'cooldown';
@@ -48,7 +45,6 @@ interface SliceAnimState {
   move: SliceMove;
   ids: number[];
   startPos: THREE.Vector3[];
-  /** Exact lattice destinations — blend into these at end of spin (kills jitter pop) */
   endPos: THREE.Vector3[];
   scales: THREE.Vector3[];
 }
@@ -64,7 +60,6 @@ export class CubeAnimator {
   private damagePressure = 0;
   private enabled = true;
 
-  /** Concurrent slice animations (multi-axis / multi-layer) */
   private active: SliceAnimState[] = [];
   private pendingMoves: SliceMove[] = [];
 
@@ -132,21 +127,21 @@ export class CubeAnimator {
   /** Force faster scrambles (menu demo). */
   setDemoMode(on: boolean): void {
     if (on) {
-      this.cfg.cooldownMin = 2.2;
-      this.cfg.cooldownMax = 4.5;
-      this.cfg.telegraphMin = 0.3;
-      this.cfg.spinMin = 0.5;
+      this.cfg.cooldownMin = 2.4;
+      this.cfg.cooldownMax = 4.8;
+      this.cfg.telegraphMin = 0.35;
+      this.cfg.telegraphMax = 0.55;
+      this.cfg.spinMin = 0.55;
+      this.cfg.spinMax = 0.85;
     } else {
       this.cfg = { ...DEFAULT_CFG };
     }
   }
 
-  /** Cinematic helper: rapid multi-slice pressure during intro. */
   beginCinematicBurst(): void {
     this.setDemoMode(true);
     this.damagePressure = 4;
     this.enabled = true;
-    // Kick an immediate scramble if idle
     if (this.phase === 'idle' || this.phase === 'cooldown') {
       this.timer = this.phaseDuration;
     }
@@ -157,7 +152,6 @@ export class CubeAnimator {
     this.damagePressure = 0;
   }
 
-  /** Force a quick scramble soon (intro beats). */
   forceQuickShift(_intensity = 1): void {
     this.damagePressure = Math.min(4.5, this.damagePressure + 2 * Math.max(0.5, _intensity));
     if (this.phase === 'cooldown' || this.phase === 'idle') {
@@ -220,9 +214,6 @@ export class CubeAnimator {
     this.phaseDuration = Math.max(1.4, gap / urgency);
   }
 
-  /**
-   * Plan 1–3 simultaneous slice turns on different layers/axes.
-   */
   private planConcurrentMoves(): void {
     this.pendingMoves = [];
     if (!this.cube) return;
@@ -241,7 +232,6 @@ export class CubeAnimator {
       if (!move) continue;
       const key = `${move.axis}:${move.layer}`;
       if (used.has(key)) continue;
-      // Prefer variety: avoid same axis if we already have one (unless only option)
       if (
         this.pendingMoves.some((m) => m.axis === move.axis) &&
         this.pendingMoves.length < count &&
@@ -349,7 +339,7 @@ export class CubeAnimator {
     this._claimedIds.clear();
     for (const move of this.pendingMoves) {
       const rawIds = this.cube.collectSliceIds(move.axis, move.layer);
-      // Exclusive ownership — no block in two concurrent slices (prevents double-write jitter)
+      // Exclusive ownership — no block in two concurrent slices
       const ids = rawIds.filter((id) => {
         if (this._claimedIds.has(id)) return false;
         this._claimedIds.add(id);
@@ -403,14 +393,14 @@ export class CubeAnimator {
   private updateSpin(): void {
     if (!this.cube) return;
     const t = Math.min(1, this.timer / Math.max(1e-4, this.phaseDuration));
-    // Rotation ease
+    // Smoothstep rotation 0 → 90°
     const e = t * t * (3 - 2 * t);
-    // Soft expand mid-spin; fades out so end matches lattice (no pop)
-    const expandWave = Math.sin(t * Math.PI); // 0→1→0
+    // Expand peaks mid-spin and returns EXACTLY to 0 at t=0 and t=1 (sin envelope)
+    const expandWave = Math.sin(t * Math.PI);
     const expand = 1 + expandWave * this.cfg.expandPeak;
-    // Settle blend into exact end positions over the last 40% of the spin
-    const settle = t < 0.55 ? 0 : (t - 0.55) / 0.45;
-    const settleE = settle * settle * (3 - 2 * settle);
+    // Final 20%: hard blend to exact lattice end (kills any float / expand residual)
+    const settleT = t < 0.8 ? 0 : (t - 0.8) / 0.2;
+    const settleE = settleT * settleT * (3 - 2 * settleT);
 
     for (const slice of this.active) {
       const ang = e * (slice.move.sign * (Math.PI / 2));
@@ -418,15 +408,16 @@ export class CubeAnimator {
       this._q.setFromAxisAngle(this._axis, ang);
 
       for (let i = 0; i < slice.ids.length; i++) {
-        // Arc path from start
         this._pos.copy(slice.startPos[i]).applyQuaternion(this._q);
         this._pos.multiplyScalar(expand);
-        // Blend into precomputed lattice destination — kills commit snap/jitter
         this._end.copy(slice.endPos[i]);
-        this._pos.lerp(this._end, settleE);
+        if (settleE > 0) {
+          this._pos.lerp(this._end, settleE);
+        }
 
         const s = slice.scales[i];
-        const sc = 1 + expandWave * 0.06 * (1 - settleE);
+        // Scale pulse also fully gone by t=1
+        const sc = 1 + expandWave * 0.04 * (1 - settleE);
         this.cube.setInstanceWorldPos(
           slice.ids[i],
           this._pos,
@@ -447,13 +438,16 @@ export class CubeAnimator {
       this.enterCooldown();
       return;
     }
-    // Snap to exact end lattice (should already be nearly there from settle blend)
+    // Authoritative lattice commit from original starts (no residual float error)
     for (const a of this.active) {
-      for (let i = 0; i < a.ids.length; i++) {
-        this.cube.setInstanceWorldPos(a.ids[i], a.endPos[i], a.scales[i]);
-      }
+      this.cube.commitSliceFromStarts(
+        a.ids,
+        a.startPos,
+        a.scales,
+        a.move.axis,
+        a.move.sign
+      );
     }
-    this.cube.markInstanceMatrixDirty();
     this.finishVisuals();
     bus.emit('cube-rotation-complete', {
       moves: this.pendingMoves,
@@ -480,13 +474,25 @@ export class CubeAnimator {
   }
 
   reset(): void {
+    // If a spin was mid-flight, snap active slices to their ends first
+    if (this.cube && this.active.length) {
+      for (const a of this.active) {
+        this.cube.commitSliceFromStarts(
+          a.ids,
+          a.startPos,
+          a.scales,
+          a.move.axis,
+          a.move.sign
+        );
+      }
+    }
     this.phase = 'idle';
     this.timer = 0;
     this.damagePressure = 0;
     this.pendingMoves = [];
     this.active = [];
+    this._claimedIds.clear();
     this.finishVisuals();
-    if (this.cube) this.cube.group.quaternion.identity();
   }
 
   dispose(): void {

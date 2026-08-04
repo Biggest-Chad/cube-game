@@ -731,6 +731,8 @@ export class Game {
       this.hud.setVisible(false);
       this.reticle.setVisible(false);
       this.ship.group.visible = false;
+      this.ship.group.scale.setScalar(0);
+      this.ship.group.position.set(0, -500, 0);
       this.hardpoints.group.visible = false;
       this.hasSeenCinematic = true;
       this.cinematic.start({
@@ -772,6 +774,7 @@ export class Game {
     this.cameraCtrl.endCinematic();
 
     // Place ship on orbit seat BEFORE unhiding (never spawn inside cube)
+    this.ship.group.scale.setScalar(1);
     this.ship.group.visible = false;
     for (let i = 0; i < 12; i++) this.ship.update(this.cameraCtrl, 0.08);
     this.ship.group.visible = true;
@@ -782,7 +785,10 @@ export class Game {
     this.hud.setIntro(false);
     this.reticle.setVisible(true);
     this.cinematicRoot.classList.add('panel-hidden');
+    this.cinematicRoot.style.display = '';
     this.cinematicRoot.innerHTML = '';
+    // Strip any body-level cinematic overlay left behind
+    document.getElementById('cin-overlay-live')?.remove();
     this.refreshShopPrompt();
     this.toast('ENGAGE');
   }
@@ -934,23 +940,28 @@ export class Game {
     this.ambient.update(dt);
 
     if (this.mode === 'menu') {
-      // Demo cube: camera orbits; only gentle pulse when NOT mid-slice (avoids jitter)
+      // Demo cube: camera orbits. Never touch group.scale during/after slices
+      // (scale pulse was reading as a "reset pop" when scrambles finished).
       this.cameraCtrl.yaw += dt * 0.1;
       this.cameraCtrl.pitch = 0.3 + Math.sin(now * 0.18) * 0.06;
       this.cameraCtrl.update(dt);
       this.cube.update(dt, now);
       this.cubeAnimator.update(dt);
-      if (!this.cubeAnimator.isRotating) {
-        const pulse = 1 + Math.sin(now * 1.1) * 0.015;
-        this.cube.group.scale.setScalar(pulse);
-        // Slow yaw only between slices — never during lattice animation
-        this.cube.group.rotation.y += dt * 0.05;
-      }
-      this.cube.group.rotation.x = 0.12;
+      // Keep a stable presentation pose; only ease yaw between lattice spins
+      this.cube.group.scale.setScalar(1);
       this.cube.group.position.y = 0.35;
+      this.cube.group.rotation.x = 0.12;
+      this.cube.group.rotation.z = 0.06;
+      if (!this.cubeAnimator.isRotating) {
+        this.cube.group.rotation.y += dt * 0.045;
+      }
     } else if (this.mode === 'cinematic' && this.cinematic) {
-      // Cube block regen/flash only — transform owned by cinematic director
+      // Cube block regen/flash only — transform + ship owned by cinematic director
       this.cube.update(dt, now);
+      // Enforce ship hide every frame (prevents mid-cut ghost at origin)
+      this.ship.group.visible = false;
+      this.ship.group.scale.setScalar(0);
+      this.hardpoints.group.visible = false;
       const done = this.cinematic.update(dt);
       if (done) this.finishIntro();
     } else if (this.mode === 'intro') {

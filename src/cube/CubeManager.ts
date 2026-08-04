@@ -154,15 +154,14 @@ export class CubeManager {
     const { chunk, localIndex: i } = ref;
     const t = chunk.types[i] as BlockType;
     if (t === BlockType.Empty) return;
-    const lz = Math.floor(i / (CHUNK_SIZE * CHUNK_SIZE));
-    const ly = Math.floor((i % (CHUNK_SIZE * CHUNK_SIZE)) / CHUNK_SIZE);
-    const lx = i % CHUNK_SIZE;
-    const wp = chunkWorldPosition(chunk, lx, ly, lz, this.generated.size, this.generated.blockSize);
+    // Preserve current instance position (scramble moves blocks; never snap back to spawn lattice)
+    this.mesh.getMatrixAt(instanceId, _matrix);
+    _pos.setFromMatrixPosition(_matrix);
     const flash = this.flashMap.get(instanceId) ?? 0;
     const hpRatio = chunk.health[i] / Math.max(1, chunk.maxHealth[i]);
     const s = 0.55 + 0.45 * Math.min(1, hpRatio);
-    _pos.set(wp.x, wp.y, wp.z);
     _scale.set(s, s, s);
+    _quat.identity();
     _matrix.compose(_pos, _quat, _scale);
     this.mesh.setMatrixAt(instanceId, _matrix);
     _color.setHex(colorForType(t));
@@ -582,7 +581,7 @@ export class CubeManager {
       this.mesh.setMatrixAt(id, _matrix);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
-    this.group.quaternion.identity();
+    // Do NOT reset group.quaternion/rotation — menu & cinematic own the group transform
   }
 
   /**
@@ -607,7 +606,6 @@ export class CubeManager {
       this.mesh.setMatrixAt(s.id, _matrix);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
-    this.group.quaternion.identity();
   }
 
   /** Idle damage: destroy approximate fraction of remaining blocks */
