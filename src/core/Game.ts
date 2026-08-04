@@ -1,7 +1,13 @@
 import * as THREE from 'three';
-import { COLORS, ORBIT, PERF } from '../data/constants';
+import { COLORS, ORBIT, PERF, SAVE_KEY } from '../data/constants';
 import { getLevel } from '../data/levels';
 import type { UpgradeNodeDef } from '../data/upgrades';
+import {
+  DEFAULT_GRAPHICS_QUALITY,
+  getGraphicsPreset,
+  peekSavedGraphicsQuality,
+  type GraphicsQuality,
+} from '../data/graphics';
 import { bus } from './EventBus';
 import { Time } from './Time';
 import { SaveSystem } from './SaveSystem';
@@ -36,6 +42,7 @@ import { MenuUI } from '../ui/MenuUI';
 import { ShopUI } from '../ui/ShopUI';
 import { LevelSelectUI } from '../ui/LevelSelectUI';
 import { LoadoutUI } from '../ui/LoadoutUI';
+import { SettingsUI } from '../ui/SettingsUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
 import { TutorialDirector } from '../ui/TutorialDirector';
 import { cheapestPurchasableWeapon, weaponUnlockCost } from '../data/weapons';
@@ -49,6 +56,7 @@ type Mode =
   | 'tech'
   | 'levels'
   | 'loadout'
+  | 'settings'
   | 'dead';
 
 export class Game {
@@ -88,6 +96,7 @@ export class Game {
   private shopUI: ShopUI;
   private levelUI: LevelSelectUI;
   private loadoutUI: LoadoutUI;
+  private settingsUI: SettingsUI;
   private adsUI: AdsOfferUI;
   private tutorial!: TutorialDirector;
   private overlay: HTMLElement;
@@ -99,7 +108,10 @@ export class Game {
   private raf = 0;
   private hidden = false;
   private lowFpsTimer = 0;
-  private highQuality = true;
+  /** User-selected graphics tier (persisted). Default medium. */
+  private graphicsQuality: GraphicsQuality = DEFAULT_GRAPHICS_QUALITY;
+  /** Runtime quality after optional FPS demotion (never above user selection). */
+  private effectiveQuality: GraphicsQuality = DEFAULT_GRAPHICS_QUALITY;
   private levelClearHandled = false;
   private unsubs: Array<() => void> = [];
   private introTimer = 0;
@@ -118,28 +130,29 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    const isMobile =
-      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-      (navigator.maxTouchPoints > 1 && window.innerWidth < 1200);
-    this.highQuality = !isMobile;
+    // Boot from saved preference (default medium) so first frame uses correct DPR/AA
+    this.graphicsQuality = peekSavedGraphicsQuality(SAVE_KEY);
+    this.effectiveQuality = this.graphicsQuality;
+    const bootPreset = getGraphicsPreset(this.graphicsQuality);
+
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: !isMobile,
+      antialias: bootPreset.antialias,
       powerPreference: 'high-performance',
       alpha: false,
       stencil: false,
     });
-    const dprCap = isMobile ? 1.25 : 1.75;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
+    this.renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio || 1, bootPreset.dprCap)
+    );
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = isMobile ? 0.95 : 0.98;
+    this.renderer.toneMappingExposure = bootPreset.exposure;
     this.renderer.setClearColor(COLORS.black, 1);
 
     this.cameraCtrl = new OrbitalCamera(window.innerWidth / window.innerHeight);
     this.post = new PostProcessing(this.renderer, this.scene, this.cameraCtrl.camera);
-    this.post.setQuality(this.highQuality);
 
     this.ambient.applyToScene(this.scene);
     this.scene.add(this.cube.group);
@@ -152,9 +165,8 @@ export class Game {
     this.scene.add(this.drones.group);
 
     this.particles = new ParticlePool(PERF.maxParticles);
-    if (!this.highQuality) this.particles.setBudget(PERF.lowMaxParticles);
     this.shatter = new ShatterSystem(this.particles);
-    this.rings = new ImpactRings(isMobile ? 16 : 28);
+    this.rings = new ImpactRings(bootPreset.impactRingCount);
     this.scene.add(this.particles.points);
     this.scene.add(this.rings.group);
     this.scene.add(this.reticle.group);
@@ -188,6 +200,7 @@ export class Game {
     this.shopUI = new ShopUI(document.getElementById('tech-tree-root')!);
     this.levelUI = new LevelSelectUI(document.getElementById('level-select-root')!);
     this.loadoutUI = new LoadoutUI(document.getElementById('loadout-root')!);
+    this.settingsUI = new SettingsUI(document.getElementById('settings-root')!);
     this.adsUI = new AdsOfferUI(document.getElementById('ads-root')!);
     this.overlay = document.getElementById('overlay-root')!;
     this.tutorial = new TutorialDirector(document.getElementById('hud-root')!, {
@@ -202,6 +215,7 @@ export class Game {
     this.wireUI();
     this.wireEvents();
     this.loadProgress();
+    this.applyGraphics(this.graphicsQuality, false);
 
     window.addEventListener('resize', this.onResize);
     window.addEventListener('orientationchange', this.onResize);
@@ -252,6 +266,7 @@ export class Game {
     this.menu.onTech = () => this.openTech();
     this.menu.onLevels = () => this.openLevels();
     this.menu.onLoadout = () => this.openLoadout();
+    this.menu.onSettings = () => this.openSettings();
     this.menu.onReset = () => {
       this.save.reset();
       this.shopHintShown = false;
@@ -383,9 +398,75 @@ export class Game {
     };
     this.loadoutUI.onSpendFragments = (n) => this.currency.spendFragments(n);
 
+    this.settingsUI.onClose = () => {
+      this.settingsUI.hide();
+      if (this.pendingReturnMode === 'playing' && this.cube.aliveBlocks > 0) {
+        this.mode = 'playing';
+        this.hud.setVisible(true);
+        this.hud.setCrosshairVisible(true);
+      } else {
+        this.showMenu();
+      }
+    };
+    this.settingsUI.onGraphicsChange = (q) => {
+      this.graphicsQuality = q;
+      this.save.data.graphicsQuality = q;
+      this.applyGraphics(q, false);
+      this.persist();
+      this.audio.playUi();
+    };
+    this.settingsUI.onMuteChange = (m) => {
+      this.audio.setMuted(m);
+      this.save.data.muted = m;
+      this.hud.setMuted(m);
+      this.persist();
+    };
+    this.settingsUI.onVolumeChange = (v) => {
+      this.audio.setVolume(v);
+      this.save.data.masterVolume = v;
+      this.persist();
+    };
+
     this.adsUI.onAccepted = (placement) => {
       void this.handleAdReward(placement);
     };
+  }
+
+  /**
+   * Apply graphics tier to renderer / post / particles / ambient.
+   * @param demoted if true, runtime-only (FPS safety) — does not change user preference.
+   */
+  private applyGraphics(quality: GraphicsQuality, demoted: boolean): void {
+    this.effectiveQuality = quality;
+    if (!demoted) this.graphicsQuality = quality;
+
+    const preset = getGraphicsPreset(quality);
+    const dpr = Math.min(window.devicePixelRatio || 1, preset.dprCap);
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    this.renderer.toneMappingExposure = preset.exposure;
+    this.post.setSize(window.innerWidth, window.innerHeight);
+    this.post.setQuality(quality);
+    this.particles.setBudget(Math.min(PERF.maxParticles, preset.particleBudget));
+    this.ambient.setQuality(preset.ambientTier);
+    this.cameraCtrl.resize(window.innerWidth / window.innerHeight);
+  }
+
+  private openSettings(): void {
+    void this.audio.resume();
+    this.audio.playUi();
+    this.menu.hide();
+    this.shopUI.hide();
+    this.levelUI.hide();
+    this.loadoutUI.hide();
+    this.pendingReturnMode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
+    this.mode = 'settings';
+    this.hud.setVisible(false);
+    this.settingsUI.show({
+      graphics: this.graphicsQuality,
+      muted: this.audio.muted,
+      volume: this.audio.volume,
+    });
   }
 
   private async handleAdReward(placement: import('../ads/AdProvider').AdPlacement): Promise<void> {
@@ -591,6 +672,8 @@ export class Game {
     this.audio.setVolume(data.masterVolume);
     this.hud.setMuted(data.muted);
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+    this.graphicsQuality = data.graphicsQuality ?? DEFAULT_GRAPHICS_QUALITY;
+    this.effectiveQuality = this.graphicsQuality;
 
     this.loadout.load({
       hardpointUnlocks: data.hardpointsUnlocked,
@@ -645,6 +728,7 @@ export class Game {
     this.save.data.levelProgress = this.cube.progress;
     this.save.data.muted = this.audio.muted;
     this.save.data.masterVolume = this.audio.volume;
+    this.save.data.graphicsQuality = this.graphicsQuality;
     this.save.data.hullHp = this.vitals.hull;
     this.save.data.maxHull = this.vitals.maxHull;
     this.save.data.shield = this.vitals.shield;
@@ -668,10 +752,15 @@ export class Game {
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
+    this.settingsUI.hide();
     this.adsUI.hide?.();
     this.cinematicRoot?.classList.add('panel-hidden');
     this.overlay.innerHTML = '';
     this.cameraCtrl.endCinematic();
+    // Restore user graphics preference if FPS demotion was active
+    if (this.effectiveQuality !== this.graphicsQuality) {
+      this.applyGraphics(this.graphicsQuality, false);
+    }
     this.menu.show();
     this.startMenuDemo();
   }
@@ -712,6 +801,7 @@ export class Game {
     this.menu.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
+    this.settingsUI.hide();
     this.pendingReturnMode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
     this.mode = 'tech';
     this.shopOpen = true;
@@ -1028,6 +1118,8 @@ export class Game {
   private onResize = (): void => {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    const preset = getGraphicsPreset(this.effectiveQuality);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, preset.dprCap));
     this.renderer.setSize(w, h, false);
     this.cameraCtrl.resize(w / h);
     this.post.setSize(w, h);
@@ -1053,18 +1145,23 @@ export class Game {
     const dt = this.time.tick();
     const now = this.time.elapsed;
 
+    // Temporary FPS demotion (one step) without changing user settings preference
     if (
       this.time.fps < PERF.lowFpsThreshold &&
-      (this.mode === 'playing' || this.mode === 'intro')
+      (this.mode === 'playing' || this.mode === 'intro' || this.mode === 'cinematic')
     ) {
       this.lowFpsTimer += dt;
-      if (this.lowFpsTimer > PERF.lowFpsSeconds && this.highQuality) {
-        this.highQuality = false;
-        this.post.setQuality(false);
-        this.particles.setBudget(PERF.lowMaxParticles);
-        this.ambient.setQuality(true);
-        this.renderer.setPixelRatio(1);
-        this.rings.group.visible = true;
+      if (this.lowFpsTimer > PERF.lowFpsSeconds) {
+        const demoted =
+          this.effectiveQuality === 'high'
+            ? 'medium'
+            : this.effectiveQuality === 'medium'
+              ? 'low'
+              : null;
+        if (demoted) {
+          this.applyGraphics(demoted, true);
+          this.lowFpsTimer = 0;
+        }
       }
     } else {
       this.lowFpsTimer = 0;
@@ -1125,8 +1222,15 @@ export class Game {
         this.cube.totalBlocks
       );
       if (progress >= 1) this.finishIntro();
+    } else if (this.mode === 'settings') {
+      // Static backdrop — keep menu demo if it was running
+      this.cameraCtrl.yaw += dt * 0.04;
+      this.cameraCtrl.update(dt);
+      if (this.menuDemoActive) {
+        this.cube.update(dt, now);
+        this.cubeAnimator.update(dt);
+      }
     } else if (this.mode === 'playing' || this.mode === 'levelclear') {
-      this.post.setQuality(this.highQuality);
       this.input.update(dt);
       const zoom = this.input.consumeZoom();
       if (this.mode === 'playing') {

@@ -1,5 +1,10 @@
 import { SAVE_KEY, SAVE_VERSION } from '../data/constants';
 import { HARDPOINTS_START, VITALS_BASE } from '../data/balance';
+import {
+  DEFAULT_GRAPHICS_QUALITY,
+  normalizeGraphicsQuality,
+  type GraphicsQuality,
+} from '../data/graphics';
 
 /** Weapon instance mounted in a hardpoint slot (null = empty). */
 export interface SaveLoadoutSlot {
@@ -21,6 +26,8 @@ export interface SaveData {
   lastSaveTime: number;
   muted: boolean;
   masterVolume: number;
+  /** User graphics tier: low | medium | high (default medium). */
+  graphicsQuality: GraphicsQuality;
 
   // --- v2: ship vitals ---
   hullHp: number;
@@ -66,6 +73,7 @@ export function defaultSave(): SaveData {
     lastSaveTime: Date.now(),
     muted: false,
     masterVolume: 0.7,
+    graphicsQuality: DEFAULT_GRAPHICS_QUALITY,
 
     hullHp: VITALS_BASE.hullHp,
     maxHull: VITALS_BASE.maxHull,
@@ -156,6 +164,7 @@ export class SaveSystem {
             : base.adsWatchedToday,
         adsDayKey:
           typeof parsed.adsDayKey === 'string' ? parsed.adsDayKey : base.adsDayKey,
+        graphicsQuality: normalizeGraphicsQuality(parsed.graphicsQuality),
       };
       this.rolloverAdsIfNeeded();
       return this.data;

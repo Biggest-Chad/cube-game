@@ -4,6 +4,7 @@ export class MenuUI {
   onTech: (() => void) | null = null;
   onLevels: (() => void) | null = null;
   onLoadout: (() => void) | null = null;
+  onSettings: (() => void) | null = null;
   onReset: (() => void) | null = null;
 
   constructor(root: HTMLElement) {
@@ -36,6 +37,10 @@ export class MenuUI {
               <span class="menu-btn-kicker">04</span>
               <span class="menu-btn-label">Loadout</span>
             </button>
+            <button class="menu-btn ui-btn" id="m-settings" type="button">
+              <span class="menu-btn-kicker">05</span>
+              <span class="menu-btn-label">Settings</span>
+            </button>
             <button class="menu-btn magenta ui-btn" id="m-reset" type="button">
               <span class="menu-btn-kicker">//</span>
               <span class="menu-btn-label">Reset Save</span>
@@ -56,6 +61,7 @@ export class MenuUI {
     this.root.querySelector('#m-tech')?.addEventListener('click', () => this.onTech?.());
     this.root.querySelector('#m-levels')?.addEventListener('click', () => this.onLevels?.());
     this.root.querySelector('#m-loadout')?.addEventListener('click', () => this.onLoadout?.());
+    this.root.querySelector('#m-settings')?.addEventListener('click', () => this.onSettings?.());
     this.root.querySelector('#m-reset')?.addEventListener('click', () => {
       if (confirm('Erase all progress?')) this.onReset?.();
     });

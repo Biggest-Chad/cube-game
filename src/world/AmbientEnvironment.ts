@@ -14,16 +14,14 @@ export class AmbientEnvironment {
   private dust: THREE.Points | null = null;
   private horizon: THREE.LineLoop | null = null;
 
-  private qualityLow = false;
+  private qualityTier: 0 | 1 | 2 = 1;
   private disposed = false;
   private fogApplied: THREE.FogExp2 | null = null;
   private prevFog: THREE.Fog | THREE.FogExp2 | null = null;
   private sceneRef: THREE.Scene | null = null;
 
-  private readonly dustHigh = 120;
-  private readonly dustLow = 48;
-  private readonly monoHigh = 16;
-  private readonly monoLow = 10;
+  private readonly dustByTier = [36, 72, 120] as const;
+  private readonly monoByTier = [8, 12, 16] as const;
 
   private _dummy = new THREE.Object3D();
   private _spin = 0;
@@ -32,8 +30,8 @@ export class AmbientEnvironment {
     this.group.name = 'AmbientEnvironment';
     this.buildGrid();
     this.buildHorizon();
-    this.buildMonoliths(this.monoHigh);
-    this.buildDust(this.dustHigh);
+    this.buildMonoliths(this.monoByTier[1]);
+    this.buildDust(this.dustByTier[1]);
     this.group.add(this.monolithGroup);
   }
 
@@ -173,32 +171,43 @@ export class AmbientEnvironment {
   }
 
   /**
-   * Adaptive quality: low reduces dust and monolith density, dims grid slightly.
+   * Quality tier: 0 = low, 1 = medium, 2 = high.
+   * Also accepts legacy boolean (true = low, false = high).
    */
-  setQuality(low: boolean): void {
+  setQuality(tierOrLow: 0 | 1 | 2 | boolean): void {
     if (this.disposed) return;
-    if (this.qualityLow === low) return;
-    this.qualityLow = low;
+    let tier: 0 | 1 | 2;
+    if (typeof tierOrLow === 'boolean') {
+      tier = tierOrLow ? 0 : 2;
+    } else {
+      tier = tierOrLow;
+    }
+    if (this.qualityTier === tier) return;
+    this.qualityTier = tier;
 
-    this.buildMonoliths(low ? this.monoLow : this.monoHigh);
-    this.buildDust(low ? this.dustLow : this.dustHigh);
+    this.buildMonoliths(this.monoByTier[tier]);
+    this.buildDust(this.dustByTier[tier]);
+
+    const gridOp = tier === 0 ? 0.08 : tier === 1 ? 0.14 : 0.18;
+    const horizonOp = tier === 0 ? 0.08 : tier === 1 ? 0.12 : 0.16;
+    const fogD = tier === 0 ? 0.0032 : tier === 1 ? 0.004 : 0.0045;
 
     if (this.grid) {
       const mats = Array.isArray(this.grid.material) ? this.grid.material : [this.grid.material];
       for (const m of mats) {
-        (m as THREE.Material).opacity = low ? 0.07 : 0.11;
+        (m as THREE.Material).opacity = gridOp;
       }
     }
     if (this.horizon) {
-      (this.horizon.material as THREE.LineBasicMaterial).opacity = low ? 0.08 : 0.14;
+      (this.horizon.material as THREE.LineBasicMaterial).opacity = horizonOp;
     }
     if (this.fogApplied) {
-      this.fogApplied.density = low ? 0.0035 : 0.0045;
+      this.fogApplied.density = fogD;
     }
   }
 
   get isLowQuality(): boolean {
-    return this.qualityLow;
+    return this.qualityTier === 0;
   }
 
   /** Slow parallax spin of distant monoliths + gentle dust drift. */
