@@ -340,9 +340,11 @@ export class CinematicIntro {
       return;
     }
     const p = smooth((t - 12.5) / 3.5);
+    // Dock into standard third-person combat seat (matches beginLevelIntro end pose)
     const yaw = lerp(-0.25, 0.85, p);
     const pitch = lerp(-0.1, 0.28, p);
-    const radius = lerp(H * 2.15, H * 2.75, p);
+    const combatR = Math.max(this.camera.radius * 0.85, H * 2.7);
+    const radius = lerp(H * 2.15, combatR, p);
     this.camera.setScriptedPose({
       yaw,
       pitch,
@@ -350,8 +352,10 @@ export class CinematicIntro {
       lookY: lerp(H * 0.18, 0, p),
       lag: 2.2,
     });
+    // Keep orbit truth in sync so handoff → countdown has no camera pop
     this.camera.yaw = yaw;
     this.camera.pitch = pitch;
+    this.camera.radius = radius;
   }
 
   private driveTitles(t: number): void {
@@ -587,12 +591,12 @@ export class CinematicIntro {
       this.animator.reset();
     }
     if (this.camera) {
-      this.camera.yaw = 0.85;
-      this.camera.pitch = 0.28;
-      if (this.cube) this.camera.setOrbitLimits(this.cube.halfExtent);
-      this.camera.endCinematic();
+      // Soft limits so we don't pop the docked chase seat
+      if (this.cube) this.camera.setOrbitLimits(this.cube.halfExtent, false);
+      const seat = this.camera.getDefaultCombatPose();
+      this.camera.endCinematic(seat);
     }
-    // Ship seating is finalized by Game.finishIntroImmediate after the cut
+    // Ship seating is finalized by Game.finishIntroImmediate (no second black fade)
 
     this.group.visible = false;
     this.teardownUI();

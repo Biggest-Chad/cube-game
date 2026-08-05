@@ -1182,25 +1182,21 @@ export class Game {
       this.hud.setIntro(true, `${level.name} · ${level.size}³ lattice`);
       this.reticle.setVisible(false);
       this.ship.group.visible = true;
-      this.cameraCtrl.startCinematic(this.cameraCtrl.yaw);
+      this.hardpoints.group.visible = true;
+      // Orbit sweep ends in third-person combat seat — no second black fade after
+      this.cameraCtrl.beginLevelIntro(this.cameraCtrl.yaw);
+      // Seat ship on the intro orbit immediately so chase framing is coherent
+      for (let i = 0; i < 8; i++) this.ship.update(this.cameraCtrl, 0.05);
     }
   }
 
   /**
-   * Exit cinematic / short intro into gameplay through a black letterbox cut.
+   * Exit cinematic / short intro into gameplay.
+   * No second fade-to-black — the intro camera (or story cinematic) already
+   * presented the sector; countdown starts in-place from the combat seat.
    */
   private finishIntro(): void {
-    const go = () => this.finishIntroImmediate();
-    if (this.screenFx.isActive) {
-      go();
-      return;
-    }
-    this.screenFx.play({
-      fadeOut: 0.7,
-      hold: 0.45,
-      fadeIn: 1.0,
-      onBlack: go,
-    });
+    this.finishIntroImmediate();
   }
 
   private finishIntroImmediate(): void {
@@ -1222,10 +1218,26 @@ export class Game {
     this.cubeAnimator.setLevel(this.currentLevelId);
     this.cubeAnimator.setEnabled(true);
 
-    this.cameraCtrl.yaw = 0.85;
-    this.cameraCtrl.pitch = 0.28;
-    this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
-    this.cameraCtrl.endCinematic();
+    // Soft orbit limits — keep the pose the intro / cinematic already docked to
+    this.cameraCtrl.setOrbitLimits(this.cube.halfExtent, false);
+    const seat = this.cameraCtrl.getDefaultCombatPose();
+    // Prefer current yaw/pitch if intro already settled near combat seat
+    const nearSeat =
+      Math.abs(this.cameraCtrl.pitch - seat.pitch) < 0.12 &&
+      Math.abs(this.cameraCtrl.radius - seat.radius) < seat.radius * 0.2;
+    this.cameraCtrl.endCinematic(
+      nearSeat
+        ? {
+            yaw: this.cameraCtrl.yaw,
+            pitch: this.cameraCtrl.pitch,
+            radius: THREE.MathUtils.clamp(
+              this.cameraCtrl.radius,
+              seat.radius * 0.9,
+              seat.radius * 1.1
+            ),
+          }
+        : seat
+    );
 
     // Place ship on orbit seat BEFORE unhiding (never spawn inside cube)
     this.ship.group.scale.setScalar(1);

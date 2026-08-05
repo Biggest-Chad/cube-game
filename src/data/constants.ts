@@ -56,8 +56,10 @@ export const ORBIT = {
    */
   shipPosLag: 5.0,
   shipRotLag: 4.0,
-  introDuration: 3.2,
-  introRadiusMul: 1.55,
+  /** Level-intro orbit sweep length (seconds) — lands on third-person combat seat. */
+  introDuration: 3.6,
+  /** Start radius multiplier for the wide establishing pull-in. */
+  introRadiusMul: 1.65,
 } as const;
 
 export const COMBAT = {

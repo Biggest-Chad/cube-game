@@ -85,15 +85,30 @@ export class OrbitalCamera {
     return this.topSpeedMul;
   }
 
-  setOrbitLimits(halfExtent: number): void {
+  /**
+   * Fit orbit radius range to the current cube.
+   * @param hardSnap When true (default), snap radius to the preferred combat distance.
+   *                 When false, only update limits and clamp current radius (no pose pop).
+   */
+  setOrbitLimits(halfExtent: number, hardSnap = true): void {
     this.minR = Math.max(ORBIT.minRadius, halfExtent * 1.55);
     this.maxR = Math.max(this.minR + 8, halfExtent * 4.5 + ORBIT.maxRadius * 0.25);
-    this.targetRadius = THREE.MathUtils.clamp(halfExtent * 2.7, this.minR, this.maxR);
-    this.radius = this.targetRadius;
-    this.cinematicRadius = this.radius * ORBIT.introRadiusMul;
-    this.resetVelocities();
-    // Level load: hard snap is intentional
-    this.sync(true);
+    const preferred = THREE.MathUtils.clamp(halfExtent * 2.7, this.minR, this.maxR);
+    if (hardSnap) {
+      this.targetRadius = preferred;
+      this.radius = this.targetRadius;
+      this.cinematicRadius = this.radius * ORBIT.introRadiusMul;
+      this.resetVelocities();
+      this.sync(true);
+    } else {
+      this.targetRadius = THREE.MathUtils.clamp(this.targetRadius, this.minR, this.maxR);
+      // Prefer combat distance if still at a wild cinematic radius
+      if (Math.abs(this.targetRadius - preferred) > preferred * 0.35) {
+        this.targetRadius = preferred;
+      }
+      this.radius = THREE.MathUtils.clamp(this.radius, this.minR, this.maxR);
+      this.cinematicRadius = THREE.MathUtils.clamp(this.cinematicRadius, this.minR, this.maxR);
+    }
   }
 
   extendMaxRadius(add: number): void {
@@ -108,15 +123,55 @@ export class OrbitalCamera {
   private lookYOffset = 0;
   private scriptedLag = 3.5;
 
-  startCinematic(startYaw = this.yaw): void {
+  /** Level-intro camera sweep: start pose → final third-person combat seat. */
+  private introStartYaw = 0;
+  private introStartPitch = 0.42;
+  private introStartRadius = 24;
+  private introEndYaw = 0.85;
+  private introEndPitch = 0.28;
+  private introEndRadius = 18;
+
+  /**
+   * Begin the short level-intro orbit sweep.
+   * Ends at the standard third-person chase seat (ready for countdown / combat).
+   */
+  beginLevelIntro(startYaw = this.yaw): void {
+    // Resting combat pose — matches finishIntro / gameplay defaults
+    this.introEndYaw = 0.85;
+    this.introEndPitch = 0.28;
+    this.introEndRadius = THREE.MathUtils.clamp(
+      this.targetRadius > 0.1 ? this.targetRadius : this.radius,
+      this.minR,
+      this.maxR
+    );
+
+    // Sweep in from a wider, higher angle with a yaw arc
+    this.introStartYaw = startYaw - 1.15;
+    this.introStartPitch = 0.52;
+    this.introStartRadius = Math.min(
+      this.maxR,
+      this.introEndRadius * ORBIT.introRadiusMul
+    );
+
+    this.yaw = this.introStartYaw;
+    this.pitch = this.introStartPitch;
+    this.radius = this.introStartRadius;
+    this.targetRadius = this.introEndRadius;
+
+    this.cinematicYaw = this.introStartYaw;
+    this.cinematicPitch = this.introStartPitch;
+    this.cinematicRadius = this.introStartRadius;
+    this.lookYOffset = 0;
+    this.lookTarget.set(0, 0, 0);
     this.mode = 'cinematic';
     this.blend = 0;
-    this.cinematicYaw = startYaw - 0.6;
-    this.cinematicPitch = 0.42;
-    this.cinematicRadius = this.radius * ORBIT.introRadiusMul;
-    this.lookYOffset = 0;
     this.resetVelocities();
     this.sync(true);
+  }
+
+  /** @deprecated Prefer beginLevelIntro — kept for any external callers. */
+  startCinematic(startYaw = this.yaw): void {
+    this.beginLevelIntro(startYaw);
   }
 
   /** Begin fully scripted cinematic (IntroCinematic drives poses each frame). */
@@ -168,27 +223,65 @@ export class OrbitalCamera {
     this.scriptedLag = pose.lag ?? this.scriptedLag;
   }
 
+  /**
+   * Drive level-intro sweep. Progress 0→1; at 1 the camera is at the final
+   * third-person combat seat (yaw/pitch/radius = intro end pose).
+   */
   updateIntro(progress: number, dt: number): void {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
-    this.cinematicYaw += dt * 0.7;
-    this.cinematicPitch = 0.25 + Math.sin(p * Math.PI * 2) * 0.28;
-    this.cinematicRadius = THREE.MathUtils.lerp(
-      this.radius * ORBIT.introRadiusMul,
-      this.radius * 1.15,
-      p
+    // Smooth ease-in-out so the settle into combat seat feels deliberate
+    const e = p * p * (3 - 2 * p);
+    // Secondary ease that ramps harder in the last third (dock into chase cam)
+    const dock = p < 0.55 ? 0 : (p - 0.55) / 0.45;
+    const dockE = dock * dock * (3 - 2 * dock);
+
+    // Gentle mid-sweep flourish that fades out as we dock
+    const flourish = Math.sin(p * Math.PI) * (1 - dockE);
+    const yaw =
+      THREE.MathUtils.lerp(this.introStartYaw, this.introEndYaw, e) + flourish * 0.42;
+    const pitch =
+      THREE.MathUtils.lerp(this.introStartPitch, this.introEndPitch, e) +
+      flourish * 0.1;
+    const radius = THREE.MathUtils.lerp(
+      this.introStartRadius,
+      this.introEndRadius,
+      e
     );
 
-    if (p < 0.72) {
+    this.cinematicYaw = yaw;
+    this.cinematicPitch = THREE.MathUtils.clamp(pitch, ORBIT.minPitch, ORBIT.maxPitch);
+    this.cinematicRadius = radius;
+
+    // Keep orbit truth in lockstep so blend/gameplay handoff has zero pop
+    this.yaw = this.cinematicYaw;
+    this.pitch = this.cinematicPitch;
+    this.radius = this.cinematicRadius;
+    this.targetRadius = this.introEndRadius;
+    this.lookYOffset = THREE.MathUtils.lerp(0.15, 0, e);
+    this.lookTarget.set(0, this.lookYOffset, 0);
+
+    if (p < 0.55) {
       this.mode = 'cinematic';
       this.blend = 0;
-    } else {
+    } else if (p < 0.999) {
+      // Blend cinematic sphere → third-person chase over the final stretch
       this.mode = 'blend';
-      this.blend = (p - 0.72) / 0.28;
-      // Exp approach of orbit truth toward handoff pose (no hard snap)
-      const k = 1 - Math.exp(-1.6 * dt);
-      this.yaw += (this.cinematicYaw + 0.35 - this.yaw) * k;
-      this.pitch += (0.22 - this.pitch) * k;
+      this.blend = dockE;
+    } else {
+      // Land exactly on combat seat
+      this.yaw = this.introEndYaw;
+      this.pitch = this.introEndPitch;
+      this.radius = this.introEndRadius;
+      this.targetRadius = this.introEndRadius;
+      this.lookYOffset = 0;
+      this.lookTarget.set(0, 0, 0);
+      this.mode = 'gameplay';
+      this.blend = 1;
+      this.resetVelocities();
+      this.sync(true);
+      return;
     }
+
     this.sync(false, dt);
   }
 
@@ -198,13 +291,38 @@ export class OrbitalCamera {
     this.sync(false, dt);
   }
 
-  endCinematic(): void {
+  /**
+   * Leave cinematic/blend into pure gameplay chase.
+   * When `snapPose` is provided, orbit truth is set first (final combat seat).
+   */
+  endCinematic(snapPose?: { yaw?: number; pitch?: number; radius?: number }): void {
+    if (snapPose) {
+      if (snapPose.yaw !== undefined) this.yaw = snapPose.yaw;
+      if (snapPose.pitch !== undefined) {
+        this.pitch = THREE.MathUtils.clamp(snapPose.pitch, ORBIT.minPitch, ORBIT.maxPitch);
+      }
+      if (snapPose.radius !== undefined) {
+        const r = THREE.MathUtils.clamp(snapPose.radius, this.minR, this.maxR);
+        this.radius = r;
+        this.targetRadius = r;
+      }
+    }
     this.mode = 'gameplay';
     this.blend = 1;
     this.lookYOffset = 0;
     this.lookTarget.set(0, 0, 0);
     this.resetVelocities();
     this.sync(true);
+  }
+
+  /** Final third-person seat used by level intro / post-cinematic handoff. */
+  getDefaultCombatPose(): { yaw: number; pitch: number; radius: number } {
+    const radius = THREE.MathUtils.clamp(
+      this.targetRadius > 0.1 ? this.targetRadius : this.radius,
+      this.minR,
+      this.maxR
+    );
+    return { yaw: 0.85, pitch: 0.28, radius };
   }
 
   /**
