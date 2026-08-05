@@ -70,6 +70,8 @@ export class Game {
   private post: PostProcessing;
   private ambient = new AmbientEnvironment();
   private cube = new CubeManager();
+  /** Separate lattice used only during the intro cinematic (real cube stays pristine). */
+  private cinematicCube = new CubeManager();
   private cubeAnimator = new CubeAnimator();
   private cubeDefense = new CubeDefense();
   private ship = new Ship();
@@ -164,6 +166,9 @@ export class Game {
 
     this.ambient.applyToScene(this.scene);
     this.scene.add(this.cube.group);
+    this.scene.add(this.cinematicCube.group);
+    this.cinematicCube.group.visible = false;
+    this.cinematicCube.group.name = 'CinematicCube';
     this.scene.add(this.cubeAnimator.group);
     this.scene.add(this.cubeDefense.group);
     this.scene.add(this.ship.group);
@@ -817,6 +822,9 @@ export class Game {
     this.settingsUI.hide();
     this.adsUI.hide?.();
     this.cinematicRoot?.classList.add('panel-hidden');
+    this.cinematicCube.group.visible = false;
+    this.cube.group.visible = true;
+    this.cubeAnimator.bind(this.cube);
     this.overlay.innerHTML = '';
     this.cameraCtrl.endCinematic();
     // Restore user graphics preference if FPS demotion was active
@@ -1031,8 +1039,14 @@ export class Game {
       this.ship.group.position.set(0, -500, 0);
       this.hardpoints.group.visible = false;
       this.hasSeenCinematic = true;
+      // Instanced cinematic cube — real gameplay cube stays at origin, hidden & pristine
+      this.cinematicCube.loadLevel(level);
+      this.cinematicCube.group.visible = true;
+      this.cube.group.visible = false;
+      this.cubeAnimator.bind(this.cinematicCube);
+      this.cubeAnimator.setLevel(id);
       this.cinematic.start({
-        cube: this.cube,
+        cube: this.cinematicCube,
         animator: this.cubeAnimator,
         camera: this.cameraCtrl,
         ship: this.ship,
@@ -1072,13 +1086,22 @@ export class Game {
   }
 
   private finishIntroImmediate(): void {
-    // Hard-reset cube to playable origin
+    // Tear down cinematic instance; restore pristine gameplay cube
+    this.cinematicCube.group.visible = false;
+    this.cinematicCube.group.position.set(0, 0, 0);
+    this.cinematicCube.group.rotation.set(0, 0, 0);
+    this.cinematicCube.group.scale.setScalar(1);
+
+    this.cube.group.visible = true;
     this.cube.group.position.set(0, 0, 0);
     this.cube.group.rotation.set(0, 0, 0);
     this.cube.group.quaternion.identity();
     this.cube.group.scale.setScalar(1);
+
     this.cubeAnimator.endCinematicBurst();
     this.cubeAnimator.reset();
+    this.cubeAnimator.bind(this.cube);
+    this.cubeAnimator.setLevel(this.currentLevelId);
     this.cubeAnimator.setEnabled(true);
 
     this.cameraCtrl.yaw = 0.85;
@@ -1362,8 +1385,10 @@ export class Game {
       }
     } else if (this.mode === 'cinematic' && this.cinematic) {
       this.post.setPresentation(true);
-      // Cube block regen/flash only — transform + ship owned by cinematic director
-      this.cube.update(dt, now);
+      // Animate the instanced cinematic cube only — real cube stays pristine & hidden
+      this.cinematicCube.update(dt, now);
+      this.cube.group.visible = false;
+      this.cinematicCube.group.visible = true;
       // Enforce ship hide every frame (prevents mid-cut ghost at origin)
       this.ship.group.visible = false;
       this.ship.group.scale.setScalar(0);
@@ -1526,6 +1551,7 @@ export class Game {
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.cube.dispose();
+    this.cinematicCube.dispose();
     this.cubeAnimator.dispose();
     this.cubeDefense.dispose();
     this.ship.dispose();

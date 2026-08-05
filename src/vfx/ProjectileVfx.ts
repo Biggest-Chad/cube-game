@@ -132,44 +132,60 @@ export function makeLayeredBolt(opts: {
   return g;
 }
 
-/** Fat missile/rocket body with fins + glow core. */
+/** Fat missile/rocket body with fins + glow core + built-in exhaust stub. */
 export function makeMissileBody(color: number, length = 0.65, radius = 0.08): THREE.Group {
   const g = new THREE.Group();
   const body = new THREE.Mesh(
     new THREE.CapsuleGeometry(radius, length, 4, 10),
-    addMat(color, 0.95)
+    addMat(color, 0.98)
   );
   body.rotation.x = Math.PI / 2;
   g.add(body);
 
+  const sheath = new THREE.Mesh(
+    new THREE.CapsuleGeometry(radius * 1.15, length * 0.85, 4, 10),
+    addMat(color, 0.35)
+  );
+  sheath.rotation.x = Math.PI / 2;
+  g.add(sheath);
+
   const core = new THREE.Mesh(
-    new THREE.CapsuleGeometry(radius * 0.35, length * 0.7, 3, 6),
-    addMat(0xffffff, 0.85)
+    new THREE.CapsuleGeometry(radius * 0.4, length * 0.75, 3, 6),
+    addMat(0xffffff, 0.95)
   );
   core.rotation.x = Math.PI / 2;
   g.add(core);
 
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(radius * 0.95, radius * 2.2, 8), addMat(color, 0.9));
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(radius * 1.05, radius * 2.6, 8), addMat(0xffccff, 0.95));
   nose.rotation.x = -Math.PI / 2;
-  nose.position.z = -length * 0.55 - radius * 0.6;
+  nose.position.z = -length * 0.55 - radius * 0.7;
   g.add(nose);
 
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2;
     const fin = new THREE.Mesh(
-      new THREE.BoxGeometry(0.02, radius * 1.6, radius * 1.1),
-      addMat(color, 0.75)
+      new THREE.BoxGeometry(0.025, radius * 1.9, radius * 1.35),
+      addMat(color, 0.85)
     );
-    fin.position.set(Math.cos(a) * radius * 0.9, Math.sin(a) * radius * 0.9, length * 0.28);
+    fin.position.set(Math.cos(a) * radius * 1.05, Math.sin(a) * radius * 1.05, length * 0.3);
     g.add(fin);
   }
 
+  // Hot exhaust nozzle glow (secondary plume is added by MissileWeapon)
   const exhaust = new THREE.Mesh(
-    new THREE.SphereGeometry(radius * 0.7, 8, 8),
-    addMat(0xffffff, 0.7)
+    new THREE.SphereGeometry(radius * 0.85, 10, 10),
+    addMat(0xffaa55, 0.9)
   );
-  exhaust.position.z = length * 0.48;
+  exhaust.position.z = length * 0.5;
   g.add(exhaust);
+
+  const nozzle = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.55, radius * 0.75, radius * 0.8, 8),
+    addMat(0x442266, 0.7)
+  );
+  nozzle.rotation.x = Math.PI / 2;
+  nozzle.position.z = length * 0.42;
+  g.add(nozzle);
 
   return g;
 }

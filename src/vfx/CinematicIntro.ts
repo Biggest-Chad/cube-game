@@ -574,16 +574,17 @@ export class CinematicIntro {
     if (!this.active) return;
     this.active = false;
 
+    // Park the cinematic cube instance (Game swaps back to the real lattice)
     if (this.cube) {
       this.cube.group.position.set(0, 0, 0);
       this.cube.group.rotation.set(0, 0, 0);
       this.cube.group.quaternion.identity();
       this.cube.group.scale.setScalar(1);
+      this.cube.group.visible = false;
     }
     if (this.animator) {
       this.animator.endCinematicBurst();
       this.animator.reset();
-      this.animator.setEnabled(true);
     }
     if (this.camera) {
       this.camera.yaw = 0.85;
@@ -591,13 +592,7 @@ export class CinematicIntro {
       if (this.cube) this.camera.setOrbitLimits(this.cube.halfExtent);
       this.camera.endCinematic();
     }
-    // Ship only appears now, snapped to orbit seat
-    if (this.ship && this.camera) {
-      this.ship.group.scale.setScalar(1);
-      this.ship.group.visible = false;
-      for (let i = 0; i < 10; i++) this.ship.update(this.camera, 0.05);
-      this.ship.group.visible = true;
-    }
+    // Ship seating is finalized by Game.finishIntroImmediate after the cut
 
     this.group.visible = false;
     this.teardownUI();

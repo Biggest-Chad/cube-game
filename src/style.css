@@ -3,19 +3,20 @@
   --magenta: #ff00aa;
   --white: #e8ffff;
   --dim: #0a1a1f;
-  --panel: rgba(0, 12, 18, 0.82);
+  --panel: rgba(0, 12, 18, 0.88);
   --border: rgba(0, 240, 255, 0.45);
   --glow-cyan: 0 0 6px rgba(0, 240, 255, 0.25);
   --glow-magenta: 0 0 6px rgba(255, 0, 170, 0.22);
   --font: 'Segoe UI', system-ui, -apple-system, 'Courier New', monospace;
-  /* Combined safe-area + visualViewport bleed (status bar / nav / cutouts) */
-  --safe-top: max(env(safe-area-inset-top, 0px), var(--vv-top, 0px));
-  --safe-right: max(env(safe-area-inset-right, 0px), var(--vv-right, 0px));
-  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--vv-bottom, 0px), 12px);
-  --safe-left: max(env(safe-area-inset-left, 0px), var(--vv-left, 0px));
+  /* Safe areas: CSS env + visualViewport bleed + floor for gesture nav */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--vv-top, 0px), 0px);
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--vv-right, 0px), 8px);
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--vv-bottom, 0px), 16px);
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--vv-left, 0px), 8px);
   --hud-pad-x: max(12px, var(--safe-left), var(--safe-right));
-  --hud-pad-top: max(8px, calc(var(--safe-top) + 4px));
-  --hud-pad-bottom: max(14px, calc(var(--safe-bottom) + 6px));
+  --hud-pad-top: max(10px, calc(var(--safe-top) + 6px));
+  --hud-pad-bottom: max(18px, calc(var(--safe-bottom) + 8px));
+  --ctrl-size: min(132px, 22vh, 28vw);
 }
 
 * {
@@ -66,8 +67,9 @@ body {
   inset: 0;
   z-index: 10;
   pointer-events: none;
-  /* Keep interactive UI clear of Android status / nav bars */
+  /* Keep interactive UI clear of Android status / nav bars / gesture inset */
   padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+  overflow: hidden;
 }
 
 #ui-root > * {
@@ -246,21 +248,21 @@ body {
   pointer-events: none;
 }
 
+/* Legacy joy hitbox — superseded by .control-cluster corner pins */
 .joystick-zone {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 42%;
-  height: 100%;
+  position: relative;
+  width: var(--ctrl-size, 120px);
+  height: var(--ctrl-size, 120px);
   pointer-events: auto;
 }
 
 .joystick-base {
   position: absolute;
-  left: 16px;
-  bottom: 10px;
-  width: 104px;
-  height: 104px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(var(--ctrl-size, 120px) - 10px);
+  height: calc(var(--ctrl-size, 120px) - 10px);
   border-radius: 50%;
   border: 1px solid rgba(0, 240, 255, 0.35);
   background: rgba(0, 20, 28, 0.35);
@@ -439,9 +441,11 @@ body {
 
 .shop-hint {
   position: absolute;
-  top: 58px;
-  right: 10px;
-  width: min(260px, 36vw);
+  top: max(58px, calc(var(--safe-top) + 48px));
+  right: var(--hud-pad-x);
+  width: min(260px, 34vw);
+  max-height: min(40vh, 220px);
+  overflow-y: auto;
   background: rgba(0, 12, 18, 0.94);
   border: 1px solid var(--magenta);
   box-shadow: 0 0 18px rgba(255, 0, 170, 0.35);
@@ -867,42 +871,109 @@ body {
   50% { box-shadow: 0 0 26px rgba(0, 240, 255, 0.5); }
 }
 
-/* Level clear / overlay */
-.overlay-card {
+/* Level clear / overlay — scrollable, always fully on-screen in landscape */
+#overlay-root {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+  padding: max(8px, var(--hud-pad-top)) var(--hud-pad-x) max(8px, var(--hud-pad-bottom));
+  pointer-events: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+#overlay-root:not(:empty) {
+  pointer-events: auto;
+  background: rgba(0, 0, 0, 0.55);
+}
+.overlay-card {
+  position: relative;
+  left: auto;
+  top: auto;
+  transform: none;
   background: var(--panel);
   border: 1px solid var(--border);
   box-shadow: var(--glow-cyan);
-  padding: 28px 32px;
+  padding: 14px 18px 12px;
   text-align: center;
-  min-width: min(320px, 88vw);
+  width: min(400px, 90vw);
+  max-width: 100%;
+  /* Fit short landscape viewports; scroll internally if needed */
+  max-height: min(78dvh, calc(100dvh - var(--safe-top) - var(--safe-bottom) - 24px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
   pointer-events: auto;
   backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: auto;
+  flex-shrink: 0;
+}
+.overlay-card .menu-btn {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 10px 14px;
+  font-size: 12px;
 }
 
 .overlay-card h2 {
-  font-size: 22px;
-  letter-spacing: 0.3em;
+  font-size: clamp(14px, 3.2vh, 20px);
+  letter-spacing: 0.22em;
   color: var(--cyan);
   text-shadow: var(--glow-cyan);
-  margin-bottom: 12px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
 }
 
 .overlay-card p {
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.85;
-  margin: 6px 0;
+  margin: 4px 0;
   letter-spacing: 0.08em;
+  flex-shrink: 0;
 }
 
 .overlay-card .reward {
   color: var(--magenta);
-  font-size: 18px;
-  margin: 16px 0;
+  font-size: clamp(14px, 2.8vh, 17px);
+  margin: 8px 0;
   text-shadow: var(--glow-magenta);
+  flex-shrink: 0;
+}
+
+@media (max-height: 420px) {
+  .overlay-card {
+    max-height: min(88dvh, calc(100dvh - 16px));
+    padding: 10px 12px 8px;
+    gap: 2px;
+  }
+  .overlay-card h2 {
+    font-size: 13px;
+    margin-bottom: 2px;
+    letter-spacing: 0.16em;
+  }
+  .overlay-card p {
+    font-size: 11px;
+    margin: 2px 0;
+  }
+  .overlay-card .reward {
+    font-size: 13px;
+    margin: 4px 0;
+  }
+  .overlay-card .menu-btn {
+    padding: 7px 10px;
+    font-size: 11px;
+    margin: 1px 0;
+  }
 }
 
 /* Tech tree */
@@ -1853,8 +1924,8 @@ body.orientation-portrait #rotate-overlay {
   opacity: 0.45;
 }
 
-/* HUD landscape */
-.hud-landscape { position: absolute; inset: 0; }
+/* HUD landscape — full-bleed game, chrome inset via absolute + safe vars */
+.hud-landscape { position: absolute; inset: 0; pointer-events: none; }
 .hud-top-bar {
   position: absolute;
   top: 0;
@@ -1863,17 +1934,19 @@ body.orientation-portrait #rotate-overlay {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: max(8px, env(safe-area-inset-top)) 16px 0;
+  gap: 10px;
+  padding: var(--hud-pad-top) var(--hud-pad-x) 0;
   pointer-events: none;
+  z-index: 15;
 }
 .hud-center-stack {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  max-width: 280px;
+  max-width: min(280px, 40vw);
   margin: 0 auto;
+  min-width: 0;
 }
 .hud-center-stack .blocks {
   font-size: 10px;
@@ -1882,50 +1955,95 @@ body.orientation-portrait #rotate-overlay {
 }
 .hud-side-rail {
   position: absolute;
-  top: max(56px, calc(env(safe-area-inset-top) + 48px));
-  right: max(10px, env(safe-area-inset-right));
+  top: max(52px, calc(var(--safe-top) + 44px));
+  right: var(--hud-pad-x);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   z-index: 20;
   align-items: flex-end;
-}
-.hud-controls {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 46%;
+  max-height: calc(100% - 180px);
+  overflow-y: auto;
   pointer-events: none;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  padding: 0 max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
+.hud-side-rail > * {
+  pointer-events: auto;
+}
+/* Dual sticks: pinned to bottom corners (orbit BL · aim BR) */
+.hud-controls {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  height: 100% !important;
+  width: 100% !important;
+  pointer-events: none !important;
+  display: block !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  z-index: 18;
+  /* Kill any leftover flex that could center sticks */
+  flex-direction: unset !important;
+  justify-content: unset !important;
+  align-items: unset !important;
+  gap: 0 !important;
 }
 .control-cluster {
+  position: absolute !important;
   pointer-events: auto;
-  display: flex;
+  display: flex !important;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
+  bottom: max(10px, var(--hud-pad-bottom)) !important;
+  top: auto !important;
+  width: var(--ctrl-size) !important;
+  height: auto !important;
+  margin: 0 !important;
+  z-index: 19;
+}
+.control-cluster.left {
+  left: max(8px, var(--hud-pad-x)) !important;
+  right: auto !important;
+}
+.control-cluster.right {
+  right: max(8px, var(--hud-pad-x)) !important;
+  left: auto !important;
 }
 .control-label {
   font-size: 9px;
   letter-spacing: 0.28em;
   color: var(--cyan);
   opacity: 0.55;
+  order: -1;
 }
-.aim-zone {
-  width: 130px;
-  height: 130px;
-  display: flex;
+.control-cluster.right .control-label {
+  color: var(--magenta);
+}
+/* Override legacy full-height left joy hitbox */
+.hud-landscape .aim-zone,
+.hud-landscape .joystick-zone,
+.hud-controls .aim-zone,
+.hud-controls .joystick-zone {
+  position: relative !important;
+  width: var(--ctrl-size) !important;
+  height: var(--ctrl-size) !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  top: auto !important;
+  display: flex !important;
   align-items: center;
   justify-content: center;
+  pointer-events: auto !important;
+  flex: none !important;
+  margin: 0 !important;
 }
 .aim-base {
-  position: relative;
-  border-color: rgba(255, 0, 170, 0.4) !important;
-  box-shadow: inset 0 0 20px rgba(255, 0, 170, 0.08);
+  position: relative !important;
+  border-color: rgba(255, 0, 170, 0.45) !important;
+  box-shadow: inset 0 0 20px rgba(255, 0, 170, 0.1);
 }
 .aim-zone.active .aim-base {
   border-color: var(--magenta) !important;
@@ -1945,21 +2063,16 @@ body.orientation-portrait #rotate-overlay {
   font-size: 22px;
   pointer-events: none;
 }
-.joystick-zone {
-  position: relative !important;
-  width: 130px;
-  height: 130px;
-  left: auto !important;
-  bottom: auto !important;
-}
-.joystick-base {
+.hud-controls .joystick-base,
+.hud-landscape .joystick-base {
   position: absolute !important;
   left: 50% !important;
   top: 50% !important;
   bottom: auto !important;
+  right: auto !important;
   transform: translate(-50%, -50%);
-  width: 120px;
-  height: 120px;
+  width: calc(var(--ctrl-size) - 10px) !important;
+  height: calc(var(--ctrl-size) - 10px) !important;
 }
 
 /* Panel landscape chrome */
@@ -2187,9 +2300,11 @@ body.orientation-portrait #rotate-overlay {
 .tutorial-card {
   position: absolute;
   left: 50%;
-  bottom: 18%;
+  bottom: max(22%, calc(var(--hud-pad-bottom) + var(--ctrl-size) + 28px));
   transform: translateX(-50%);
   width: min(440px, 78vw);
+  max-height: min(42vh, 320px);
+  overflow-y: auto;
   background: linear-gradient(160deg, rgba(4, 10, 18, 0.96), rgba(12, 4, 18, 0.94));
   border: 1px solid rgba(0, 240, 255, 0.45);
   box-shadow: 0 0 28px rgba(255, 0, 170, 0.25), 0 0 40px rgba(0, 240, 255, 0.12);
