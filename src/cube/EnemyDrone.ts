@@ -121,7 +121,9 @@ export class EnemyDrone {
     playerPos: THREE.Vector3,
     halfExtent: number,
     onPlayerHit: (damage: number) => void,
-    playerDronePositions?: THREE.Vector3[]
+    playerDronePositions?: THREE.Vector3[],
+    /** When false (stage countdown), fly but do not fire. */
+    allowFire = true
   ): void {
     if (!this.alive) return;
 
@@ -146,7 +148,7 @@ export class EnemyDrone {
     }
 
     this.cooldown = Math.max(0, this.cooldown - dt);
-    if (this.cooldown > 0) return;
+    if (!allowFire || this.cooldown > 0) return;
 
     // Prefer shooting nearby player drones, else player
     let target = playerPos;

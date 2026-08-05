@@ -1475,13 +1475,16 @@ body.orientation-portrait #rotate-overlay {
   display: flex;
   flex-direction: row;
   gap: 0;
+  overflow: hidden;
 }
 
 .shop-stats {
   width: min(200px, 34vw);
   flex-shrink: 0;
+  min-width: 0;
   border-right: 1px solid rgba(0, 240, 255, 0.18);
   padding: 12px 10px;
+  overflow-x: hidden;
   overflow-y: auto;
   touch-action: pan-y;
   background: rgba(0, 16, 22, 0.55);
@@ -1566,9 +1569,11 @@ body.orientation-portrait #rotate-overlay {
 .shop-main {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .shop-tabs {
@@ -1627,9 +1632,12 @@ body.orientation-portrait #rotate-overlay {
 .shop-scroll {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   touch-action: pan-y;
-  padding: 8px 12px 20px;
+  overscroll-behavior: contain;
+  padding: 8px 12px 28px;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1637,7 +1645,9 @@ body.orientation-portrait #rotate-overlay {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 520px;
+  max-width: min(520px, 100%);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .shop-card {
@@ -2220,11 +2230,19 @@ body.orientation-portrait #rotate-overlay {
 .shop-panel .shop-body,
 .tech-panel .shop-body {
   flex-direction: row !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+.shop-panel {
+  overflow: hidden;
+  min-height: 0;
 }
 .shop-stats {
-  width: min(220px, 28vw);
+  width: min(200px, 26vw);
+  max-width: 220px;
   border-right: 1px solid rgba(0, 240, 255, 0.15);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 @media (max-height: 500px) {
@@ -2386,31 +2404,51 @@ body.orientation-portrait #rotate-overlay {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-bottom: 16px;
+  padding-bottom: 32px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .loadout-shop-wrap .loadout-slots {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+  width: 100%;
 }
 .loadout-shop-wrap .loadout-slot {
   text-align: left;
-  padding: 10px;
+  padding: 10px 8px;
   border: 1px solid rgba(0, 240, 255, 0.25);
   background: rgba(0, 20, 30, 0.55);
   color: var(--white);
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+}
+.loadout-shop-wrap .loadout-slot-name {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .loadout-shop-wrap .loadout-slot.active {
   border-color: var(--magenta);
   box-shadow: 0 0 12px rgba(255, 0, 170, 0.3);
 }
 .loadout-shop-wrap .loadout-slot.locked { opacity: 0.55; }
+.loadout-shop-wrap .loadout-detail {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 .loadout-shop-wrap .loadout-catalog {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin: 10px 0;
+  width: 100%;
 }
 .loadout-shop-wrap .loadout-weapon {
   text-align: left;
@@ -2420,6 +2458,9 @@ body.orientation-portrait #rotate-overlay {
   color: var(--white);
   cursor: pointer;
   border-left: 3px solid var(--wcolor, var(--cyan));
+  min-width: 0;
+  overflow: hidden;
+  word-break: break-word;
 }
 .loadout-shop-wrap .loadout-weapon.selected {
   border-color: var(--magenta);
@@ -2451,8 +2492,12 @@ body.orientation-portrait #rotate-overlay {
 }
 .loadout-shop-wrap .loadout-branches {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  width: 100%;
+}
+.loadout-shop-wrap .loadout-branch {
+  min-width: 0;
 }
 .loadout-shop-wrap .loadout-branch p {
   font-size: 11px;
@@ -2463,12 +2508,45 @@ body.orientation-portrait #rotate-overlay {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
+  gap: 8px;
 }
 .loadout-shop-wrap .loadout-dps {
   font-size: 11px;
   letter-spacing: 0.14em;
   opacity: 0.55;
   text-align: right;
+}
+.loadout-shop-wrap .shop-cards.loadout-hp-cards {
+  max-width: 100%;
+  width: 100%;
+}
+/* Short landscape phones: keep loadout fully reachable via scroll */
+@media (max-height: 480px) {
+  .shop-header {
+    padding: 8px 12px 6px;
+  }
+  .shop-header h2 {
+    font-size: 14px;
+  }
+  .shop-reco {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  .shop-scroll {
+    padding: 6px 10px 36px;
+  }
+  .loadout-shop-wrap .loadout-catalog,
+  .loadout-shop-wrap .loadout-branches {
+    grid-template-columns: 1fr;
+  }
+  .loadout-shop-wrap .loadout-slots {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .shop-stats {
+    max-width: 160px;
+    width: min(160px, 26vw);
+    padding: 8px 8px;
+  }
 }
 @media (max-width: 720px) {
   .loadout-shop-wrap .loadout-catalog,

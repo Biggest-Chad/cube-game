@@ -341,7 +341,10 @@ export class CubeDefense {
     return raw - absorb;
   }
 
-  update(dt: number): void {
+  /**
+   * @param allowFire When false (stage start countdown), defenses aim/move but do not shoot.
+   */
+  update(dt: number, allowFire = true): void {
     this.tickShield(this.coreShield, this.coreShieldMesh, dt);
     for (let i = 0; i < this.faceShields.length; i++) {
       this.tickShield(this.faceShields[i], this.faceShieldMeshes[i] ?? null, dt);
@@ -360,9 +363,14 @@ export class CubeDefense {
         this.cube.getInstanceWorldPos(link.instanceId, this._pos);
         link.turret.group.position.copy(this._pos).multiplyScalar(1.12);
       }
-      link.turret.update(dt, playerPos, (dmg) => {
-        this.hooks?.onPlayerDamage(dmg, 'turret');
-      });
+      link.turret.update(
+        dt,
+        playerPos,
+        (dmg) => {
+          this.hooks?.onPlayerDamage(dmg, 'turret');
+        },
+        allowFire
+      );
     }
 
     const he = this.cube.halfExtent;
@@ -372,7 +380,8 @@ export class CubeDefense {
         playerPos,
         he,
         (dmg) => this.hooks?.onPlayerDamage(dmg, 'enemy-drone'),
-        dronePos
+        dronePos,
+        allowFire
       );
     }
 

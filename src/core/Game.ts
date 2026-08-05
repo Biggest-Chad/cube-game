@@ -58,6 +58,7 @@ type Mode =
   | 'levels'
   | 'loadout'
   | 'settings'
+  | 'dying'
   | 'dead';
 
 export class Game {
@@ -135,6 +136,10 @@ export class Game {
   private combatWarmup = 0;
   /** Tutorial: fire blocked until welcome ack or movement. */
   private tutorialFireUnlocked = false;
+  /** Ship death sequence timer (seconds). */
+  private deathTimer = 0;
+  private deathFadeStarted = false;
+  private deathOrigin = new THREE.Vector3();
   private readonly _aimPoint = new THREE.Vector3();
   private readonly _ndc = new THREE.Vector3();
 
@@ -316,13 +321,8 @@ export class Game {
       this.hud.hideShopHint();
       // If purchase happened while shop was open, ensure tutorial advances
       if (this.sessionPurchased) this.tutorial.notifyPurchase();
-      if (this.pendingReturnMode === 'playing' || this.mode === 'tech') {
-        this.mode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
-        if (this.mode === 'playing') {
-          this.hud.setVisible(true);
-          this.hud.setCrosshairVisible(true);
-          this.tutorial.showIfActive();
-        } else this.showMenu();
+      if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
+        this.resumeGameplayFromShop();
       } else {
         this.showMenu();
       }
@@ -613,15 +613,97 @@ export class Game {
     this.cameraCtrl.shake(0.1);
     this.audio.playHit();
     this.updateHudVitals();
-    if (hit.died) this.onShipDestroyed();
+    if (hit.died) this.beginShipDeath();
   }
 
-  private onShipDestroyed(): void {
-    this.mode = 'dead';
-    this.wipeCombatSession();
+  /** Explosive ship death → black fade → game-over card. */
+  private beginShipDeath(): void {
+    if (this.mode === 'dying' || this.mode === 'dead') return;
+    this.mode = 'dying';
+    this.deathTimer = 0;
+    this.deathFadeStarted = false;
+    this.deathOrigin.copy(this.ship.position);
+    this.hud.setVisible(false);
+    this.hud.setCrosshairVisible(false);
+    this.reticle.setVisible(false);
+    this.hardpoints.reset();
+    this.weapon.reset();
     this.persist();
 
-    const salvage = Math.floor(this.currency.dataFragments * 0.05);
+    // Initial detonation
+    this.spawnShipExplosion(this.deathOrigin, 1.4);
+    this.cameraCtrl.shake(0.55);
+    try {
+      this.audio.playHit();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private spawnShipExplosion(at: THREE.Vector3, intensity = 1): void {
+    const s = Math.max(0.5, intensity);
+    this.particles.spawn(at.x, at.y, at.z, COLORS.magenta, Math.floor(28 * s), 14 * s, 'glow');
+    this.particles.spawn(at.x, at.y, at.z, COLORS.cyan, Math.floor(22 * s), 12 * s, 'spark');
+    this.particles.spawn(at.x, at.y, at.z, 0xffaa44, Math.floor(18 * s), 10 * s, 'ember');
+    this.particles.spawn(at.x, at.y, at.z, 0xffffff, Math.floor(12 * s), 8 * s, 'debris');
+    this.rings.spawn(at.x, at.y, at.z, COLORS.magenta, 1.8 * s);
+    this.rings.spawn(at.x, at.y, at.z, COLORS.cyan, 1.2 * s);
+  }
+
+  private updateDying(dt: number): void {
+    this.deathTimer += dt;
+    // Secondary blasts while wreck is visible
+    if (this.deathTimer < 0.9 && Math.random() < dt * 8) {
+      const j = 0.35 + Math.random() * 0.9;
+      this.spawnShipExplosion(
+        this.tmpDeathOffset(this.deathOrigin, j),
+        0.55 + Math.random() * 0.7
+      );
+      this.cameraCtrl.shake(0.12 + Math.random() * 0.15);
+    }
+    // Collapse ship scale / hide mid-sequence
+    if (this.deathTimer < 0.55) {
+      const u = this.deathTimer / 0.55;
+      const sc = Math.max(0.05, 1 - u * u);
+      this.ship.group.scale.setScalar(sc);
+      this.ship.group.rotation.z += dt * (2 + u * 6);
+      this.ship.group.rotation.x += dt * 1.5;
+    } else {
+      this.ship.group.visible = false;
+      this.ship.group.scale.setScalar(1);
+      this.hardpoints.group.visible = false;
+    }
+
+    this.cameraCtrl.update(dt);
+
+    // Fade to black then show game-over (once)
+    if (this.deathTimer >= 1.05 && !this.deathFadeStarted) {
+      this.deathFadeStarted = true;
+      const started = this.screenFx.play({
+        fadeOut: 0.55,
+        hold: 0.35,
+        fadeIn: 0.65,
+        onBlack: () => this.showDeathOverlay(),
+      });
+      if (!started) this.showDeathOverlay();
+    }
+  }
+
+  private tmpDeathOffset(origin: THREE.Vector3, spread: number): THREE.Vector3 {
+    return new THREE.Vector3(
+      origin.x + (Math.random() - 0.5) * spread,
+      origin.y + (Math.random() - 0.5) * spread,
+      origin.z + (Math.random() - 0.5) * spread
+    );
+  }
+
+  private showDeathOverlay(): void {
+    if (this.mode === 'dead') return;
+    this.mode = 'dead';
+    this.ship.group.visible = false;
+    this.hardpoints.group.visible = false;
+    this.wipeCombatSession();
+
     this.overlay.innerHTML = `
       <div class="overlay-card interactive">
         <h2>SYSTEMS CRITICAL</h2>
@@ -639,12 +721,19 @@ export class Game {
       });
       if (!shown) {
         this.vitals.fullRestore();
+        this.ship.group.visible = true;
+        this.ship.group.scale.setScalar(1);
+        this.hardpoints.group.visible = true;
         this.mode = 'playing';
+        this.hud.setVisible(true);
         this.toast('REPAIR UNAVAILABLE — FULL RESTORE');
       } else {
         this.adsUI.onAccepted = (p) => {
           void this.handleAdReward(p).then(() => {
             if (this.vitals.isAlive) {
+              this.ship.group.visible = true;
+              this.ship.group.scale.setScalar(1);
+              this.hardpoints.group.visible = true;
               this.mode = 'playing';
               this.hud.setVisible(true);
             }
@@ -659,7 +748,27 @@ export class Game {
       this.overlay.innerHTML = '';
       this.extractToMenu();
     });
-    void salvage;
+  }
+
+  /** Restore combat camera/ship after closing the shop mid-stage. */
+  private resumeGameplayFromShop(): void {
+    this.mode = 'playing';
+    this.menuDemoActive = false;
+    this.shopOpen = false;
+    // Force gameplay chase camera (shop must never leave us in cinematic/blend)
+    this.cameraCtrl.endCinematic();
+    this.cameraCtrl.setTopSpeedMul(this.tech.stats.orbitSpeedMul);
+    this.cameraCtrl.extendMaxRadius(this.tech.stats.zoomRangeAdd);
+    this.cube.group.visible = true;
+    this.ship.group.visible = true;
+    this.ship.group.scale.setScalar(1);
+    this.hardpoints.group.visible = true;
+    // Snap ship onto current orbit seat so chase camera is coherent
+    for (let i = 0; i < 12; i++) this.ship.update(this.cameraCtrl, 0.05);
+    this.hud.setVisible(true);
+    this.hud.setCrosshairVisible(true);
+    this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+    this.tutorial.showIfActive();
   }
 
   private extractToMenu(): void {
@@ -872,13 +981,22 @@ export class Game {
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.settingsUI.hide();
-    this.pendingReturnMode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
+    // Only resume combat if we opened shop from an active stage (not menu demo)
+    const fromCombat =
+      !this.menuDemoActive &&
+      (this.mode === 'playing' ||
+        this.mode === 'levelclear' ||
+        this.mode === 'intro' ||
+        (this.mode === 'tech' && this.pendingReturnMode === 'playing'));
+    this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
     this.mode = 'tech';
     this.shopOpen = true;
     this.hud.setVisible(false);
     this.hud.hideShopHint();
     this.shopHintShown = true;
     this.tutorial.notifyShopOpened();
+    // Keep orbit camera frozen on ship (no auto-spin that desyncs chase)
+    this.cameraCtrl.endCinematic();
     this.shopUI.setVitals(this.vitals.snapshot());
     this.shopUI.setLoadoutContext(this.loadout, this.save.data.highestLevel);
     this.shopUI.show(this.tech, this.currency, tab);
@@ -1508,7 +1626,8 @@ export class Game {
 
         this.cube.update(dt, now);
         this.cubeAnimator.update(dt);
-        this.cubeDefense.update(dt);
+        // Turrets/enemy drones locked during stage countdown same as player
+        this.cubeDefense.update(dt, this.canFireWeapons());
 
         const level = getLevel(this.currentLevelId);
         this.hud.updateLevel(
@@ -1522,19 +1641,27 @@ export class Game {
 
         if (this.cube.aliveBlocks <= 0) this.onLevelClear();
       }
+    } else if (this.mode === 'dying') {
+      this.updateDying(dt);
     } else if (
       this.mode === 'tech' ||
       this.mode === 'levels' ||
       this.mode === 'loadout' ||
       this.mode === 'dead'
     ) {
-      this.cameraCtrl.yaw += dt * 0.05;
-      this.cameraCtrl.update(dt);
-      if (this.menuDemoActive) {
-        this.cube.update(dt, now);
-        this.cubeAnimator.update(dt);
-      } else {
+      // Combat shop: freeze orbit on ship. Menu/demo: gentle spin.
+      if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
+        this.cameraCtrl.update(dt);
         this.ship.update(this.cameraCtrl, dt);
+      } else {
+        this.cameraCtrl.yaw += dt * 0.05;
+        this.cameraCtrl.update(dt);
+        if (this.menuDemoActive) {
+          this.cube.update(dt, now);
+          this.cubeAnimator.update(dt);
+        } else {
+          this.ship.update(this.cameraCtrl, dt);
+        }
       }
     }
 

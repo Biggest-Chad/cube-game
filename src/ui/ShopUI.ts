@@ -161,6 +161,12 @@ export class ShopUI {
   }
 
   render(tree: TechTree, currency: Currency): void {
+    // Preserve scroll so successive purchases don't kick the list to the top
+    const prevScroll = this.root.querySelector('.shop-scroll') as HTMLElement | null;
+    const scrollTop = prevScroll?.scrollTop ?? 0;
+    const prevStats = this.root.querySelector('.shop-stats') as HTMLElement | null;
+    const statsScroll = prevStats?.scrollTop ?? 0;
+
     const L = this.loadout;
     const loadoutDps = L?.estimateLoadoutDps() ?? 0;
     const hpUsed = L ? L.allDerived().length : 0;
@@ -263,6 +269,14 @@ export class ShopUI {
     `;
 
     this.bindEvents(tree, currency);
+
+    // Restore scroll after DOM rebuild (rAF so layout is ready)
+    requestAnimationFrame(() => {
+      const sc = this.root.querySelector('.shop-scroll') as HTMLElement | null;
+      if (sc) sc.scrollTop = scrollTop;
+      const st = this.root.querySelector('.shop-stats') as HTMLElement | null;
+      if (st) st.scrollTop = statsScroll;
+    });
   }
 
   private bindEvents(tree: TechTree, currency: Currency): void {

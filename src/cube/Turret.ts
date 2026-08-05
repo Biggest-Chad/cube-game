@@ -155,7 +155,9 @@ export class Turret {
   update(
     dt: number,
     playerPos: THREE.Vector3,
-    onPlayerHit: (damage: number, point: THREE.Vector3) => void
+    onPlayerHit: (damage: number, point: THREE.Vector3) => void,
+    /** When false (stage countdown), aim only — no new shots. */
+    allowFire = true
   ): void {
     if (!this.alive) {
       this.simProjectiles(dt, playerPos, onPlayerHit);
@@ -176,10 +178,10 @@ export class Turret {
     const ring = this.group.getObjectByName('charge_ring') as THREE.Mesh | undefined;
     const chargeT = this.cooldown > 0 ? 1 - this.cooldown * this.cfg.fireRate : 1;
 
-    if (dist <= this.cfg.range && this.cooldown <= 0) {
+    if (allowFire && dist <= this.cfg.range && this.cooldown <= 0) {
       this.fire(toPlayer);
       this.cooldown = 1 / this.cfg.fireRate;
-    } else if (ring && dist <= this.cfg.range) {
+    } else if (ring && allowFire && dist <= this.cfg.range) {
       const mat = ring.material as THREE.MeshBasicMaterial;
       mat.opacity = Math.max(0, 0.15 + (1 - Math.min(1, this.cooldown * this.cfg.fireRate)) * 0.5);
       ring.scale.setScalar(0.8 + chargeT * 0.4);
