@@ -24,7 +24,6 @@ export class MenuUI {
               <span class="menu-engage-glow" aria-hidden="true"></span>
               <span class="menu-btn-kicker">ENGAGE</span>
               <span class="menu-btn-label">START MISSION</span>
-              <span class="menu-engage-sub">Orbit · Aim · Destroy</span>
             </button>
 
             <div class="menu-subrow" role="group" aria-label="Submenus">

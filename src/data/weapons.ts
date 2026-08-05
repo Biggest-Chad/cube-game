@@ -67,7 +67,8 @@ export interface UpgradeBranchDef {
 
 export type UnlockRule =
   | { type: 'level'; minLevel: number }
-  | { type: 'shop'; costFragments: number; costCore?: number }
+  /** Shop purchase; optional minLevel = campaign stage gate (highestLevel). */
+  | { type: 'shop'; costFragments: number; costCore?: number; minLevel?: number }
   | { type: 'start' }
   | { type: 'core'; costCore: number; minLevel?: number };
 
@@ -96,7 +97,8 @@ const arcBeam: WeaponDef = {
   color: 0xff00aa,
   colorCss: '#ff00aa',
   tags: ['sustained', 'hitscan', 'beam'],
-  unlock: { type: 'shop', costFragments: 100 },
+  // Available from stage 3 onward — learn main gun + drones first
+  unlock: { type: 'shop', costFragments: 120, minLevel: 3 },
   baseStats: {
     damage: 9,
     fireRate: 10,
@@ -192,7 +194,7 @@ const rocket: WeaponDef = {
   color: 0xff6622,
   colorCss: '#ff6622',
   tags: ['splash', 'burst'],
-  unlock: { type: 'shop', costFragments: 280 },
+  unlock: { type: 'shop', costFragments: 280, minLevel: 3 },
   baseStats: {
     damage: 38,
     fireRate: 1.4,
@@ -274,7 +276,7 @@ const missile: WeaponDef = {
   color: 0xaa66ff,
   colorCss: '#aa66ff',
   tags: ['homing', 'anti-priority'],
-  unlock: { type: 'shop', costFragments: 420 },
+  unlock: { type: 'shop', costFragments: 420, minLevel: 4 },
   baseStats: {
     damage: 48,
     fireRate: 0.85,
@@ -356,7 +358,7 @@ const rail: WeaponDef = {
   color: 0x4488ff,
   colorCss: '#4488ff',
   tags: ['armor-pierce', 'charge', 'siege'],
-  unlock: { type: 'shop', costFragments: 560 },
+  unlock: { type: 'shop', costFragments: 560, minLevel: 5 },
   baseStats: {
     damage: 95,
     fireRate: 0.55,
@@ -439,7 +441,7 @@ const flak: WeaponDef = {
   color: 0xffd060,
   colorCss: '#ffd060',
   tags: ['anti-drone', 'aoe', 'splash'],
-  unlock: { type: 'shop', costFragments: 700 },
+  unlock: { type: 'shop', costFragments: 700, minLevel: 6 },
   baseStats: {
     damage: 22,
     fireRate: 3.2,
@@ -520,7 +522,7 @@ const torpedo: WeaponDef = {
   color: 0xff00aa,
   colorCss: '#ff00aa',
   tags: ['burst', 'siege', 'shield-break', 'telegraph'],
-  unlock: { type: 'shop', costFragments: 950 },
+  unlock: { type: 'shop', costFragments: 950, minLevel: 8 },
   baseStats: {
     damage: 220,
     fireRate: 0.28,
@@ -634,10 +636,25 @@ export function isWeaponUnlocked(
   }
 }
 
-/** True if weapon can be purchased with currency (not yet owned). */
-export function isWeaponPurchasable(def: WeaponDef, ownedWeaponIds: Set<string>): boolean {
+/**
+ * True if weapon can be purchased with currency (not yet owned).
+ * @param highestLevel campaign progress gate for shop.minLevel / core.minLevel
+ */
+export function isWeaponPurchasable(
+  def: WeaponDef,
+  ownedWeaponIds: Set<string>,
+  highestLevel = 99
+): boolean {
   if (ownedWeaponIds.has(def.id)) return false;
-  return def.unlock.type === 'shop' || def.unlock.type === 'core';
+  if (def.unlock.type === 'shop') {
+    if (def.unlock.minLevel != null && highestLevel < def.unlock.minLevel) return false;
+    return true;
+  }
+  if (def.unlock.type === 'core') {
+    if (def.unlock.minLevel != null && highestLevel < def.unlock.minLevel) return false;
+    return true;
+  }
+  return false;
 }
 
 export function branchRankCost(branch: UpgradeBranchDef, nextRank: number): number {
@@ -700,11 +717,12 @@ export const MAX_HARDPOINTS = 3;
 /** Cheapest shop weapon not yet owned (for HUD hints). */
 export function cheapestPurchasableWeapon(
   owned: Set<string>,
-  fragments: number
+  fragments: number,
+  highestLevel = 99
 ): WeaponDef | null {
   let best: WeaponDef | null = null;
   for (const w of WEAPONS) {
-    if (!isWeaponPurchasable(w, owned)) continue;
+    if (!isWeaponPurchasable(w, owned, highestLevel)) continue;
     const cost = weaponUnlockCost(w);
     if (cost.fragments <= 0 && cost.core > 0) continue;
     if (fragments < cost.fragments) continue;

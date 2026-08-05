@@ -79,24 +79,28 @@ function makeLevel(
 /** First 30 concrete levels — HP is the primary difficulty lever. */
 export const LEVELS: LevelDefinition[] = [
   // —— Tutorial band: 0–1 upgrades ——
+  // Ramp: enough combat + clear frags for first drone (~150) over L1–L2;
+  // modular weapons stay locked until highestLevel >= 3 (after L2 clear).
   makeLevel(1, 'AWAKENING', 6, 1.0, 12, 0, 0, 1.0, {
     hasCore: false,
     reinforced: 0,
     siege: 0,
-    rewardFragments: 32,
-    rewardCoreEnergy: 8,
+    rewardFragments: 55,
+    rewardCoreEnergy: 10,
   }),
   makeLevel(2, 'PULSE GRID', 7, 1.0, 16, 0.04, 0, 1.0, {
     hasCore: false,
     reinforced: 0.05,
     siege: 0,
-    rewardFragments: 38,
+    rewardFragments: 70,
+    rewardCoreEnergy: 12,
   }),
   makeLevel(3, 'CYAN ARRAY', 8, 0.95, 22, 0.06, 0, 1.05, {
     hasCore: false,
     reinforced: 0.08,
     siege: 0,
-    rewardFragments: 45,
+    rewardFragments: 85,
+    rewardCoreEnergy: 14,
   }),
 
   // —— Upgrades required ——

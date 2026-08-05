@@ -178,18 +178,30 @@ export class ShopUI {
     );
     const visible = getSequentialVisibleNodes(tree.owned, currency, this.activeTab);
 
+    // Prefer first drone (Ally Protocol) as recommended until owned — smoother ramp
     let recommended: UpgradeNodeDef | null = null;
-    for (const n of UPGRADES) {
-      if (!tree.canPurchase(n)) continue;
-      if (!tree.canAfford(n, currency)) continue;
-      if (!recommended || n.cost < recommended.cost) recommended = n;
+    const droneUnlock = UPGRADES.find((u) => u.id === 'drone_unlock');
+    if (
+      droneUnlock &&
+      tree.canPurchase(droneUnlock) &&
+      tree.canAfford(droneUnlock, currency)
+    ) {
+      recommended = droneUnlock;
+    } else {
+      for (const n of UPGRADES) {
+        if (!tree.canPurchase(n)) continue;
+        if (!tree.canAfford(n, currency)) continue;
+        if (!recommended || n.cost < recommended.cost) recommended = n;
+      }
     }
-    // Prefer weapon buy hint on loadouts tab
+    // Prefer weapon buy hint on loadouts tab (respect stage gates)
     let weaponReco: WeaponDef | null = null;
-    if (L) {
+    if (L && this.activeTab === 'loadouts') {
       for (const w of WEAPONS) {
         if (L.isOwned(w.id)) continue;
         if (w.unlock.type !== 'shop') continue;
+        const minLv = w.unlock.minLevel ?? 1;
+        if (this.highestLevel < minLv) continue;
         const c = weaponUnlockCost(w);
         if (currency.dataFragments >= c.fragments) {
           if (!weaponReco || c.fragments < weaponUnlockCost(weaponReco).fragments) {
@@ -409,7 +421,21 @@ export class ShopUI {
             ${WEAPONS.map((w) => {
               const owned = L.isOwned(w.id);
               const cost = weaponUnlockCost(w);
+              const minLv =
+                w.unlock.type === 'shop' || w.unlock.type === 'core'
+                  ? w.unlock.minLevel ?? 1
+                  : 1;
+              const levelOk = this.highestLevel >= minLv;
               if (!owned && w.unlock.type === 'shop') {
+                if (!levelOk) {
+                  return `
+                  <button type="button" class="loadout-weapon locked" disabled
+                    style="--wcolor:${w.colorCss}">
+                    <span class="lw-name">${w.name}</span>
+                    <span class="lw-fam">LOCKED · STAGE ${minLv}+</span>
+                    <span class="lw-desc">Clear earlier sectors first. Main gun &amp; drones first.</span>
+                  </button>`;
+                }
                 const can = currency.dataFragments >= cost.fragments;
                 return `
                   <button type="button" class="loadout-weapon buy ${can ? 'affordable' : ''}"

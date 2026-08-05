@@ -371,6 +371,12 @@ export class Game {
       const step = this.tutorial.currentStep;
       if (step?.id === 'loadout_buy' || step?.advance === 'weapon_owned') {
         this.openTech('loadouts');
+      } else if (
+        step?.id === 'shop_drone' ||
+        step?.id === 'shop_hint' ||
+        step?.advance === 'drone_owned'
+      ) {
+        this.openTech('drones');
       } else {
         this.openTech();
       }
@@ -814,37 +820,54 @@ export class Game {
 
   private refreshShopPrompt(): void {
     if (this.mode !== 'playing' && this.mode !== 'intro') {
-      this.hud.setShopAffordable(false, false);
+      this.hud.setShopAffordable(false, false, '', false);
       return;
     }
+    const ownsDrone = this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
+    const droneCost = 150;
+    const canAffordDrone =
+      !ownsDrone && this.currency.dataFragments >= droneCost;
+    // Shop hidden until first drone is affordable OR already owned
+    const shopVisible = ownsDrone || canAffordDrone;
+
     const rec = this.cheapestAffordable();
     const weapon = cheapestPurchasableWeapon(
       this.loadout.ownedWeapons,
-      this.currency.dataFragments
+      this.currency.dataFragments,
+      this.save.data.highestLevel
     );
-    const canBuy = !!rec || !!weapon;
-    const firstUpgrade =
-      !!rec && !this.shopHintShown && this.tech.owned.size === 0 && !this.tutorial.isActive;
+    const canBuy = shopVisible && (!!rec || !!weapon);
+    const firstDrone =
+      canAffordDrone && !this.shopHintShown && !this.tutorial.isActive;
     const firstWeapon =
       !!weapon &&
       weapon.id === 'pulse_laser' &&
       !this.loadout.isOwned('pulse_laser') &&
-      !this.save.data.tutorialLoadoutDone;
+      !this.save.data.tutorialLoadoutDone &&
+      this.save.data.highestLevel >= 3;
 
     let hint = '';
-    if (firstWeapon && weapon) {
+    if (firstDrone) {
+      hint =
+        'Ally Protocol ready — 150 FRAG. Open SHOP and buy your first AI drone.';
+    } else if (firstWeapon && weapon) {
       const c = weaponUnlockCost(weapon);
-      hint = `Arc Beam ready — ${c.fragments} FRAG. Open SHOP → LOADOUTS to purchase your first hardpoint weapon.`;
+      hint = `Arc Beam ready — ${c.fragments} FRAG. Open SHOP → LOADOUTS for your first hardpoint weapon.`;
       this.tutorial.tryStartLoadout();
-    } else if (rec) {
+    } else if (rec && shopVisible) {
       hint = `You can buy “${rec.name}” (${rec.cost} ${
         rec.costCurrency === 'coreEnergy' ? 'CORE' : 'FRAG'
       }) — ${rec.description}`;
-    } else if (weapon) {
+    } else if (weapon && shopVisible) {
       const c = weaponUnlockCost(weapon);
       hint = `Weapon available: ${weapon.name} · ${c.fragments} FRAG in LOADOUTS`;
     }
-    this.hud.setShopAffordable(canBuy, firstUpgrade || firstWeapon, hint);
+    this.hud.setShopAffordable(
+      canBuy,
+      firstDrone || firstWeapon,
+      hint,
+      shopVisible
+    );
   }
 
   private loadProgress(): void {
@@ -983,6 +1006,15 @@ export class Game {
   }
 
   private openTech(tab?: 'ship' | 'main_gun' | 'loadouts' | 'drones' | 'economy' | 'global'): void {
+    // Gate shop until first drone is affordable or already owned
+    const ownsDrone =
+      this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
+    const canAffordDrone = this.currency.dataFragments >= 150;
+    if (!ownsDrone && !canAffordDrone) {
+      this.toast('SHOP LOCKED — EARN 150 FRAG FOR YOUR FIRST DRONE');
+      return;
+    }
+
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
@@ -1007,7 +1039,9 @@ export class Game {
     this.cameraCtrl.endCinematic();
     this.shopUI.setVitals(this.vitals.snapshot());
     this.shopUI.setLoadoutContext(this.loadout, this.save.data.highestLevel);
-    this.shopUI.show(this.tech, this.currency, tab);
+    // Default to drones tab until first drone is owned
+    const openTab = tab ?? (!ownsDrone ? 'drones' : undefined);
+    this.shopUI.show(this.tech, this.currency, openTab);
   }
 
   private openLoadout(): void {
@@ -1027,9 +1061,21 @@ export class Game {
   }
 
   private buyUpgrade(node: UpgradeNodeDef): void {
+    // Stage-1 tutorial: only Ally Protocol counts until the drone is owned
+    if (
+      this.tutorial.isStage1Active() &&
+      this.tutorial.currentStep?.id === 'shop_drone' &&
+      node.id !== 'drone_unlock'
+    ) {
+      this.toast('BUY ALLY PROTOCOL FIRST — YOUR FIRST DRONE');
+      return;
+    }
     if (this.tech.purchase(node, this.currency)) {
       this.sessionPurchased = true;
-      this.tutorial.notifyPurchase();
+      this.tutorial.notifyPurchase(node.id);
+      if (node.id === 'drone_unlock' || node.effects.unlockDrones) {
+        this.tutorial.notifyDroneOwned();
+      }
       if (node.effects.hardpointAdd) {
         this.loadout.hardpointUnlocks = Math.max(
           this.loadout.hardpointUnlocks,
@@ -1043,13 +1089,17 @@ export class Game {
       this.shopUI.render(this.tech, this.currency);
       this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
       this.audio.playPurchase();
+      this.refreshShopPrompt();
       this.persist();
     }
   }
 
   private buyWeapon(defId: string): boolean {
-    const cost = this.loadout.weaponBuyCost(defId);
-    if (!cost) return false;
+    const cost = this.loadout.weaponBuyCost(defId, this.save.data.highestLevel);
+    if (!cost) {
+      this.toast('WEAPON LOCKED — CLEAR MORE SECTORS');
+      return false;
+    }
     if (cost.fragments > 0 && !this.currency.spendFragments(cost.fragments)) return false;
     if (cost.core > 0 && !this.currency.spendCoreEnergy(cost.core)) {
       if (cost.fragments > 0) this.currency.dataFragments += cost.fragments;
@@ -1067,12 +1117,13 @@ export class Game {
       this.loadout.equip(0, defId);
     }
     this.sessionPurchased = true;
-    this.tutorial.notifyPurchase();
+    this.tutorial.notifyPurchase(defId);
     this.hardpoints.rebuildFromLoadout();
     this.syncLoadoutToSave();
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
     this.audio.playPurchase();
     this.toast(`${defId === 'pulse_laser' ? 'ARC BEAM' : 'WEAPON'} ACQUIRED`);
+    this.refreshShopPrompt();
     this.persist();
     return true;
   }
@@ -1609,20 +1660,30 @@ export class Game {
         // Guided tutorial progress
         const orbitMag = Math.hypot(this.input.axisX, this.input.axisY);
         const aimMag = Math.hypot(this.input.aimX, this.input.aimY);
-        this.tutorial.update(dt, {
-          orbitMag,
-          aimMag,
-          blocksDestroyedSession: this.sessionBlocksDestroyed,
-          shopOpen: this.shopOpen,
-          purchasedThisSession: this.sessionPurchased,
-          ownsArcBeam: this.loadout.isOwned('pulse_laser'),
-          hasEquippedWeapon: this.loadout.allDerived().length > 0,
-          canAffordShop: !!this.cheapestAffordable(),
-          canAffordArcBeam:
-            !this.loadout.isOwned('pulse_laser') &&
-            this.currency.dataFragments >=
-              (this.loadout.weaponBuyCost('pulse_laser')?.fragments ?? Infinity),
-        });
+        {
+          const ownsDrone =
+            this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
+          const canAffordDrone =
+            !ownsDrone && this.currency.dataFragments >= 150;
+          const arcCost = this.loadout.weaponBuyCost(
+            'pulse_laser',
+            this.save.data.highestLevel
+          );
+          this.tutorial.update(dt, {
+            orbitMag,
+            aimMag,
+            blocksDestroyedSession: this.sessionBlocksDestroyed,
+            shopOpen: this.shopOpen,
+            purchasedThisSession: this.sessionPurchased,
+            ownsArcBeam: this.loadout.isOwned('pulse_laser'),
+            hasEquippedWeapon: this.loadout.allDerived().length > 0,
+            canAffordShop: canAffordDrone || ownsDrone,
+            canAffordArcBeam: !!arcCost && this.currency.dataFragments >= arcCost.fragments,
+            canAffordDrone,
+            ownsDrone,
+            fragments: this.currency.dataFragments,
+          });
+        }
 
         // Hardpoints: forward / guided only — never player aim stick
         this.hardpoints.update(

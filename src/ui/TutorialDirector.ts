@@ -1,7 +1,7 @@
 /**
  * Guided first-session tutorials:
- *  - Stage 1 basics (orbit → aim → destroy → open shop → first purchase)
- *  - Loadout weapon unlock (buy Arc Beam → equip)
+ *  - Stage 1: orbit → aim → destroy → open shop → buy first DRONE (only)
+ *  - Loadout: buy Arc Beam → equip (after stage 3 weapon unlock)
  */
 export type TutorialId = 'stage1' | 'loadout';
 
@@ -11,8 +11,7 @@ export type TutorialStepId =
   | 'aim'
   | 'destroy'
   | 'shop_hint'
-  | 'shop_tip'
-  | 'shop_buy'
+  | 'shop_drone'
   | 'complete'
   | 'loadout_intro'
   | 'loadout_buy'
@@ -26,7 +25,17 @@ export interface TutorialStep {
   /** Optional CSS selector to pulse-highlight */
   highlight?: string;
   /** Advance condition checked each frame */
-  advance: 'tap' | 'orbit' | 'aim' | 'destroy' | 'shop_open' | 'purchase' | 'weapon_owned' | 'weapon_equipped' | 'auto';
+  advance:
+    | 'tap'
+    | 'orbit'
+    | 'aim'
+    | 'destroy'
+    | 'afford_drone'
+    | 'shop_open'
+    | 'drone_owned'
+    | 'weapon_owned'
+    | 'weapon_equipped'
+    | 'auto';
   /** Optional progress target (e.g. blocks destroyed) */
   target?: number;
   cta?: string;
@@ -59,36 +68,29 @@ const STAGE1_STEPS: TutorialStep[] = [
   {
     id: 'destroy',
     title: 'DESTROY',
-    body: 'Weapons auto-fire. Melt blocks until you earn enough Data Fragments for your first upgrade.',
-    advance: 'destroy',
-    target: 12,
+    body: 'Weapons auto-fire. Melt lattice blocks to earn Data Fragments for your first ally drone (150 FRAG).',
+    advance: 'afford_drone',
+    target: 150,
   },
   {
     id: 'shop_hint',
-    title: 'UPGRADE READY',
-    body: 'You can afford a shop upgrade. Tap SHOP on the right rail — power grows between sectors.',
+    title: 'DRONE READY',
+    body: 'You can afford Ally Protocol — your first AI drone. Tap SHOP on the right rail.',
     highlight: '#btn-tech',
     advance: 'shop_open',
     cta: 'OPEN SHOP',
   },
   {
-    id: 'shop_tip',
-    title: 'SHOP TIP',
-    body: 'The shop has a lot of options. If you’re not sure what to buy, just buy the RECOMMENDED option above.',
-    highlight: '.shop-reco',
-    advance: 'purchase',
-    cta: 'GOT IT',
-  },
-  {
-    id: 'shop_buy',
-    title: 'FIRST PURCHASE',
-    body: 'Pick anything affordable — or stick with RECOMMENDED. Every rank stacks power.',
-    advance: 'purchase',
+    id: 'shop_drone',
+    title: 'BUY YOUR DRONE',
+    body: 'Purchase Ally Protocol (DRONES tab or RECOMMENDED). That is your first upgrade — nothing else until the drone is online.',
+    highlight: '.shop-reco, [data-id="drone_unlock"]',
+    advance: 'drone_owned',
   },
   {
     id: 'complete',
-    title: 'SYSTEMS ONLINE',
-    body: 'Tutorial complete. Clear the lattice, then expand loadouts when Arc Beam is in stock.',
+    title: 'WINGMAN ONLINE',
+    body: 'Tutorial complete. Your drone mines with you. Loadout weapons unlock from Sector 3 — master the main gun and upgrades first.',
     advance: 'tap',
     cta: 'ENGAGE',
   },
@@ -98,7 +100,7 @@ const LOADOUT_STEPS: TutorialStep[] = [
   {
     id: 'loadout_intro',
     title: 'HARDPOINT ONLINE',
-    body: 'A modular weapon is available: Arc Beam — a continuous energy lance with bounce upgrades.',
+    body: 'Modular weapons are now available. Arc Beam is a continuous energy lance with bounce upgrades.',
     advance: 'tap',
     cta: 'CONTINUE',
   },
@@ -135,7 +137,15 @@ export interface TutorialProgressCtx {
   hasEquippedWeapon: boolean;
   canAffordShop: boolean;
   canAffordArcBeam: boolean;
+  /** Fragments >= first drone cost and not yet owned */
+  canAffordDrone: boolean;
+  ownsDrone: boolean;
+  fragments: number;
 }
+
+/** First drone tech node cost (Ally Protocol). */
+export const TUTORIAL_DRONE_COST = 150;
+export const TUTORIAL_DRONE_ID = 'drone_unlock';
 
 export class TutorialDirector {
   private root: HTMLElement;
@@ -181,7 +191,7 @@ export class TutorialDirector {
     this.begin('stage1', STAGE1_STEPS);
   }
 
-  /** Call when player can afford Arc Beam and doesn't own it. */
+  /** Call when player can afford Arc Beam and doesn't own it (stage 3+). */
   tryStartLoadout(): void {
     if (this.loadoutDone || this.active || this.pendingLoadout) return;
     if (this.stage1Done) {
@@ -198,7 +208,6 @@ export class TutorialDirector {
 
   update(dt: number, ctx: TutorialProgressCtx): void {
     if (!this.active || !this.visible) {
-      // Queue loadout tutorial after stage1
       if (
         this.pendingLoadout &&
         this.stage1Done &&
@@ -234,12 +243,22 @@ export class TutorialDirector {
       if (ctx.blocksDestroyedSession >= t) this.advance();
       return;
     }
+    if (step.advance === 'afford_drone') {
+      const need = step.target ?? TUTORIAL_DRONE_COST;
+      this.setProgress(Math.min(1, ctx.fragments / need));
+      if (ctx.canAffordDrone || ctx.ownsDrone) this.advance();
+      else {
+        this.setBody(
+          `Auto-fire melts lattice. Earn Fragments for Ally Protocol — ${Math.floor(ctx.fragments)} / ${need} FRAG.`
+        );
+      }
+      return;
+    }
     if (step.advance === 'shop_open' && ctx.shopOpen) {
       this.advance();
       return;
     }
-    // Purchase can also be driven by notifyPurchase() while shop is open
-    if (step.advance === 'purchase' && ctx.purchasedThisSession) {
+    if (step.advance === 'drone_owned' && ctx.ownsDrone) {
       this.advance();
       return;
     }
@@ -251,10 +270,10 @@ export class TutorialDirector {
       this.advance();
       return;
     }
-    // Gate shop_hint until affordable
-    if (step.id === 'shop_hint' && !ctx.canAffordShop) {
+    // Gate shop_hint until drone is affordable
+    if (step.id === 'shop_hint' && !ctx.canAffordDrone && !ctx.ownsDrone) {
       this.setBody(
-        'Keep destroying blocks to earn Fragments. Shop unlocks when you can afford an upgrade.'
+        'Keep destroying blocks. Shop unlocks when you can afford your first drone (150 FRAG).'
       );
     }
   }
@@ -288,7 +307,6 @@ export class TutorialDirector {
       this.finish();
       return;
     }
-    // Skip shop_buy if already purchased mid-flow
     this.orbitAccum = 0;
     this.aimAccum = 0;
     this.renderStep();
@@ -331,18 +349,14 @@ export class TutorialDirector {
       this.advance();
       return;
     }
-    // Shop tip can be dismissed without buying
-    if (step.id === 'shop_tip') {
-      this.advance();
-      return;
-    }
     if (
       step.advance === 'shop_open' ||
       step.id === 'loadout_buy' ||
-      step.advance === 'weapon_owned'
+      step.id === 'shop_drone' ||
+      step.advance === 'weapon_owned' ||
+      step.advance === 'drone_owned'
     ) {
       this.onRequestShop?.();
-      // Advance shop_open immediately so opening the shop never soft-locks
       if (step.advance === 'shop_open') this.advance();
     }
   }
@@ -354,26 +368,31 @@ export class TutorialDirector {
   }
 
   /**
-   * Call on ANY shop purchase (upgrade, weapon, hardpoint, branch).
-   * Advances the stage-1 "first purchase" step without requiring a specific node.
+   * Call on shop purchase. Stage-1 only advances on first drone (`drone_unlock`).
+   * Pass `nodeId` when known so we can require Ally Protocol.
    */
-  notifyPurchase(): void {
+  notifyPurchase(nodeId?: string): void {
     if (!this.active) return;
     const step = this.currentStep;
     if (!step) return;
-    if (
-      step.advance === 'purchase' ||
-      step.id === 'shop_buy' ||
-      step.id === 'shop_tip'
-    ) {
-      // Ensure UI is considered active even while shop is open
+
+    if (step.advance === 'drone_owned' || step.id === 'shop_drone') {
+      // Only complete when the drone was actually bought
+      if (nodeId && nodeId !== TUTORIAL_DRONE_ID) return;
+      // If no id, allow advance when caller verified ownsDrone after purchase
       this.visible = true;
       this.advance();
-      // If tip advanced into shop_buy and purchase already happened, clear buy too
-      const next = this.currentStep;
-      if (next && (next.id === 'shop_buy' || next.advance === 'purchase') && step.id === 'shop_tip') {
-        this.advance();
-      }
+      return;
+    }
+  }
+
+  /** Force-advance drone step when ownership is confirmed. */
+  notifyDroneOwned(): void {
+    if (!this.active) return;
+    const step = this.currentStep;
+    if (step && (step.advance === 'drone_owned' || step.id === 'shop_drone')) {
+      this.visible = true;
+      this.advance();
     }
   }
 
@@ -400,32 +419,30 @@ export class TutorialDirector {
     if (title) title.textContent = step.title;
     if (body) body.textContent = step.body;
     if (cta) {
-      const needsTap =
+      const show =
+        !!step.cta ||
         step.advance === 'tap' ||
         step.advance === 'shop_open' ||
-        step.advance === 'weapon_owned' ||
-        step.id === 'shop_tip';
-      cta.style.display = needsTap ? '' : 'none';
+        step.advance === 'drone_owned' ||
+        step.advance === 'weapon_owned';
+      cta.classList.toggle('panel-hidden', !show);
       cta.textContent = step.cta ?? 'CONTINUE';
     }
     if (prog) {
       const showProg =
         step.advance === 'orbit' ||
         step.advance === 'aim' ||
-        step.advance === 'destroy';
+        step.advance === 'destroy' ||
+        step.advance === 'afford_drone';
       prog.classList.toggle('panel-hidden', !showProg);
-      this.setProgress(0);
     }
     this.clearHighlight();
-    if (step.highlight) {
-      const target = document.querySelector(step.highlight);
-      target?.classList.add('tutorial-highlight');
-    }
+    if (step.highlight) this.applyHighlight(step.highlight);
   }
 
-  private setProgress(t: number): void {
+  private setProgress(p: number): void {
     const bar = this.root.querySelector('#tutorial-progress-bar') as HTMLElement | null;
-    if (bar) bar.style.width = `${Math.min(100, Math.max(0, t * 100))}%`;
+    if (bar) bar.style.width = `${Math.min(100, Math.max(0, p * 100))}%`;
   }
 
   private setBody(text: string): void {
@@ -433,14 +450,22 @@ export class TutorialDirector {
     if (body && body.textContent !== text) body.textContent = text;
   }
 
+  private applyHighlight(sel: string): void {
+    try {
+      // Support comma-separated selectors
+      for (const part of sel.split(',').map((s) => s.trim())) {
+        document.querySelectorAll(part).forEach((el) => {
+          el.classList.add('tutorial-highlight');
+        });
+      }
+    } catch {
+      /* ignore bad selectors */
+    }
+  }
+
   private clearHighlight(): void {
     document.querySelectorAll('.tutorial-highlight').forEach((el) => {
       el.classList.remove('tutorial-highlight');
     });
-  }
-
-  dispose(): void {
-    this.hide();
-    this.root.querySelector('#tutorial-card')?.remove();
   }
 }

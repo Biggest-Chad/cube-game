@@ -67,8 +67,16 @@ body {
   inset: 0;
   z-index: 10;
   pointer-events: none;
-  /* Keep interactive UI clear of Android status / nav bars / gesture inset */
-  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+  /*
+   * When Android immersive hides system bars, safe-area env often reports 0.
+   * Floor padding still keeps HUD/shop clear of cutouts / gesture edges if bars
+   * briefly reappear after a swipe.
+   */
+  padding:
+    max(4px, var(--safe-top))
+    max(6px, var(--safe-right))
+    max(8px, var(--safe-bottom))
+    max(6px, var(--safe-left));
   overflow: hidden;
 }
 
@@ -608,6 +616,57 @@ body {
   inset: 0;
 }
 
+/* Full-screen panels: own safe insets (parent #ui-root padding does not shrink absolute children) */
+.shop-panel,
+.level-panel,
+.settings-panel,
+.tech-panel:not(.menu-screen) {
+  box-sizing: border-box;
+  padding-top: max(0px, var(--safe-top));
+  padding-right: max(0px, var(--safe-right));
+  padding-bottom: max(0px, var(--safe-bottom));
+  padding-left: max(0px, var(--safe-left));
+}
+
+#ads-root {
+  z-index: 70;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+  padding: var(--hud-pad-top) var(--hud-pad-x) var(--hud-pad-bottom);
+  pointer-events: none;
+  background: transparent;
+}
+#ads-root:not(.panel-hidden) {
+  pointer-events: auto;
+  background: rgba(0, 0, 0, 0.55);
+}
+.ads-offer {
+  width: min(400px, 92vw);
+  max-height: min(80dvh, 100%);
+  overflow-x: hidden;
+  overflow-y: auto;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow-cyan);
+  text-align: center;
+  pointer-events: auto;
+}
+.ads-offer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.ads-offer-actions .menu-btn,
+.ads-inline-btn {
+  min-height: 44px;
+  width: 100%;
+}
+
 .menu-screen {
   position: absolute;
   inset: 0;
@@ -652,13 +711,14 @@ body {
 }
 
 .menu-title {
-  font-size: clamp(42px, 8vw, 72px);
+  font-size: clamp(28px, 6vw, 56px);
   font-weight: 700;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.2em;
   color: var(--cyan);
   text-shadow: 0 0 18px rgba(0, 240, 255, 0.45), 0 0 40px rgba(0, 240, 255, 0.2);
   margin-bottom: 8px;
-  line-height: 1.05;
+  line-height: 1.12;
+  max-width: 100%;
 }
 
 .menu-title-line {
@@ -1437,7 +1497,7 @@ body.orientation-portrait #rotate-overlay {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 14px 16px 8px;
+  padding: 12px 14px 8px;
   border-bottom: 1px solid rgba(0, 240, 255, 0.2);
   flex-shrink: 0;
 }
@@ -1882,24 +1942,61 @@ body.orientation-portrait #rotate-overlay {
   align-items: stretch !important;
   background: linear-gradient(90deg, rgba(0,0,0,0.88) 0%, rgba(0,8,12,0.72) 42%, transparent 70%) !important;
   padding: 0 !important;
+  overflow: hidden;
 }
 .menu-left-panel {
   width: min(380px, 42vw);
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 28px 32px 28px max(28px, env(safe-area-inset-left));
+  /* Keep brand clear of status bar / cutout / short landscape tops */
+  padding:
+    max(20px, calc(var(--safe-top) + 12px))
+    28px
+    max(16px, calc(var(--safe-bottom) + 10px))
+    max(20px, calc(var(--safe-left) + 12px));
   gap: 8px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
-.menu-brand { margin-bottom: 18px; }
+.menu-brand {
+  margin-bottom: 12px;
+  flex-shrink: 0;
+  min-width: 0;
+}
 .menu-landscape .menu-title {
-  font-size: clamp(28px, 5vw, 48px);
-  letter-spacing: 0.32em;
+  font-size: clamp(22px, 4.2vw, 42px);
+  letter-spacing: 0.22em;
   margin-bottom: 6px;
+  line-height: 1.15;
+  overflow: visible;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .menu-landscape .menu-sub {
   margin-bottom: 8px;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.22em;
+  font-size: clamp(10px, 1.6vw, 12px);
+}
+.menu-engage-sub {
+  display: none !important;
+}
+@media (max-height: 420px) {
+  .menu-left-panel {
+    justify-content: flex-start;
+    padding-top: max(12px, calc(var(--safe-top) + 8px));
+    gap: 6px;
+  }
+  .menu-landscape .menu-title {
+    font-size: clamp(18px, 3.6vw, 28px);
+    letter-spacing: 0.16em;
+  }
+  .menu-brand { margin-bottom: 6px; }
+  .menu-hint { display: none; }
 }
 .menu-actions {
   display: flex;
@@ -1965,16 +2062,26 @@ body.orientation-portrait #rotate-overlay {
 }
 .hud-side-rail {
   position: absolute;
-  top: max(52px, calc(var(--safe-top) + 44px));
-  right: var(--hud-pad-x);
+  top: max(48px, calc(var(--safe-top) + 40px));
+  right: max(8px, var(--hud-pad-x));
+  bottom: max(120px, calc(var(--ctrl-size) + var(--hud-pad-bottom) + 12px));
   display: flex;
   flex-direction: column;
   gap: 6px;
   z-index: 20;
   align-items: flex-end;
-  max-height: calc(100% - 180px);
+  max-height: none;
+  overflow-x: hidden;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   pointer-events: none;
+  /* Keep shop icons clear of nav gesture / system bar region */
+  padding-bottom: 4px;
+}
+.hud-side-rail .shop-btn,
+.hud-side-rail .action-btn {
+  flex-shrink: 0;
 }
 .hud-side-rail > * {
   pointer-events: auto;
@@ -2201,8 +2308,8 @@ body.orientation-portrait #rotate-overlay {
 .cinematic-skip {
   position: absolute;
   z-index: 5;
-  bottom: max(18px, env(safe-area-inset-bottom));
-  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, var(--safe-bottom));
+  right: max(18px, var(--safe-right));
   font-size: 10px;
   letter-spacing: 0.22em;
   opacity: 0.45;
@@ -2229,7 +2336,7 @@ body.orientation-portrait #rotate-overlay {
 /* Shop landscape */
 .shop-panel .shop-body,
 .tech-panel .shop-body {
-  flex-direction: row !important;
+  flex-direction: row;
   min-height: 0 !important;
   overflow: hidden !important;
 }
@@ -2243,6 +2350,19 @@ body.orientation-portrait #rotate-overlay {
   border-right: 1px solid rgba(0, 240, 255, 0.15);
   overflow-x: hidden;
   overflow-y: auto;
+}
+@media (max-width: 720px), (max-height: 420px) {
+  .shop-panel .shop-body,
+  .tech-panel .shop-body {
+    flex-direction: column !important;
+  }
+  .shop-stats {
+    width: 100%;
+    max-width: none;
+    max-height: 22vh;
+    border-right: none;
+    border-bottom: 1px solid rgba(0, 240, 255, 0.18);
+  }
 }
 
 @media (max-height: 500px) {

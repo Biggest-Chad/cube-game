@@ -104,16 +104,25 @@ export class LoadoutState {
     return true;
   }
 
-  /** Cost to unlock a shop weapon, or null if not purchasable. */
-  weaponBuyCost(id: string): { fragments: number; core: number } | null {
+  /** Cost to unlock a shop weapon, or null if not purchasable at this campaign stage. */
+  weaponBuyCost(
+    id: string,
+    highestLevel = 99
+  ): { fragments: number; core: number } | null {
     const def = getWeaponDef(id);
-    if (!def || !isWeaponPurchasable(def, this.ownedWeapons)) return null;
+    if (!def || !isWeaponPurchasable(def, this.ownedWeapons, highestLevel)) return null;
     return weaponUnlockCost(def);
   }
 
-  /** All weapons visible in shop catalog (owned + purchasable). */
+  /** All weapons visible in shop catalog (owned + locked-by-level + purchasable). */
   shopCatalog(): WeaponDef[] {
     return WEAPONS.slice();
+  }
+
+  /** Whether a shop weapon is available to buy at this stage (level gate). */
+  canBuyWeapon(id: string, highestLevel: number): boolean {
+    const def = getWeaponDef(id);
+    return !!def && isWeaponPurchasable(def, this.ownedWeapons, highestLevel);
   }
 
   /** First empty unlocked hardpoint, or -1. */

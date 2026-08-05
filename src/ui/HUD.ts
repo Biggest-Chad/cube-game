@@ -225,16 +225,28 @@ export class HUD {
     if (icon) icon.textContent = m ? '🔇' : '♪';
   }
 
-  setShopAffordable(canBuy: boolean, firstTime: boolean, hintText = ''): void {
-    this.btnTech.classList.toggle('shop-ready', canBuy);
+  /**
+   * @param visible When false, shop CTA is fully hidden (pre-drone ramp).
+   * @param canBuy Glow/badge when something affordable.
+   */
+  setShopAffordable(
+    canBuy: boolean,
+    firstTime: boolean,
+    hintText = '',
+    visible = true
+  ): void {
+    this.btnTech.classList.toggle('panel-hidden', !visible);
+    this.btnTech.classList.toggle('shop-ready', visible && canBuy);
+    // Also hide loadout entry until shop is online (same early ramp)
+    this.btnLoadout.classList.toggle('panel-hidden', !visible);
     const badge = this.root.querySelector('#shop-badge');
-    if (badge) badge.classList.toggle('panel-hidden', !canBuy);
+    if (badge) badge.classList.toggle('panel-hidden', !visible || !canBuy);
 
-    if (firstTime && canBuy && hintText) {
+    if (visible && firstTime && canBuy && hintText) {
       this.shopHint.classList.remove('panel-hidden');
       const body = this.root.querySelector('#shop-hint-body');
       if (body) body.textContent = hintText;
-    } else if (!firstTime) {
+    } else if (!firstTime || !visible) {
       this.shopHint.classList.add('panel-hidden');
     }
   }
