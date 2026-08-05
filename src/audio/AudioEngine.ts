@@ -181,8 +181,240 @@ export class AudioEngine {
     this.sfxCubeShift(this.now());
   }
 
+  // ── Cinematic score / SFX ─────────────────────────────────
+
+  private cineBedOscs: OscillatorNode[] = [];
+  private cineBedGains: GainNode[] = [];
+  private cineHumGain: GainNode | null = null;
+  private cineHumOsc: OscillatorNode | null = null;
+  private cineHumNoise: AudioBufferSourceNode | null = null;
+  private cineHumFilter: BiquadFilterNode | null = null;
+  private cineActive = false;
+
+  /** Low cinematic bed (pads + sub) for the intro. */
+  startCinematicBed(): void {
+    if (!this.ctx || !this.ambientBus || this.muted) return;
+    this.stopCinematicBed();
+    this.cineActive = true;
+    const t = this.now();
+    const mk = (freq: number, type: OscType, peak: number) => {
+      const o = this.ctx!.createOscillator();
+      o.type = type;
+      o.frequency.value = freq;
+      const g = this.ctx!.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + 1.8);
+      o.connect(g);
+      g.connect(this.ambientBus!);
+      o.start(t);
+      this.cineBedOscs.push(o);
+      this.cineBedGains.push(g);
+    };
+    mk(36.7, 'sine', 0.045); // sub D
+    mk(55, 'sine', 0.028);
+    mk(73.4, 'triangle', 0.016);
+    mk(110, 'sine', 0.01);
+    mk(164.8, 'triangle', 0.007);
+    // Portal hum channel (driven by setCinematicPortalHum)
+    this.cineHumOsc = this.ctx.createOscillator();
+    this.cineHumOsc.type = 'sawtooth';
+    this.cineHumOsc.frequency.value = 48;
+    this.cineHumFilter = this.ctx.createBiquadFilter();
+    this.cineHumFilter.type = 'lowpass';
+    this.cineHumFilter.frequency.value = 220;
+    this.cineHumFilter.Q.value = 2;
+    this.cineHumGain = this.ctx.createGain();
+    this.cineHumGain.gain.value = 0.0001;
+    this.cineHumOsc.connect(this.cineHumFilter);
+    this.cineHumFilter.connect(this.cineHumGain);
+    this.cineHumGain.connect(this.ambientBus);
+    this.cineHumOsc.start(t);
+
+    this.cineHumNoise = this.ctx.createBufferSource();
+    this.cineHumNoise.buffer = this.noiseBufferLo;
+    this.cineHumNoise.loop = true;
+    const ng = this.ctx.createGain();
+    ng.gain.value = 0.0001;
+    const nf = this.ctx.createBiquadFilter();
+    nf.type = 'bandpass';
+    nf.frequency.value = 280;
+    nf.Q.value = 1.2;
+    this.cineHumNoise.connect(nf);
+    nf.connect(ng);
+    ng.connect(this.ambientBus);
+    this.cineHumNoise.start(t);
+    // stash noise gain on filter for updates
+    (this.cineHumFilter as BiquadFilterNode & { _noiseGain?: GainNode })._noiseGain = ng;
+  }
+
+  stopCinematicBed(): void {
+    const t = this.now();
+    for (const g of this.cineBedGains) {
+      try {
+        g.gain.cancelScheduledValues(t);
+        g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const o of this.cineBedOscs) {
+      try {
+        o.stop(t + 1);
+      } catch {
+        /* ignore */
+      }
+    }
+    this.cineBedOscs = [];
+    this.cineBedGains = [];
+    try {
+      this.cineHumOsc?.stop(t + 0.5);
+      this.cineHumNoise?.stop(t + 0.5);
+    } catch {
+      /* ignore */
+    }
+    this.cineHumOsc = null;
+    this.cineHumNoise = null;
+    this.cineHumGain = null;
+    this.cineHumFilter = null;
+    this.cineActive = false;
+  }
+
+  /** 0..1 portal intensity — continuous hum under the tear. */
+  setCinematicPortalHum(intensity: number): void {
+    if (!this.ctx || !this.cineHumGain || this.muted) return;
+    const t = this.now();
+    const v = Math.max(0, Math.min(1, intensity));
+    const peak = 0.0001 + v * 0.055;
+    this.cineHumGain.gain.cancelScheduledValues(t);
+    this.cineHumGain.gain.setTargetAtTime(peak, t, 0.08);
+    if (this.cineHumFilter) {
+      this.cineHumFilter.frequency.setTargetAtTime(160 + v * 420, t, 0.1);
+      const ng = (this.cineHumFilter as BiquadFilterNode & { _noiseGain?: GainNode })._noiseGain;
+      ng?.gain.setTargetAtTime(0.0001 + v * 0.04, t, 0.1);
+    }
+    if (this.cineHumOsc) {
+      this.cineHumOsc.frequency.setTargetAtTime(42 + v * 28, t, 0.12);
+    }
+  }
+
+  playCinematicPortalOpen(): void {
+    if (!this.ready()) return;
+    const t = this.now();
+    // Rising tear
+    this.noiseBurst(0.12, 0.08, 1.1, t, {
+      type: 'bandpass',
+      freq: 200,
+      endFreq: 2400,
+      q: 0.7,
+      brown: true,
+    });
+    this.tone(55, 'sawtooth', 0.08, 0.05, 0.9, t, {
+      endFreq: 110,
+      filter: { type: 'lowpass', freq: 500, q: 1.5 },
+    });
+    this.tone(110, 'square', 0.04, 0.1, 0.7, t + 0.15, {
+      endFreq: 220,
+      filter: { type: 'bandpass', freq: 400, q: 2 },
+    });
+    this.tone(880, 'sine', 0.03, 0.2, 0.5, t + 0.4, { endFreq: 1760 });
+  }
+
+  playCinematicBreach(): void {
+    if (!this.ready()) return;
+    const t = this.now();
+    this.sfxHeavyBoom(t, 1.1);
+    this.noiseBurst(0.14, 0.01, 0.55, t, {
+      type: 'highpass',
+      freq: 600,
+      endFreq: 2800,
+      q: 0.8,
+    });
+    this.tone(180, 'sawtooth', 0.07, 0.005, 0.35, t, {
+      endFreq: 60,
+      filter: { type: 'lowpass', freq: 800, q: 1 },
+    });
+    this.tone(720, 'triangle', 0.05, 0.002, 0.25, t + 0.02, { endFreq: 240 });
+    // Seeker-like digital chirps
+    for (let i = 0; i < 4; i++) {
+      this.tone(400 + i * 180, 'square', 0.03, 0.002, 0.08, t + 0.05 + i * 0.04, {
+        endFreq: 900 + i * 100,
+        filter: { type: 'bandpass', freq: 1200, q: 4 },
+      });
+    }
+  }
+
+  playCinematicImpact(): void {
+    if (!this.ready()) return;
+    const t = this.now();
+    this.tone(48, 'sine', 0.11, 0.01, 0.55, t, { endFreq: 28 });
+    this.noiseBurst(0.08, 0.005, 0.35, t, {
+      type: 'lowpass',
+      freq: 500,
+      endFreq: 100,
+      brown: true,
+    });
+    this.tone(220, 'triangle', 0.04, 0.003, 0.2, t, { endFreq: 80 });
+  }
+
+  playCinematicTitle(which: 0 | 1): void {
+    if (!this.ready()) return;
+    const t = this.now();
+    if (which === 0) {
+      // Cold cyan hit
+      const notes = [261.63, 329.63, 392.0, 523.25];
+      notes.forEach((f, i) => {
+        this.tone(f, 'sine', 0.06, 0.01, 0.45, t + i * 0.07, {
+          filter: { type: 'lowpass', freq: 2800, q: 0.6 },
+        });
+        this.tone(f * 2.01, 'triangle', 0.02, 0.008, 0.35, t + i * 0.07);
+      });
+    } else {
+      // Magenta urgency
+      const notes = [349.23, 415.3, 523.25, 698.46];
+      notes.forEach((f, i) => {
+        this.tone(f, 'sine', 0.065, 0.01, 0.5, t + i * 0.065, {
+          filter: { type: 'lowpass', freq: 3200, q: 0.7 },
+        });
+        this.tone(f * 1.5, 'triangle', 0.025, 0.008, 0.4, t + i * 0.065);
+      });
+      this.noiseBurst(0.04, 0.05, 0.5, t + 0.2, {
+        type: 'bandpass',
+        freq: 900,
+        endFreq: 2000,
+        q: 0.5,
+      });
+    }
+  }
+
+  playCinematicStinger(kind: 'open' | 'hero' | 'end'): void {
+    if (!this.ready()) return;
+    const t = this.now();
+    if (kind === 'open') {
+      this.tone(65, 'sine', 0.06, 0.15, 1.2, t, { endFreq: 40 });
+      this.noiseBurst(0.05, 0.2, 1.0, t, {
+        type: 'lowpass',
+        freq: 300,
+        endFreq: 120,
+        brown: true,
+      });
+    } else if (kind === 'hero') {
+      this.tone(130.8, 'sawtooth', 0.05, 0.01, 0.35, t, {
+        endFreq: 98,
+        filter: { type: 'lowpass', freq: 600, q: 1 },
+      });
+      this.tone(196, 'triangle', 0.04, 0.02, 0.4, t + 0.05);
+      this.noiseBurst(0.06, 0.005, 0.2, t, { type: 'highpass', freq: 1500, q: 0.7 });
+    } else {
+      // End — settle into silence / combat
+      this.tone(82, 'sine', 0.05, 0.05, 0.7, t, { endFreq: 55 });
+      this.tone(123, 'triangle', 0.03, 0.05, 0.55, t + 0.08, { endFreq: 82 });
+    }
+  }
+
   dispose(): void {
     try {
+      this.stopCinematicBed();
       for (const o of this.ambientOscs) o.stop();
       this.ambientLfo?.stop();
       void this.ctx?.close();

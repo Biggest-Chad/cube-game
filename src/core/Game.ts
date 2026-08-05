@@ -1177,9 +1177,10 @@ export class Game {
         camera: this.cameraCtrl,
         ship: this.ship,
         particles: this.particles,
+        audio: this.audio,
       });
       try {
-        this.audio.playUi();
+        void this.audio.resume();
       } catch {
         /* audio may be locked until gesture */
       }
@@ -1526,7 +1527,7 @@ export class Game {
       // Animate the instanced cinematic cube only — real cube stays pristine & hidden
       this.cinematicCube.update(dt, now);
       this.cube.group.visible = false;
-      this.cinematicCube.group.visible = true;
+      // Visibility of cinematicCube is owned by CinematicIntro (hidden until portal breach)
       // Enforce ship hide every frame (prevents mid-cut ghost at origin)
       this.ship.group.visible = false;
       this.ship.group.scale.setScalar(0);
