@@ -553,7 +553,9 @@ export class Game {
             this.cameraCtrl.shake(
               r.type === BlockType.Core ? 0.24 : r.crit ? 0.16 : 0.12
             );
-            this.audio.playDestroy();
+            this.audio.playDestroy(
+              r.type === BlockType.Core || r.type === BlockType.Explosive
+            );
             const gained = this.currency.addFragments(r.fragments, this.tech.stats.fragmentMul);
             this.save.data.totalBlocksDestroyed++;
             this.sessionBlocksDestroyed++;
@@ -570,11 +572,13 @@ export class Game {
               r.crit ? COLORS.magenta : COLORS.cyan,
               r.crit ? 0.85 : 0.65
             );
-            this.audio.playHit();
+            this.audio.playHit(!!r.crit);
           }
         }
       ),
-      bus.on('weapon-fire', () => this.audio.playFire()),
+      bus.on('weapon-fire', (p: { family?: string }) => {
+        this.audio.playFire(p?.family ?? 'beam');
+      }),
       bus.on(
         'explosion',
         (p: { x: number; y: number; z: number; radius?: number; family?: string }) => {
@@ -585,6 +589,7 @@ export class Game {
           this.particles.spawn(p.x, p.y, p.z, 0xffffff, 10, 8, 'glow');
           this.particles.spawn(p.x, p.y, p.z, COLORS.gold, 12, 11, 'spark');
           this.cameraCtrl.shake(0.1 + Math.min(0.2, r * 0.04));
+          this.audio.playExplosion(r, p.family);
         }
       ),
       bus.on('upgrade-purchased', () => {
@@ -597,7 +602,10 @@ export class Game {
         this.persist();
         this.refreshShopPrompt();
       }),
-      // Cube scramble: silent (no toast spam)
+      bus.on('crit', () => this.audio.playCrit()),
+      bus.on('cube-rotation-start', () => this.audio.playCubeShift()),
+      bus.on('turret-fire', () => this.audio.playFire('flak')),
+      bus.on('enemy-drone-fire', () => this.audio.playFire('pulse')),
       // Single shake path only (animator emits camera-shake-request on complete)
       bus.on('camera-shake-request', (p: { amount?: number }) => {
         if (this.mode === 'playing' || this.mode === 'cinematic') {
@@ -611,7 +619,7 @@ export class Game {
     if (this.mode !== 'playing') return;
     const hit = this.vitals.takeDamage(amount);
     this.cameraCtrl.shake(0.1);
-    this.audio.playHit();
+    this.audio.playPlayerHit();
     this.updateHudVitals();
     if (hit.died) this.beginShipDeath();
   }
@@ -634,7 +642,7 @@ export class Game {
     this.spawnShipExplosion(this.deathOrigin, 1.4);
     this.cameraCtrl.shake(0.55);
     try {
-      this.audio.playHit();
+      this.audio.playShipDeath();
     } catch {
       /* ignore */
     }
