@@ -804,8 +804,9 @@ export class Game {
   }
 
   private updateHudVitals(): void {
-    this.shopUI.setVitals(this.vitals.snapshot());
-    // Extend currency line with hull/shield if HUD supports — use blocks line suffix
+    const snap = this.vitals.snapshot();
+    this.shopUI.setVitals(snap);
+    this.hud.updateVitals(snap);
   }
 
   private cheapestAffordable(): UpgradeNodeDef | null {
@@ -1458,21 +1459,30 @@ export class Game {
         return;
       }
       this.adsUI.onAccepted = (p) => {
-        void this.ads.offer(p).then(({ reward }) => {
-          if (reward?.fragmentMul && !doubled) {
-            doubled = true;
-            const extraF = fragGain;
-            const extraC = coreGain;
-            this.currency.addFragments(extraF, 1);
-            this.currency.addCoreEnergy(extraC, 1);
-            fragGain *= 2;
-            coreGain *= 2;
-            const rew = this.overlay.querySelector('.reward');
-            if (rew) rew.textContent = `+${fragGain} FRAG · +${coreGain} CORE (×2)`;
-            this.persist();
-            this.toast('REWARD DOUBLED');
-          }
-        });
+        void this.ads
+          .offer(p)
+          .then(({ reward }) => {
+            if (reward?.fragmentMul && !doubled) {
+              doubled = true;
+              const extraF = fragGain;
+              const extraC = coreGain;
+              this.currency.addFragments(extraF, 1);
+              this.currency.addCoreEnergy(extraC, 1);
+              fragGain *= 2;
+              coreGain *= 2;
+              const rew = this.overlay.querySelector('.reward');
+              if (rew) rew.textContent = `+${fragGain} FRAG · +${coreGain} CORE (×2)`;
+              this.persist();
+              this.toast('REWARD DOUBLED');
+            }
+          })
+          .finally(() => {
+            // Always clear ad dim layer so clear card stays interactive
+            this.adsUI.hide();
+          });
+      };
+      this.adsUI.onDeclined = () => {
+        this.adsUI.hide();
       };
     });
 
@@ -1638,6 +1648,7 @@ export class Game {
 
       if (this.mode === 'playing') {
         this.vitals.update(dt);
+        this.updateHudVitals();
         this.updateCombatWarmup(dt);
         const allowFire = this.canFireWeapons() && this.input.isFiring;
 

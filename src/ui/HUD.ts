@@ -18,24 +18,44 @@ export class HUD {
   private introBanner!: HTMLElement;
   private controlsLayer!: HTMLElement;
   private crosshair!: HTMLElement;
+  private shieldBar!: HTMLElement;
+  private hullBar!: HTMLElement;
+  private shieldVal!: HTMLElement;
+  private hullVal!: HTMLElement;
 
   constructor(root: HTMLElement) {
     this.root = root;
     this.root.innerHTML = `
       <div class="hud-landscape">
         <div class="hud-top-bar">
-          <div class="hud-stat ui-chip">
-            <div class="label">Fragments</div>
-            <div class="value" id="hud-frag">0</div>
+          <div class="hud-currency-stack ui-chip">
+            <div class="hud-currency-row">
+              <div class="label">Fragments</div>
+              <div class="value" id="hud-frag">0</div>
+            </div>
+            <div class="hud-currency-row magenta">
+              <div class="label">Core Energy</div>
+              <div class="value" id="hud-core">0</div>
+            </div>
           </div>
           <div class="hud-center-stack">
             <div class="level-banner" id="hud-level">LEVEL 1</div>
             <div class="progress-bar"><span id="hud-progress"></span></div>
             <div class="level-banner blocks" id="hud-blocks"></div>
           </div>
-          <div class="hud-stat magenta ui-chip">
-            <div class="label">Core Energy</div>
-            <div class="value" id="hud-core">0</div>
+          <div class="hud-top-spacer" aria-hidden="true"></div>
+        </div>
+
+        <div class="hud-vitals" id="hud-vitals" aria-label="Ship integrity">
+          <div class="hud-vital-row shield">
+            <span class="hud-vital-label">SHD</span>
+            <div class="hud-vital-bar"><i id="hud-shield-bar"></i></div>
+            <span class="hud-vital-val" id="hud-shield-val">40</span>
+          </div>
+          <div class="hud-vital-row hull">
+            <span class="hud-vital-label">HULL</span>
+            <div class="hud-vital-bar"><i id="hud-hull-bar"></i></div>
+            <span class="hud-vital-val" id="hud-hull-val">100</span>
           </div>
         </div>
 
@@ -127,6 +147,10 @@ export class HUD {
     this.introBanner = this.root.querySelector('#intro-banner')!;
     this.controlsLayer = this.root.querySelector('#controls-layer')!;
     this.crosshair = this.root.querySelector('#hud-crosshair')!;
+    this.shieldBar = this.root.querySelector('#hud-shield-bar')!;
+    this.hullBar = this.root.querySelector('#hud-hull-bar')!;
+    this.shieldVal = this.root.querySelector('#hud-shield-val')!;
+    this.hullVal = this.root.querySelector('#hud-hull-val')!;
   }
 
   get elements() {
@@ -212,6 +236,28 @@ export class HUD {
   updateCurrency(fragments: number, core: number): void {
     this.fragEl.textContent = Math.floor(fragments).toLocaleString();
     this.coreEl.textContent = Math.floor(core).toLocaleString();
+  }
+
+  /** Shield + hull bars at bottom of combat HUD. */
+  updateVitals(v: {
+    hull: number;
+    maxHull: number;
+    shield: number;
+    maxShield: number;
+  }): void {
+    const hullPct = Math.max(0, Math.min(100, (v.hull / Math.max(1, v.maxHull)) * 100));
+    const shPct = Math.max(0, Math.min(100, (v.shield / Math.max(1, v.maxShield)) * 100));
+    if (this.hullBar) this.hullBar.style.width = `${hullPct.toFixed(1)}%`;
+    if (this.shieldBar) this.shieldBar.style.width = `${shPct.toFixed(1)}%`;
+    if (this.hullVal) {
+      this.hullVal.textContent = `${Math.ceil(v.hull)}`;
+    }
+    if (this.shieldVal) {
+      this.shieldVal.textContent = `${Math.ceil(v.shield)}`;
+    }
+    const vitals = this.root.querySelector('#hud-vitals');
+    vitals?.classList.toggle('critical', hullPct < 28);
+    vitals?.classList.toggle('shield-down', shPct < 1);
   }
 
   updateLevel(id: number, name: string, progress: number, alive: number, total: number): void {

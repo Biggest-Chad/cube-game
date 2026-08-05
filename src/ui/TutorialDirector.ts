@@ -245,12 +245,15 @@ export class TutorialDirector {
     }
     if (step.advance === 'afford_drone') {
       const need = step.target ?? TUTORIAL_DRONE_COST;
-      this.setProgress(Math.min(1, ctx.fragments / need));
-      if (ctx.canAffordDrone || ctx.ownsDrone) this.advance();
-      else {
-        this.setBody(
-          `Auto-fire melts lattice. Earn Fragments for Ally Protocol — ${Math.floor(ctx.fragments)} / ${need} FRAG.`
-        );
+      this.ensureFarmChip(true);
+      const val = this.root.querySelector('#tutorial-farm-val');
+      if (val) {
+        val.textContent = `${Math.floor(ctx.fragments)} / ${need}`;
+      }
+      // Only open the shop tutorial card once the purchase is actually affordable
+      if (ctx.canAffordDrone || ctx.ownsDrone) {
+        this.ensureFarmChip(false);
+        this.advance();
       }
       return;
     }
@@ -282,6 +285,7 @@ export class TutorialDirector {
     this.visible = false;
     const card = this.root.querySelector('#tutorial-card');
     if (card) (card as HTMLElement).classList.add('panel-hidden');
+    this.ensureFarmChip(false);
     this.clearHighlight();
   }
 
@@ -411,6 +415,16 @@ export class TutorialDirector {
     const step = this.currentStep;
     const card = this.root.querySelector('#tutorial-card') as HTMLElement | null;
     if (!card || !step) return;
+
+    // Farming for drone frags: no big popup — keep gameplay clear until purchase is ready
+    if (step.advance === 'afford_drone' || step.advance === 'destroy') {
+      card.classList.add('panel-hidden');
+      this.clearHighlight();
+      this.ensureFarmChip(true);
+      return;
+    }
+    this.ensureFarmChip(false);
+
     card.classList.remove('panel-hidden');
     const title = card.querySelector('#tutorial-title');
     const body = card.querySelector('#tutorial-body');
@@ -429,15 +443,29 @@ export class TutorialDirector {
       cta.textContent = step.cta ?? 'CONTINUE';
     }
     if (prog) {
-      const showProg =
-        step.advance === 'orbit' ||
-        step.advance === 'aim' ||
-        step.advance === 'destroy' ||
-        step.advance === 'afford_drone';
+      const showProg = step.advance === 'orbit' || step.advance === 'aim';
       prog.classList.toggle('panel-hidden', !showProg);
     }
     this.clearHighlight();
     if (step.highlight) this.applyHighlight(step.highlight);
+  }
+
+  /** Compact non-blocking FRAG progress while farming for first drone. */
+  private ensureFarmChip(show: boolean): void {
+    let chip = this.root.querySelector('#tutorial-farm-chip') as HTMLElement | null;
+    if (!show) {
+      chip?.classList.add('panel-hidden');
+      return;
+    }
+    if (!chip) {
+      chip = document.createElement('div');
+      chip.id = 'tutorial-farm-chip';
+      chip.className = 'tutorial-farm-chip';
+      chip.innerHTML =
+        '<span class="tfc-label">DRONE FUND</span><span class="tfc-val" id="tutorial-farm-val">0 / 150</span>';
+      this.root.appendChild(chip);
+    }
+    chip.classList.remove('panel-hidden');
   }
 
   private setProgress(p: number): void {

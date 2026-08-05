@@ -22,7 +22,6 @@ export class MenuUI {
           <div class="menu-actions">
             <button class="menu-btn menu-engage primary ui-btn" id="m-play" type="button">
               <span class="menu-engage-glow" aria-hidden="true"></span>
-              <span class="menu-btn-kicker">ENGAGE</span>
               <span class="menu-btn-label">START MISSION</span>
             </button>
 

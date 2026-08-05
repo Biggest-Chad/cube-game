@@ -90,6 +90,11 @@ export class AdsOfferUI {
   hide(): void {
     this.root.innerHTML = '';
     this.card = null;
+    // Critical: re-hide the host so the dim backdrop + pointer-events don't
+    // permanently block the game after an ad offer is dismissed/accepted.
+    this.root.classList.add('panel-hidden');
+    this.root.style.pointerEvents = 'none';
+    this.root.style.background = '';
   }
 
   dispose(): void {

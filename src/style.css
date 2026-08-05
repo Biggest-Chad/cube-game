@@ -638,9 +638,15 @@ body {
   pointer-events: none;
   background: transparent;
 }
-#ads-root:not(.panel-hidden) {
+/* Only dim + capture input while an offer is actually mounted */
+#ads-root:not(.panel-hidden):not(:empty) {
   pointer-events: auto;
   background: rgba(0, 0, 0, 0.55);
+}
+#ads-root.panel-hidden,
+#ads-root:empty {
+  pointer-events: none !important;
+  background: transparent !important;
 }
 .ads-offer {
   width: min(400px, 92vw);
@@ -1985,8 +1991,13 @@ body.orientation-portrait #rotate-overlay {
   letter-spacing: 0.22em;
   font-size: clamp(10px, 1.6vw, 12px);
 }
-.menu-engage-sub {
+.menu-engage-sub,
+.menu-btn-kicker {
   display: none !important;
+}
+.menu-engage .menu-btn-label {
+  font-size: clamp(16px, 2.4vw, 22px);
+  letter-spacing: 0.18em;
 }
 @media (max-height: 420px) {
   .menu-left-panel {
@@ -2049,6 +2060,50 @@ body.orientation-portrait #rotate-overlay {
   pointer-events: none;
   z-index: 15;
 }
+/* Fragments on top, Core Energy directly underneath */
+.hud-currency-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: min(120px, 28vw);
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow-cyan);
+  backdrop-filter: blur(6px);
+  flex-shrink: 0;
+}
+.hud-currency-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.hud-currency-row .label {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  opacity: 0.85;
+}
+.hud-currency-row .value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--white);
+  text-shadow: var(--glow-cyan);
+  font-variant-numeric: tabular-nums;
+}
+.hud-currency-row.magenta .label {
+  color: var(--magenta);
+}
+.hud-currency-row.magenta .value {
+  text-shadow: var(--glow-magenta);
+}
+.hud-top-spacer {
+  min-width: min(120px, 28vw);
+  flex-shrink: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .hud-center-stack {
   flex: 1;
   display: flex;
@@ -2057,6 +2112,106 @@ body.orientation-portrait #rotate-overlay {
   max-width: min(280px, 40vw);
   margin: 0 auto;
   min-width: 0;
+}
+
+/* Bottom-center ship shield + hull */
+.hud-vitals {
+  position: absolute;
+  left: 50%;
+  bottom: max(10px, calc(var(--hud-pad-bottom) + 4px));
+  transform: translateX(-50%);
+  width: min(280px, 46vw);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 16;
+  pointer-events: none;
+  padding: 6px 10px;
+  background: rgba(0, 10, 16, 0.55);
+  border: 1px solid rgba(0, 240, 255, 0.22);
+  backdrop-filter: blur(6px);
+}
+.hud-vital-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hud-vital-label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  width: 34px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.hud-vital-row.shield .hud-vital-label { color: #66ccff; }
+.hud-vital-row.hull .hud-vital-label { color: #00ffaa; }
+.hud-vital-bar {
+  flex: 1;
+  height: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  overflow: hidden;
+}
+.hud-vital-bar > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transition: width 0.12s linear;
+}
+.hud-vital-row.shield .hud-vital-bar > i {
+  background: linear-gradient(90deg, #2266ff, #66eeff);
+  box-shadow: 0 0 8px rgba(80, 180, 255, 0.55);
+}
+.hud-vital-row.hull .hud-vital-bar > i {
+  background: linear-gradient(90deg, #00aa66, #00ffaa);
+  box-shadow: 0 0 8px rgba(0, 255, 170, 0.4);
+}
+.hud-vital-val {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: right;
+  opacity: 0.85;
+}
+.hud-vitals.critical .hud-vital-row.hull .hud-vital-bar > i {
+  background: linear-gradient(90deg, #aa2200, #ff6644);
+  box-shadow: 0 0 10px rgba(255, 80, 40, 0.6);
+}
+.hud-vitals.shield-down .hud-vital-row.shield {
+  opacity: 0.45;
+}
+.tutorial-farm-chip {
+  position: absolute;
+  left: 50%;
+  top: max(56px, calc(var(--safe-top) + 48px));
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  background: rgba(0, 12, 18, 0.72);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+}
+.tutorial-farm-chip .tfc-label {
+  color: var(--cyan);
+  opacity: 0.75;
+}
+.tutorial-farm-chip .tfc-val {
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+@media (max-height: 420px) {
+  .hud-vitals {
+    width: min(220px, 40vw);
+    bottom: max(6px, var(--hud-pad-bottom));
+    padding: 4px 8px;
+  }
+  .hud-vital-bar { height: 5px; }
 }
 .hud-center-stack .blocks {
   font-size: 10px;
