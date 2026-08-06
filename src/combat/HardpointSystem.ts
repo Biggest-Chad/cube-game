@@ -10,11 +10,11 @@ import type { CubeManager } from '../cube/CubeManager';
 import type { PlayerStats } from '../progression/TechTree';
 import { bus } from '../core/EventBus';
 
-/** Local offsets under ship chin / wings for 3 hardpoints. */
+/** Local offsets — wing hardpoints sit under the wings like fighter pylons. */
 const SLOT_LOCAL: THREE.Vector3[] = [
-  new THREE.Vector3(0.22, -0.14, -0.55),
-  new THREE.Vector3(-0.22, -0.14, -0.55),
-  new THREE.Vector3(0, -0.18, -0.35),
+  new THREE.Vector3(0.62, -0.16, 0.08), // right wing
+  new THREE.Vector3(-0.62, -0.16, 0.08), // left wing
+  new THREE.Vector3(0, -0.2, -0.28), // center belly
 ];
 
 export class HardpointSystem {

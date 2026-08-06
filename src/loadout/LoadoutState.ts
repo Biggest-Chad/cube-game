@@ -40,11 +40,11 @@ export class LoadoutState {
   hardpointUnlocks = 1;
   /** Equipped weapons, length MAX_HARDPOINTS */
   slots: Array<WeaponInstance | null> = [null, null, null];
-  /** Unlocked weapon def ids (owned catalog) — Arc Beam is shop-purchased, not free */
+  /** Unlocked weapon def ids (owned catalog) — shop-purchased, not free */
   ownedWeapons = new Set<string>();
 
   constructor() {
-    // Empty catalog until player buys Arc Beam (or other modules) in the shop
+    // Empty catalog until player buys Rocket Pod / other modules in the shop
   }
 
   static default(): LoadoutState {

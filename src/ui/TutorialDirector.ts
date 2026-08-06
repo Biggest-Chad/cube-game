@@ -1,7 +1,7 @@
 /**
  * Guided first-session tutorials:
  *  - Stage 1: orbit → aim → destroy → open shop → buy first DRONE (only)
- *  - Loadout: buy Arc Beam → equip (after stage 3 weapon unlock)
+ *  - Loadout: buy Rocket Pod → equip (after stage 3 weapon unlock)
  */
 export type TutorialId = 'stage1' | 'loadout';
 
@@ -90,7 +90,7 @@ const STAGE1_STEPS: TutorialStep[] = [
   {
     id: 'complete',
     title: 'WINGMAN ONLINE',
-    body: 'Tutorial complete. Your drone mines with you. Loadout weapons unlock from Sector 3 — master the main gun and upgrades first.',
+    body: 'Tutorial complete. Your drone mines with you. Rocket Pods unlock from Sector 3 — master the main gun and upgrades first.',
     advance: 'tap',
     cta: 'ENGAGE',
   },
@@ -100,14 +100,14 @@ const LOADOUT_STEPS: TutorialStep[] = [
   {
     id: 'loadout_intro',
     title: 'HARDPOINT ONLINE',
-    body: 'Modular weapons are now available. Arc Beam is a continuous energy lance with bounce upgrades.',
+    body: 'Modular weapons are online. Rocket Pods drop from under the wings, ignite, and smash lattice clusters.',
     advance: 'tap',
     cta: 'CONTINUE',
   },
   {
     id: 'loadout_buy',
-    title: 'ACQUIRE ARC BEAM',
-    body: 'Open SHOP → LOADOUTS and purchase Arc Beam with Fragments. Equip it to Hardpoint 1.',
+    title: 'ACQUIRE ROCKET POD',
+    body: 'Open SHOP → LOADOUTS and purchase Rocket Pod with Fragments. Equip it to Hardpoint 1.',
     highlight: '#btn-tech',
     advance: 'weapon_owned',
     cta: 'OPEN SHOP',
@@ -115,13 +115,13 @@ const LOADOUT_STEPS: TutorialStep[] = [
   {
     id: 'loadout_equip',
     title: 'EQUIP',
-    body: 'In LOADOUTS, select Hardpoint 1 and equip Arc Beam. Hold fire to stream the beam.',
+    body: 'In LOADOUTS, select Hardpoint 1 and equip Rocket Pod. Auto-fire releases heavy rockets from the wings.',
     advance: 'weapon_equipped',
   },
   {
     id: 'loadout_done',
-    title: 'BEAM ARMED',
-    body: 'Upgrade bounce & refract branches later to ricochet energy across the lattice.',
+    title: 'PODS ARMED',
+    body: 'Upgrade Payload & Barrage branches later for bigger warheads and multi-rocket volleys.',
     advance: 'tap',
     cta: 'GOT IT',
   },
@@ -191,7 +191,7 @@ export class TutorialDirector {
     this.begin('stage1', STAGE1_STEPS);
   }
 
-  /** Call when player can afford Arc Beam and doesn't own it (stage 3+). */
+  /** Call when player can afford Rocket Pod and doesn't own it (stage 3+). */
   tryStartLoadout(): void {
     if (this.loadoutDone || this.active || this.pendingLoadout) return;
     if (this.stage1Done) {

@@ -1,6 +1,6 @@
 /**
- * Weapon roster — Arc Beam starter + 5 modular families.
- * First hardpoint weapon (Arc Beam) is a shop purchase continuous beam.
+ * Weapon roster — Rocket Pod is the first modular loadout unlock (stage 3+).
+ * Arc Beam and other families unlock later.
  */
 
 export type WeaponFamily =
@@ -87,7 +87,7 @@ export interface WeaponDef {
 
 const defaultExtras = { bounceCount: 0, penetration: 0, spread: 0 };
 
-/** Starter hardpoint weapon — continuous beam, shop-purchased */
+/** Continuous beam — second modular unlock */
 const arcBeam: WeaponDef = {
   id: 'pulse_laser',
   name: 'Arc Beam',
@@ -97,8 +97,7 @@ const arcBeam: WeaponDef = {
   color: 0xff00aa,
   colorCss: '#ff00aa',
   tags: ['sustained', 'hitscan', 'beam'],
-  // Available from stage 3 onward — learn main gun + drones first
-  unlock: { type: 'shop', costFragments: 120, minLevel: 3 },
+  unlock: { type: 'shop', costFragments: 200, minLevel: 4 },
   baseStats: {
     damage: 9,
     fireRate: 10,
@@ -186,32 +185,35 @@ const arcBeam: WeaponDef = {
   ],
 };
 
+/** First modular loadout weapon — wing-mounted rocket pods */
 const rocket: WeaponDef = {
   id: 'rocket_pod',
   name: 'Rocket Pod',
   family: 'rocket',
-  description: 'Dumb-fire splash rockets. Clears clusters, slow travel.',
+  description:
+    'Heavy dumb-fire rockets. Drop from the wings, ignite, and smash clusters with punchy splash.',
   color: 0xff6622,
   colorCss: '#ff6622',
-  tags: ['splash', 'burst'],
-  unlock: { type: 'shop', costFragments: 280, minLevel: 3 },
+  tags: ['splash', 'burst', 'first-loadout'],
+  // First hardpoint weapon — stage 3+
+  unlock: { type: 'shop', costFragments: 140, minLevel: 3 },
   baseStats: {
-    damage: 38,
-    fireRate: 1.4,
-    projectileSpeed: 42,
-    range: 90,
-    splashRadius: 2.2,
-    splashFalloff: 0.45,
-    armorPierce: 0.1,
-    critChance: 0.04,
-    critMult: 1.75,
-    heatPerShot: 0.14,
+    damage: 58,
+    fireRate: 0.85,
+    projectileSpeed: 36,
+    range: 95,
+    splashRadius: 3.1,
+    splashFalloff: 0.42,
+    armorPierce: 0.12,
+    critChance: 0.05,
+    critMult: 1.85,
+    heatPerShot: 0.2,
     heatCapacity: 1,
-    heatCoolRate: 0.28,
+    heatCoolRate: 0.26,
     chargeTime: 0,
     projectileCount: 1,
     homing: 0,
-    burstSize: 3,
+    burstSize: 2,
     ...defaultExtras,
   },
   branches: [
@@ -597,7 +599,8 @@ const torpedo: WeaponDef = {
   ],
 };
 
-export const WEAPONS: WeaponDef[] = [arcBeam, rocket, missile, rail, flak, torpedo];
+/** Rocket Pod listed first — primary early loadout unlock. */
+export const WEAPONS: WeaponDef[] = [rocket, arcBeam, missile, rail, flak, torpedo];
 
 export const WEAPON_BY_ID: Record<string, WeaponDef> = Object.fromEntries(
   WEAPONS.map((w) => [w.id, w])

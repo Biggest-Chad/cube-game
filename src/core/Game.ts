@@ -427,10 +427,9 @@ export class Game {
 
     this.settingsUI.onClose = () => {
       this.settingsUI.hide();
-      if (this.pendingReturnMode === 'playing' && this.cube.aliveBlocks > 0) {
-        this.mode = 'playing';
-        this.hud.setVisible(true);
-        this.hud.setCrosshairVisible(true);
+      // Never drop into combat from menu demo cube (aliveBlocks > 0 on menu)
+      if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
+        this.resumeGameplayFromShop();
       } else {
         this.showMenu();
       }
@@ -441,6 +440,7 @@ export class Game {
       this.applyGraphics(q, false);
       this.persist();
       this.audio.playUi();
+      // Stay on settings screen — do not change mode / camera
     };
     this.settingsUI.onMuteChange = (m) => {
       this.audio.setMuted(m);
@@ -496,7 +496,17 @@ export class Game {
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
-    this.pendingReturnMode = this.cube.aliveBlocks > 0 ? 'playing' : 'menu';
+    // Capture return BEFORE switching mode. Menu demo has a live cube, so
+    // aliveBlocks alone must not mean "resume combat".
+    const prev = this.mode;
+    const fromCombat =
+      !this.menuDemoActive &&
+      (prev === 'playing' ||
+        prev === 'levelclear' ||
+        prev === 'intro' ||
+        (prev === 'settings' && this.pendingReturnMode === 'playing') ||
+        (prev === 'tech' && this.pendingReturnMode === 'playing'));
+    this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
     this.mode = 'settings';
     this.hud.setVisible(false);
     this.settingsUI.show({
@@ -842,8 +852,8 @@ export class Game {
       canAffordDrone && !this.shopHintShown && !this.tutorial.isActive;
     const firstWeapon =
       !!weapon &&
-      weapon.id === 'pulse_laser' &&
-      !this.loadout.isOwned('pulse_laser') &&
+      weapon.id === 'rocket_pod' &&
+      !this.loadout.isOwned('rocket_pod') &&
       !this.save.data.tutorialLoadoutDone &&
       this.save.data.highestLevel >= 3;
 
@@ -853,7 +863,7 @@ export class Game {
         'Ally Protocol ready — 150 FRAG. Open SHOP and buy your first AI drone.';
     } else if (firstWeapon && weapon) {
       const c = weaponUnlockCost(weapon);
-      hint = `Arc Beam ready — ${c.fragments} FRAG. Open SHOP → LOADOUTS for your first hardpoint weapon.`;
+      hint = `Rocket Pod ready — ${c.fragments} FRAG. Open SHOP → LOADOUTS for your first hardpoint weapon.`;
       this.tutorial.tryStartLoadout();
     } else if (rec && shopVisible) {
       hint = `You can buy “${rec.name}” (${rec.cost} ${
@@ -1123,7 +1133,13 @@ export class Game {
     this.syncLoadoutToSave();
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
     this.audio.playPurchase();
-    this.toast(`${defId === 'pulse_laser' ? 'ARC BEAM' : 'WEAPON'} ACQUIRED`);
+    this.toast(
+      defId === 'rocket_pod'
+        ? 'ROCKET POD ACQUIRED'
+        : defId === 'pulse_laser'
+          ? 'ARC BEAM ACQUIRED'
+          : 'WEAPON ACQUIRED'
+    );
     this.refreshShopPrompt();
     this.persist();
     return true;
@@ -1676,8 +1692,8 @@ export class Game {
             this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
           const canAffordDrone =
             !ownsDrone && this.currency.dataFragments >= 150;
-          const arcCost = this.loadout.weaponBuyCost(
-            'pulse_laser',
+          const rocketCost = this.loadout.weaponBuyCost(
+            'rocket_pod',
             this.save.data.highestLevel
           );
           this.tutorial.update(dt, {
@@ -1686,10 +1702,12 @@ export class Game {
             blocksDestroyedSession: this.sessionBlocksDestroyed,
             shopOpen: this.shopOpen,
             purchasedThisSession: this.sessionPurchased,
-            ownsArcBeam: this.loadout.isOwned('pulse_laser'),
+            // First loadout weapon is Rocket Pod (field name kept for tutorial API)
+            ownsArcBeam: this.loadout.isOwned('rocket_pod'),
             hasEquippedWeapon: this.loadout.allDerived().length > 0,
             canAffordShop: canAffordDrone || ownsDrone,
-            canAffordArcBeam: !!arcCost && this.currency.dataFragments >= arcCost.fragments,
+            canAffordArcBeam:
+              !!rocketCost && this.currency.dataFragments >= rocketCost.fragments,
             canAffordDrone,
             ownsDrone,
             fragments: this.currency.dataFragments,
