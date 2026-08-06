@@ -1,23 +1,38 @@
 export class MenuUI {
   private root: HTMLElement;
+  private ascensionTier = 0;
+  private coreEnergy = 0;
+
   onPlay: (() => void) | null = null;
   onTech: (() => void) | null = null;
   onLevels: (() => void) | null = null;
   onLoadout: (() => void) | null = null;
   onSettings: (() => void) | null = null;
+  onResearch: (() => void) | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
     this.renderMain();
   }
 
+  setMeta(ascensionTier: number, coreEnergy: number): void {
+    this.ascensionTier = ascensionTier;
+    this.coreEnergy = coreEnergy;
+  }
+
   private renderMain(): void {
+    const ascLabel =
+      this.ascensionTier > 0
+        ? `Ascension Tier ${this.ascensionTier}`
+        : 'Ascension Tier 0 · Evolve to rise';
     this.root.innerHTML = `
       <div class="menu-screen interactive menu-landscape">
         <div class="menu-left-panel ui-enter">
           <div class="menu-brand">
             <div class="menu-title">THE CUBE</div>
             <div class="menu-sub">Destroy · Orbit · Ascend</div>
+            <div class="menu-asc-badge" id="menu-asc">${ascLabel}</div>
+            <div class="menu-core-line">◆ ${Math.floor(this.coreEnergy)} CORE</div>
           </div>
           <div class="menu-actions">
             <button class="menu-btn menu-engage primary ui-btn" id="m-play" type="button">
@@ -31,6 +46,9 @@ export class MenuUI {
               </button>
               <button class="menu-btn menu-subbtn ui-btn" id="m-tech" type="button">
                 <span class="menu-btn-label">Shop</span>
+              </button>
+              <button class="menu-btn menu-subbtn ui-btn" id="m-research" type="button">
+                <span class="menu-btn-label">Lattice</span>
               </button>
               <button class="menu-btn menu-subbtn ui-btn" id="m-loadout" type="button">
                 <span class="menu-btn-label">Loadout</span>
@@ -56,6 +74,7 @@ export class MenuUI {
     this.root.querySelector('#m-levels')?.addEventListener('click', () => this.onLevels?.());
     this.root.querySelector('#m-loadout')?.addEventListener('click', () => this.onLoadout?.());
     this.root.querySelector('#m-settings')?.addEventListener('click', () => this.onSettings?.());
+    this.root.querySelector('#m-research')?.addEventListener('click', () => this.onResearch?.());
   }
 
   show(): void {

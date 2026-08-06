@@ -709,10 +709,14 @@ export function computeWeaponStats(
   return { ...s, flags };
 }
 
+/**
+ * Hardpoint bay unlocks — gated by Ascension (Evolve), paid with Core Energy.
+ * HP1 free; HP2 needs Ascension ≥ 1; HP3 needs Ascension ≥ 2.
+ */
 export const HARDPOINT_UNLOCK = [
-  { slot: 0, costCore: 0, minLevel: 1 },
-  { slot: 1, costCore: 160, minLevel: 1 },
-  { slot: 2, costCore: 480, minLevel: 1 },
+  { slot: 0, costCore: 0, minLevel: 1, minAscension: 0 },
+  { slot: 1, costCore: 160, minLevel: 1, minAscension: 1 },
+  { slot: 2, costCore: 480, minLevel: 1, minAscension: 2 },
 ] as const;
 
 export const MAX_HARDPOINTS = 3;

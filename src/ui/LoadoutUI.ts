@@ -23,6 +23,7 @@ export class LoadoutUI {
   private loadout: LoadoutState | null = null;
   private currency: Currency | null = null;
   private highestLevel = 1;
+  private ascensionTier = 0;
   private selectedSlot = 0;
 
   constructor(root: HTMLElement) {
@@ -32,11 +33,13 @@ export class LoadoutUI {
   show(
     loadout: LoadoutState,
     currency: Currency,
-    highestLevel: number
+    highestLevel: number,
+    ascensionTier = 0
   ): void {
     this.loadout = loadout;
     this.currency = currency;
     this.highestLevel = highestLevel;
+    this.ascensionTier = ascensionTier;
     loadout.syncLevelUnlocks(highestLevel);
     this.root.classList.remove('panel-hidden');
     this.render();
@@ -65,12 +68,12 @@ export class LoadoutUI {
           <div class="loadout-slot-idx">HP${i + 1}</div>
           <div class="loadout-slot-name">${
             !unlocked
-              ? `LOCKED · L${rule.minLevel} · ${rule.costCore} CORE`
+              ? `LOCKED · ASC ${rule.minAscension}+ · ${rule.costCore} CORE`
               : def
                 ? def.name
                 : 'EMPTY'
           }</div>
-          <div class="loadout-slot-sub">${unlocked ? (def ? def.family : 'Select weapon') : 'Milestone unlock'}</div>
+          <div class="loadout-slot-sub">${unlocked ? (def ? def.family : 'Select weapon') : 'Evolve to unlock'}</div>
         </button>
       `;
     }
@@ -81,16 +84,17 @@ export class LoadoutUI {
 
     if (!unlocked) {
       const rule = HARDPOINT_UNLOCK[slot];
-      const can =
-        L.canUnlockHardpoint(slot, this.highestLevel, C.coreEnergy) ||
-        (slot === L.hardpointUnlocks &&
-          this.highestLevel >= rule.minLevel &&
-          C.coreEnergy >= rule.costCore);
+      const can = L.canUnlockHardpoint(
+        slot,
+        this.highestLevel,
+        C.coreEnergy,
+        this.ascensionTier
+      );
       detail = `
         <div class="loadout-detail">
           <h3>Hardpoint ${slot + 1}</h3>
-          <p>Unlock at sector ${rule.minLevel}+ for <strong>${rule.costCore} Core Energy</strong>.</p>
-          <p class="loadout-hint">You have ${Math.floor(C.coreEnergy)} CORE · highest sector ${this.highestLevel}</p>
+          <p>Requires <strong>Ascension ${rule.minAscension}+</strong> and <strong>${rule.costCore} Core Energy</strong>.</p>
+          <p class="loadout-hint">You have ${Math.floor(C.coreEnergy)} CORE · Ascension ${this.ascensionTier}</p>
           <button type="button" class="menu-btn primary" id="hp-unlock" ${can ? '' : 'disabled'}>
             Unlock Hardpoint · ${rule.costCore} CORE
           </button>
@@ -167,7 +171,14 @@ export class LoadoutUI {
         paid = true;
       }
       if (!paid) return;
-      if (this.loadout.unlockHardpoint(slot, this.highestLevel) < 0) return;
+      // Game path unlocks inside onUnlockHardpoint; only unlock here for fallback pay
+      if (!this.onUnlockHardpoint) {
+        if (
+          this.loadout.unlockHardpoint(slot, this.highestLevel, this.ascensionTier) < 0
+        ) {
+          return;
+        }
+      }
       this.onChanged?.();
       this.render();
     });

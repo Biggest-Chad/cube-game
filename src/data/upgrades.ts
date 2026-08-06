@@ -278,28 +278,8 @@ export const UPGRADES: UpgradeNodeDef[] = [
     { id: 'off_crit_4', name: 'Overcharge', description: '+6% crit chance (soft cap)', cost: 1300, effects: { critChance: 0.06 } },
   ]),
 
-  // ═══════════════════════════════════════════
-  // LOADOUTS — hardpoint bays (weapons bought in Loadouts tab UI)
-  // ═══════════════════════════════════════════
-  ...chainNodes('hardpoint', 'loadouts', [
-    {
-      id: 'hardpoint_2',
-      name: 'Hardpoint Bay II',
-      description: 'Unlock 2nd weapon hardpoint',
-      cost: 80,
-      costCurrency: 'coreEnergy',
-      effects: { hardpointAdd: 1 },
-      extraPrereq: ['off_damage_1'],
-    },
-    {
-      id: 'hardpoint_3',
-      name: 'Hardpoint Bay III',
-      description: 'Unlock 3rd weapon hardpoint',
-      cost: 200,
-      costCurrency: 'coreEnergy',
-      effects: { hardpointAdd: 1 },
-    },
-  ]),
+  // LOADOUTS tab: hardpoint bays unlock via Ascension (Evolve) + Core Energy in the loadout UI.
+  // Weapon catalog / branches live in ShopUI loadout panel — no fragment hardpoint chain here.
 
   // ═══════════════════════════════════════════
   // DRONES

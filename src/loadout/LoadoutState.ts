@@ -137,7 +137,12 @@ export class LoadoutState {
     return this.ownedWeapons.has(id);
   }
 
-  canUnlockHardpoint(slot: number, highestLevel: number, coreEnergy: number): boolean {
+  canUnlockHardpoint(
+    slot: number,
+    highestLevel: number,
+    coreEnergy: number,
+    ascensionTier = 0
+  ): boolean {
     if (slot < 0 || slot >= MAX_HARDPOINTS) return false;
     if (slot < this.hardpointUnlocks) return false;
     // Must unlock in order
@@ -145,6 +150,7 @@ export class LoadoutState {
     const rule = HARDPOINT_UNLOCK[slot];
     if (!rule) return false;
     if (highestLevel < rule.minLevel) return false;
+    if (ascensionTier < rule.minAscension) return false;
     if (coreEnergy < rule.costCore) return false;
     return true;
   }
@@ -157,14 +163,19 @@ export class LoadoutState {
     return HARDPOINT_UNLOCK[slot]?.minLevel ?? 99;
   }
 
+  hardpointMinAscension(slot: number): number {
+    return HARDPOINT_UNLOCK[slot]?.minAscension ?? 99;
+  }
+
   /**
    * Unlock next hardpoint. Caller must have already spent Core Energy.
    * Returns new unlock count or -1 on failure.
    */
-  unlockHardpoint(slot: number, highestLevel: number): number {
+  unlockHardpoint(slot: number, highestLevel: number, ascensionTier = 0): number {
     if (slot !== this.hardpointUnlocks || slot >= MAX_HARDPOINTS) return -1;
     const rule = HARDPOINT_UNLOCK[slot];
     if (!rule || highestLevel < rule.minLevel) return -1;
+    if (ascensionTier < rule.minAscension) return -1;
     this.hardpointUnlocks = slot + 1;
     bus.emit('hardpoint-unlocked', { slot, hardpointUnlocks: this.hardpointUnlocks });
     return this.hardpointUnlocks;

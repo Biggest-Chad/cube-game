@@ -1,6 +1,11 @@
 import { SAVE_KEY, SAVE_VERSION } from '../data/constants';
 import { HARDPOINTS_START, VITALS_BASE } from '../data/balance';
 import {
+  BASELINE_IDENTITY,
+  baselineFromTier,
+  type AscensionBaseline,
+} from '../data/evolve';
+import {
   DEFAULT_GRAPHICS_QUALITY,
   normalizeGraphicsQuality,
   type GraphicsQuality,
@@ -57,6 +62,17 @@ export interface SaveData {
   // --- tutorials ---
   tutorialStage1Done: boolean;
   tutorialLoadoutDone: boolean;
+
+  // --- Evolve / Ascension + Research Lattice ---
+  /** Times evolved (0 = no prestige). */
+  ascensionTier: number;
+  lifetimeEvolves: number;
+  /** Permanent baseline mults from Ascension (recomputed from tier if missing). */
+  baseline: AscensionBaseline;
+  /** Research Lattice node ids owned (Core Energy meta tree). */
+  researchOwned: string[];
+  /** IAP / cosmetic: cyan trail unlocked outside research ids. */
+  cosmeticTrail: boolean;
 }
 
 export function defaultSave(): SaveData {
@@ -92,6 +108,12 @@ export function defaultSave(): SaveData {
 
     tutorialStage1Done: false,
     tutorialLoadoutDone: false,
+
+    ascensionTier: 0,
+    lifetimeEvolves: 0,
+    baseline: { ...BASELINE_IDENTITY },
+    researchOwned: [],
+    cosmeticTrail: false,
   };
 }
 
@@ -101,6 +123,23 @@ function todayKey(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function sanitizeCurrency(raw: unknown, fallback = 0): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return fallback;
+  return Math.max(0, Math.floor(raw));
+}
+
+function normalizeBaseline(raw: unknown): AscensionBaseline {
+  const b = { ...BASELINE_IDENTITY };
+  if (!raw || typeof raw !== 'object') return b;
+  const o = raw as Partial<AscensionBaseline>;
+  for (const k of Object.keys(b) as (keyof AscensionBaseline)[]) {
+    if (typeof o[k] === 'number' && (o[k] as number) > 0 && Number.isFinite(o[k] as number)) {
+      b[k] = o[k] as number;
+    }
+  }
+  return b;
 }
 
 function normalizeLoadout(raw: unknown): Array<SaveLoadoutSlot | null> {
@@ -165,7 +204,25 @@ export class SaveSystem {
         adsDayKey:
           typeof parsed.adsDayKey === 'string' ? parsed.adsDayKey : base.adsDayKey,
         graphicsQuality: normalizeGraphicsQuality(parsed.graphicsQuality),
+        ascensionTier:
+          typeof parsed.ascensionTier === 'number' && parsed.ascensionTier >= 0
+            ? Math.floor(parsed.ascensionTier)
+            : base.ascensionTier,
+        lifetimeEvolves:
+          typeof parsed.lifetimeEvolves === 'number' && parsed.lifetimeEvolves >= 0
+            ? Math.floor(parsed.lifetimeEvolves)
+            : base.lifetimeEvolves,
+        baseline: normalizeBaseline(parsed.baseline),
+        researchOwned: Array.isArray(parsed.researchOwned)
+          ? parsed.researchOwned.filter((id): id is string => typeof id === 'string')
+          : base.researchOwned,
+        cosmeticTrail: !!parsed.cosmeticTrail,
+        dataFragments: sanitizeCurrency(parsed.dataFragments, base.dataFragments),
+        coreEnergy: sanitizeCurrency(parsed.coreEnergy, base.coreEnergy),
+        prestigeTokens: sanitizeCurrency(parsed.prestigeTokens, base.prestigeTokens),
       };
+      // Always fold baseline from tier (ignore tampered mult blobs)
+      this.data.baseline = baselineFromTier(this.data.ascensionTier);
       this.rolloverAdsIfNeeded();
       return this.data;
     } catch {

@@ -4,8 +4,16 @@ import {
   type UpgradeEffect,
   type UpgradeNodeDef,
 } from '../data/upgrades';
+import {
+  BASELINE_IDENTITY,
+  type AscensionBaseline,
+} from '../data/evolve';
 import { bus } from '../core/EventBus';
 import type { Currency } from './Currency';
+import {
+  defaultResearchBonuses,
+  type ResearchBonuses,
+} from './ResearchTree';
 
 export interface PlayerStats {
   /** Final folded mult used by Weapon / systems. */
@@ -195,9 +203,29 @@ function fold(stats: PlayerStats, acc: Accumulators): void {
 export class TechTree {
   owned = new Set<string>();
   stats: PlayerStats = defaultStats();
+  /** Permanent Ascension baseline (does not reset on combat retrain). */
+  baseline: AscensionBaseline = { ...BASELINE_IDENTITY };
+  /** Research Lattice permanent bonuses. */
+  research: ResearchBonuses = defaultResearchBonuses();
 
   load(ids: string[]): void {
     this.owned = new Set(ids);
+    this.recompute();
+  }
+
+  setBaseline(b: AscensionBaseline): void {
+    this.baseline = { ...b };
+    this.recompute();
+  }
+
+  setResearch(r: ResearchBonuses): void {
+    this.research = { ...r };
+    this.recompute();
+  }
+
+  /** Clear combat shop ownership only (Evolve retrain). */
+  resetCombatUpgrades(): void {
+    this.owned.clear();
     this.recompute();
   }
 
@@ -209,7 +237,44 @@ export class TechTree {
       if (node) applyEffect(this.stats, acc, node.effects);
     }
     fold(this.stats, acc);
+    this.applyMetaMultipliers();
     bus.emit('stats-changed', this.stats);
+  }
+
+  /**
+   * final = shop * ascension baseline * research (design §8).
+   * Hull/shield adds from research applied as flat adds after mults.
+   */
+  private applyMetaMultipliers(): void {
+    const bl = this.baseline;
+    const rs = this.research;
+    this.stats.damageMul = Math.min(
+      STAT_CAPS.damageMul,
+      this.stats.damageMul * bl.damageMul * rs.damageMul
+    );
+    this.stats.droneDamageMul *= bl.droneDamageMul * rs.droneDamageMul;
+    this.stats.orbitSpeedMul = Math.min(
+      STAT_CAPS.orbitSpeedMul,
+      this.stats.orbitSpeedMul * bl.orbitSpeedMul * rs.orbitSpeedMul
+    );
+    this.stats.fragmentMul = Math.min(
+      STAT_CAPS.fragmentMul,
+      this.stats.fragmentMul * rs.fragmentMul
+    );
+    this.stats.idleRateMul *= bl.idleRateMul * rs.idleRateMul;
+    this.stats.critChance = Math.min(
+      STAT_CAPS.critChance,
+      this.stats.critChance + rs.critChanceAdd
+    );
+    // Hull / shield: (BASE + shop adds) * baseline * research, then flat research adds.
+    // ShipVitals uses BASE_HULL=100, BASE_SHIELD=40 + max*Add.
+    const hullTotal = 100 + this.stats.maxHullAdd;
+    const shieldTotal = 40 + this.stats.maxShieldAdd;
+    this.stats.maxHullAdd =
+      Math.round(hullTotal * bl.hullMul * rs.hullMul - 100) + rs.maxHullAdd;
+    this.stats.maxShieldAdd =
+      Math.round(shieldTotal * bl.shieldMul * rs.shieldMul - 40) + rs.maxShieldAdd;
+    this.stats.armorRatingAdd += rs.armorRatingAdd;
   }
 
   isOwned(id: string): boolean {

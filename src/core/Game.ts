@@ -26,6 +26,7 @@ import { LoadoutState } from '../loadout/LoadoutState';
 import { DroneManager } from '../drones/DroneManager';
 import { Currency } from '../progression/Currency';
 import { TechTree } from '../progression/TechTree';
+import { ResearchTree } from '../progression/ResearchTree';
 import { IdleSimulator } from '../progression/IdleSimulator';
 import { ParticlePool } from '../vfx/ParticlePool';
 import { ShatterSystem } from '../vfx/ShatterSystem';
@@ -37,9 +38,11 @@ import { AmbientEnvironment } from '../world/AmbientEnvironment';
 import { AudioEngine } from '../audio/AudioEngine';
 import { AdService } from '../ads/AdService';
 import { DummyAdProvider } from '../ads/DummyAdProvider';
+import { IapService } from '../platform/IapService';
 import { HUD } from '../ui/HUD';
 import { MenuUI } from '../ui/MenuUI';
 import { ShopUI } from '../ui/ShopUI';
+import { ResearchUI } from '../ui/ResearchUI';
 import { LevelSelectUI } from '../ui/LevelSelectUI';
 import { LoadoutUI } from '../ui/LoadoutUI';
 import { SettingsUI } from '../ui/SettingsUI';
@@ -47,6 +50,13 @@ import { AdsOfferUI } from '../ui/AdsOfferUI';
 import { TutorialDirector } from '../ui/TutorialDirector';
 import { ScreenTransition } from '../ui/ScreenTransition';
 import { cheapestPurchasableWeapon, weaponUnlockCost } from '../data/weapons';
+import {
+  baselineFromTier,
+  canEvolve,
+  evolveCoreGrant,
+  evolveCost,
+} from '../data/evolve';
+import { getResearchNode } from '../data/research';
 
 type Mode =
   | 'menu'
@@ -55,6 +65,7 @@ type Mode =
   | 'playing'
   | 'levelclear'
   | 'tech'
+  | 'research'
   | 'levels'
   | 'loadout'
   | 'settings'
@@ -84,6 +95,7 @@ export class Game {
   private input = new InputController();
   private currency = new Currency();
   private tech = new TechTree();
+  private research = new ResearchTree();
   private idle = new IdleSimulator();
   private particles: ParticlePool;
   private shatter: ShatterSystem;
@@ -92,12 +104,14 @@ export class Game {
   private cinematic: CinematicIntro | null = null;
   private audio = new AudioEngine();
   private ads = new AdService(new DummyAdProvider());
+  private iap = new IapService();
   private readonly _muzzle = new THREE.Vector3();
   private readonly _aimDir = new THREE.Vector3();
 
   private hud: HUD;
   private menu: MenuUI;
   private shopUI: ShopUI;
+  private researchUI: ResearchUI;
   private levelUI: LevelSelectUI;
   private loadoutUI: LoadoutUI;
   private settingsUI: SettingsUI;
@@ -144,6 +158,12 @@ export class Game {
   private reviveImmunity = 0;
   /** Runtime VFX scale 0.35–1 from graphics tier + adaptive FPS. */
   private vfxScale = 1;
+  /** Mutex for async Core ad / IAP claims. */
+  private corePurchaseLock = false;
+  /** Once-per-clear Lattice overshield available. */
+  private overshieldReady = false;
+  /** Scan-pulse damage buff timer (seconds remaining). */
+  private scanPulseTimer = 0;
   private readonly _aimPoint = new THREE.Vector3();
   private readonly _ndc = new THREE.Vector3();
 
@@ -228,6 +248,7 @@ export class Game {
     this.hud = new HUD(document.getElementById('hud-root')!);
     this.menu = new MenuUI(document.getElementById('menu-root')!);
     this.shopUI = new ShopUI(document.getElementById('tech-tree-root')!);
+    this.researchUI = new ResearchUI(document.getElementById('research-root')!);
     this.levelUI = new LevelSelectUI(document.getElementById('level-select-root')!);
     this.loadoutUI = new LoadoutUI(document.getElementById('loadout-root')!);
     this.settingsUI = new SettingsUI(document.getElementById('settings-root')!);
@@ -298,6 +319,7 @@ export class Game {
     this.menu.onLevels = () => this.openLevels();
     this.menu.onLoadout = () => this.openLoadout();
     this.menu.onSettings = () => this.openSettings();
+    this.menu.onResearch = () => this.openResearch();
 
     const els = this.hud.elements;
     els.btnTech.addEventListener('click', () => this.openTech());
@@ -353,14 +375,25 @@ export class Game {
       return true;
     };
     this.shopUI.onUnlockHardpoint = (slot) => {
-      const cost = this.loadout.hardpointCost(slot);
-      const discount = this.ads.consumeHardpointDiscount();
-      const finalCost = Math.round(cost * (1 - discount));
-      if (!this.currency.spendCoreEnergy(finalCost)) return false;
-      if (this.loadout.unlockHardpoint(slot, this.save.data.highestLevel) < 0) {
-        this.currency.coreEnergy += finalCost;
+      const asc = this.save.data.ascensionTier;
+      const minAsc = this.loadout.hardpointMinAscension(slot);
+      if (asc < minAsc) {
+        this.toast(`EVOLVE TO ASCENSION ${minAsc}`);
         return false;
       }
+      const cost = this.loadout.hardpointCost(slot);
+      // Peek discount; only consume after successful unlock
+      const discount = this.ads.pendingHardpointDiscount;
+      const finalCost = Math.round(cost * (1 - discount));
+      if (this.currency.coreEnergy < finalCost) return false;
+      if (!this.currency.spendCoreEnergy(finalCost)) return false;
+      if (
+        this.loadout.unlockHardpoint(slot, this.save.data.highestLevel, asc) < 0
+      ) {
+        this.currency.addCoreEnergy(finalCost, 1);
+        return false;
+      }
+      this.ads.consumeHardpointDiscount();
       this.sessionPurchased = true;
       this.tutorial.notifyPurchase();
       this.hardpoints.celebrateUnlock(slot);
@@ -369,6 +402,76 @@ export class Game {
       this.persist();
       this.audio.playPurchase();
       return true;
+    };
+    this.shopUI.onEvolve = () => this.performEvolve();
+
+    this.researchUI.onClose = () => {
+      this.researchUI.hide();
+      this.showMenu();
+    };
+    this.researchUI.onPurchase = (nodeId) => {
+      const node = getResearchNode(nodeId);
+      if (!node) return false;
+      if (
+        !this.research.purchase(node, this.currency, this.save.data.ascensionTier)
+      ) {
+        return false;
+      }
+      this.tech.setResearch(this.research.bonuses);
+      if (this.research.bonuses.cosmeticTrail) {
+        this.save.data.cosmeticTrail = true;
+        this.applyCosmeticTrail();
+      }
+      this.applyStatsToSystems();
+      this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+      this.audio.playPurchase();
+      this.persist();
+      this.toast(`RESEARCH: ${node.name}`);
+      return true;
+    };
+    this.researchUI.onBuyIap = async (packId) => {
+      if (this.corePurchaseLock) return false;
+      this.corePurchaseLock = true;
+      try {
+        const { result, coreGranted, pack } = await this.iap.buyCorePack(packId);
+        if (result.status !== 'purchased' || !pack) {
+          this.toast('PURCHASE CANCELLED');
+          return false;
+        }
+        this.currency.addCoreEnergy(coreGranted, 1);
+        if (pack.bonusTrail) {
+          this.save.data.cosmeticTrail = true;
+          this.research.setExternalCosmeticTrail(true);
+          this.tech.setResearch(this.research.bonuses);
+          this.applyCosmeticTrail();
+        }
+        this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+        this.audio.playPurchase();
+        this.persist();
+        this.toast(`+${coreGranted} CORE`);
+        return true;
+      } finally {
+        this.corePurchaseLock = false;
+      }
+    };
+    this.researchUI.onWatchAdCore = async () => {
+      if (this.corePurchaseLock) return false;
+      this.corePurchaseLock = true;
+      try {
+        const { reward } = await this.ads.offer('core_energy');
+        if (!reward?.coreEnergy) {
+          this.toast('AD NOT AVAILABLE');
+          return false;
+        }
+        this.currency.addCoreEnergy(reward.coreEnergy, 1);
+        this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+        this.researchUI.setAdRemaining(this.ads.remaining('core_energy'));
+        this.persist();
+        this.toast(`+${reward.coreEnergy} CORE`);
+        return true;
+      } finally {
+        this.corePurchaseLock = false;
+      }
     };
 
     this.tutorial.onRequestShop = () => {
@@ -420,10 +523,23 @@ export class Game {
       this.persist();
     };
     this.loadoutUI.onUnlockHardpoint = (slot, cost) => {
-      const discount = this.ads.consumeHardpointDiscount();
+      const asc = this.save.data.ascensionTier;
+      if (asc < this.loadout.hardpointMinAscension(slot)) {
+        this.toast(`EVOLVE TO ASCENSION ${this.loadout.hardpointMinAscension(slot)}`);
+        return false;
+      }
+      const discount = this.ads.pendingHardpointDiscount;
       const finalCost = Math.round(cost * (1 - discount));
       if (!this.currency.spendCoreEnergy(finalCost)) return false;
+      if (this.loadout.unlockHardpoint(slot, this.save.data.highestLevel, asc) < 0) {
+        this.currency.addCoreEnergy(finalCost, 1);
+        return false;
+      }
+      this.ads.consumeHardpointDiscount();
       this.hardpoints.celebrateUnlock(slot);
+      this.hardpoints.rebuildFromLoadout();
+      this.syncLoadoutToSave();
+      this.persist();
       this.audio.playPurchase();
       return true;
     };
@@ -527,12 +643,75 @@ export class Game {
     const { reward } = await this.ads.offer(placement);
     if (!reward) return;
     if (reward.fragments) this.currency.addFragments(reward.fragments, 1);
+    if (reward.coreEnergy) this.currency.addCoreEnergy(reward.coreEnergy, 1);
     if (reward.fragmentMul) this.clearRewardMul = Math.max(this.clearRewardMul, reward.fragmentMul);
     if (reward.hullRestore) this.vitals.heal(this.vitals.maxHull * reward.hullRestore);
     if (reward.shieldFull) this.vitals.restoreShield(this.vitals.maxShield);
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
     this.persist();
     this.toast('AD REWARD APPLIED');
+  }
+
+  /** Evolve hull: spend FRAG, reset combat shop, permanent baseline, Core grant. */
+  private performEvolve(): boolean {
+    const tier = this.save.data.ascensionTier;
+    const check = canEvolve(
+      this.currency.dataFragments,
+      this.save.data.highestLevel,
+      tier
+    );
+    if (!check.ok) {
+      this.toast(check.reason?.toUpperCase() ?? 'CANNOT EVOLVE');
+      return false;
+    }
+    const cost = evolveCost(tier);
+    if (!this.currency.spendFragments(cost)) return false;
+
+    const newTier = tier + 1;
+    this.save.data.ascensionTier = newTier;
+    this.save.data.lifetimeEvolves = (this.save.data.lifetimeEvolves ?? 0) + 1;
+    this.save.data.baseline = baselineFromTier(newTier);
+    this.currency.prestigeTokens = newTier;
+
+    // Retrain combat shop only — keep weapons, branches, research
+    this.tech.resetCombatUpgrades();
+    this.tech.setBaseline(this.save.data.baseline);
+    this.tech.setResearch(this.research.bonuses);
+
+    const grant = evolveCoreGrant(newTier);
+    this.currency.addCoreEnergy(grant, 1);
+
+    this.applyStatsToSystems();
+    this.vitals.fullRestore();
+    this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+    this.shopUI.setLoadoutContext(
+      this.loadout,
+      this.save.data.highestLevel,
+      newTier
+    );
+    this.persist();
+    this.audio.playPurchase();
+    this.toast(`ASCENSION ${newTier} · +${grant} CORE · RETRAIN SHOP`);
+    bus.emit('evolved', { tier: newTier, coreGrant: grant });
+    return true;
+  }
+
+  private openResearch(): void {
+    void this.audio.resume();
+    this.audio.playUi();
+    this.menu.hide();
+    this.shopUI.hide();
+    this.levelUI.hide();
+    this.loadoutUI.hide();
+    this.settingsUI.hide();
+    this.mode = 'research';
+    this.hud.setVisible(false);
+    this.researchUI.show(
+      this.research,
+      this.currency,
+      this.save.data.ascensionTier,
+      this.ads.remaining('core_energy')
+    );
   }
 
   private wireEvents(): void {
@@ -675,10 +854,12 @@ export class Game {
     if (hit.died) this.beginShipDeath();
   }
 
-  /** 5s combat immunity after emergency repair revive. */
+  /** Combat immunity after emergency repair revive (base 5s + research IFF). */
   private grantReviveImmunity(seconds = 5): void {
-    this.reviveImmunity = Math.max(this.reviveImmunity, seconds);
-    this.toast(`IFF REBOOT · ${seconds.toFixed(0)}s IMMUNITY`);
+    const bonus = this.research.bonuses.reviveImmunityBonus ?? 0;
+    const total = seconds + bonus;
+    this.reviveImmunity = Math.max(this.reviveImmunity, total);
+    this.toast(`IFF REBOOT · ${total.toFixed(1)}s IMMUNITY`);
   }
 
   /** Explosive ship death → black fade → game-over card. */
@@ -847,10 +1028,7 @@ export class Game {
     this.vitals.syncFromStats(this.tech.stats);
     this.cameraCtrl.setTopSpeedMul(this.tech.stats.orbitSpeedMul);
     this.cameraCtrl.extendMaxRadius(this.tech.stats.zoomRangeAdd);
-    // Hardpoints from tech
-    if (this.tech.stats.hardpoints > this.loadout.hardpointUnlocks) {
-      this.loadout.hardpointUnlocks = Math.min(3, this.tech.stats.hardpoints);
-    }
+    // Hardpoints are Ascension + Core unlocks only (not combat shop).
     this.hardpoints.bindLoadout(this.loadout);
     this.drones.syncCount(this.tech.stats);
     this.updateHudVitals();
@@ -927,7 +1105,23 @@ export class Game {
   private loadProgress(): void {
     const data = this.save.load();
     this.currency.load(data.dataFragments, data.coreEnergy, data.prestigeTokens);
-    this.tech.load(data.ownedUpgrades);
+    // Drop legacy hardpoint shop nodes (now Ascension-gated Core unlocks)
+    const combatOwned = (data.ownedUpgrades ?? []).filter(
+      (id) => id !== 'hardpoint_2' && id !== 'hardpoint_3'
+    );
+    this.tech.load(combatOwned);
+
+    const tier = data.ascensionTier ?? 0;
+    const baseline = baselineFromTier(tier);
+    this.save.data.baseline = baseline;
+    this.save.data.ascensionTier = tier;
+    this.save.data.lifetimeEvolves = data.lifetimeEvolves ?? tier;
+    this.tech.setBaseline(baseline);
+
+    this.research.load(data.researchOwned ?? [], !!data.cosmeticTrail);
+    this.tech.setResearch(this.research.bonuses);
+    this.applyCosmeticTrail();
+
     this.currentLevelId = data.currentLevel;
     this.audio.setMuted(data.muted);
     this.audio.setVolume(data.masterVolume);
@@ -968,7 +1162,62 @@ export class Game {
     this.drones.syncCount(this.tech.stats);
 
     const offlineSec = this.idle.computeOffline(data.lastSaveTime, this.tech.stats);
-    if (offlineSec > 30) this.pendingIdle = offlineSec;
+    if (offlineSec > 30) {
+      if (this.research.bonuses.unlockAutoIdle) {
+        // Auto-Collect: flat FRAG drip on login (no cube required)
+        const rate = 0.15 * this.tech.stats.idleRateMul * 2.5;
+        const frags = Math.floor(offlineSec * rate);
+        if (frags > 0) {
+          const gained = this.currency.addFragments(frags, this.tech.stats.fragmentMul);
+          this.toast(`AUTO-COLLECT · +${gained} FRAG`);
+        }
+        this.pendingIdle = 0;
+      } else {
+        this.pendingIdle = offlineSec;
+      }
+    }
+  }
+
+  /** Cyan thruster trail when Lattice/IAP cosmetic is owned. */
+  private applyCosmeticTrail(): void {
+    if (!this.research.bonuses.cosmeticTrail) return;
+    this.ship.group.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mat = m.material;
+      if (mat instanceof THREE.MeshBasicMaterial && mat.color) {
+        // Brighten plume-like materials toward cyan
+        if (mat.transparent && (mat.opacity ?? 1) < 0.95) {
+          mat.color.setHex(0x00f0ff);
+        }
+      }
+      if (mat instanceof THREE.MeshStandardMaterial && mat.emissive) {
+        const e = mat.emissive.getHex();
+        if (e === 0x1488aa || e === 0xfff2c8) {
+          mat.emissive.setHex(0x00e8ff);
+        }
+      }
+    });
+  }
+
+  /** Lattice: once-per-clear overshield + optional scan pulse buff. */
+  private applyLatticeCombatBuffs(): void {
+    this.overshieldReady = this.research.bonuses.unlockOvershield;
+    this.scanPulseTimer = 0;
+    if (this.research.bonuses.unlockOvershield) {
+      const bonus = Math.max(25, this.vitals.maxShield * 0.35);
+      this.vitals.shield = Math.min(
+        this.vitals.maxShield + bonus,
+        this.vitals.shield + bonus
+      );
+      // Temporarily raise max so bonus isn't clipped next sync
+      this.vitals.maxShield += bonus;
+      this.toast('OVERSHIELD ONLINE');
+    }
+    if (this.research.bonuses.unlockScanPulse) {
+      this.scanPulseTimer = 12;
+      this.toast('SCAN PULSE · +25% DMG 12s');
+    }
   }
 
   private syncLoadoutToSave(): void {
@@ -995,6 +1244,12 @@ export class Game {
     this.save.data.shield = this.vitals.shield;
     this.save.data.maxShield = this.vitals.maxShield;
     this.save.data.armorRating = this.vitals.armorRating;
+    this.save.data.ascensionTier = this.save.data.ascensionTier ?? 0;
+    this.save.data.lifetimeEvolves = this.save.data.lifetimeEvolves ?? 0;
+    this.save.data.baseline = baselineFromTier(this.save.data.ascensionTier);
+    this.save.data.researchOwned = Array.from(this.research.owned);
+    this.save.data.cosmeticTrail =
+      !!this.save.data.cosmeticTrail || this.research.bonuses.cosmeticTrail;
     this.syncLoadoutToSave();
     const adSnap = this.ads.toJSON();
     this.save.data.adsDayKey = adSnap.day;
@@ -1011,6 +1266,7 @@ export class Game {
     this.hud.setIntro(false);
     this.reticle.setVisible(false);
     this.shopUI.hide();
+    this.researchUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.settingsUI.hide();
@@ -1025,6 +1281,7 @@ export class Game {
     if (this.effectiveQuality !== this.graphicsQuality) {
       this.applyGraphics(this.graphicsQuality, false);
     }
+    this.menu.setMeta(this.save.data.ascensionTier, this.currency.coreEnergy);
     this.menu.show();
     this.startMenuDemo();
   }
@@ -1075,6 +1332,7 @@ export class Game {
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.settingsUI.hide();
+    this.researchUI.hide();
     // Only resume combat if we opened shop from an active stage (not menu demo)
     const fromCombat =
       !this.menuDemoActive &&
@@ -1092,7 +1350,11 @@ export class Game {
     // Keep orbit camera frozen on ship (no auto-spin that desyncs chase)
     this.cameraCtrl.endCinematic();
     this.shopUI.setVitals(this.vitals.snapshot());
-    this.shopUI.setLoadoutContext(this.loadout, this.save.data.highestLevel);
+    this.shopUI.setLoadoutContext(
+      this.loadout,
+      this.save.data.highestLevel,
+      this.save.data.ascensionTier
+    );
     // Default to drones tab until first drone is owned
     const openTab = tab ?? (!ownsDrone ? 'drones' : undefined);
     this.shopUI.show(this.tech, this.currency, openTab);
@@ -1130,16 +1392,13 @@ export class Game {
       if (node.id === 'drone_unlock' || node.effects.unlockDrones) {
         this.tutorial.notifyDroneOwned();
       }
-      if (node.effects.hardpointAdd) {
-        this.loadout.hardpointUnlocks = Math.max(
-          this.loadout.hardpointUnlocks,
-          this.tech.stats.hardpoints
-        );
-        this.hardpoints.rebuildFromLoadout();
-      }
       this.applyStatsToSystems();
       this.shopUI.setVitals(this.vitals.snapshot());
-      this.shopUI.setLoadoutContext(this.loadout, this.save.data.highestLevel);
+      this.shopUI.setLoadoutContext(
+        this.loadout,
+        this.save.data.highestLevel,
+        this.save.data.ascensionTier
+      );
       this.shopUI.render(this.tech, this.currency);
       this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
       this.audio.playPurchase();
@@ -1234,6 +1493,8 @@ export class Game {
     this.vitals.fullRestore();
     this.vitals.syncFromStats(this.tech.stats);
     this.vitals.fullRestore();
+    this.applyLatticeCombatBuffs();
+    this.applyCosmeticTrail();
 
     if (this.pendingIdle > 0) {
       let seconds = this.pendingIdle;
@@ -1737,12 +1998,22 @@ export class Game {
         const allowFire = this.canFireWeapons() && this.input.isFiring;
 
         // Always update aim (so crosshair tracks); fire only when armed
+        if (this.scanPulseTimer > 0) {
+          this.scanPulseTimer = Math.max(0, this.scanPulseTimer - dt);
+        }
+        const combatStats =
+          this.scanPulseTimer > 0
+            ? {
+                ...this.tech.stats,
+                damageMul: this.tech.stats.damageMul * 1.25,
+              }
+            : this.tech.stats;
         this.weapon.update(
           dt,
           allowFire,
           this.ship,
           this.cube,
-          this.tech.stats,
+          combatStats,
           now,
           this.input.aimX,
           this.input.aimY

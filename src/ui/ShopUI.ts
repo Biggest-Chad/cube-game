@@ -1,5 +1,11 @@
 import { COMBAT } from '../data/constants';
 import {
+  EVOLVE_UI_PREVIEW_RATIO,
+  canEvolve,
+  evolveCoreGrant,
+  evolveCost,
+} from '../data/evolve';
+import {
   SHOP_TABS,
   STAT_CAPS,
   UPGRADES,
@@ -57,7 +63,8 @@ export function buildStatsSnapshot(
     armorRating: number;
   },
   loadoutDps = 0,
-  hardpointsUsed = 0
+  hardpointsUsed = 0,
+  hardpointsMax = 1
 ): StatsSnapshot {
   const maxHull = vitals?.maxHull ?? BASE_HULL + stats.maxHullAdd;
   const maxShield = vitals?.maxShield ?? BASE_SHIELD + stats.maxShieldAdd;
@@ -90,7 +97,7 @@ export function buildStatsSnapshot(
     topSpeedMul: stats.orbitSpeedMul,
     accelMul: stats.accelMul,
     hardpointsUsed,
-    hardpointsMax: stats.hardpoints,
+    hardpointsMax: Math.max(1, Math.min(3, hardpointsMax)),
     fragmentMul: stats.fragmentMul,
     damageMul: stats.damageMul,
     fireRateMul: stats.fireRateMul,
@@ -122,6 +129,8 @@ export class ShopUI {
   } | null = null;
   private loadout: LoadoutState | null = null;
   private highestLevel = 1;
+  private ascensionTier = 0;
+  private confirmEvolve = false;
 
   onClose: (() => void) | null = null;
   onPurchase: ((node: UpgradeNodeDef) => void) | null = null;
@@ -129,6 +138,8 @@ export class ShopUI {
   onEquipWeapon: ((slot: number, defId: string | null) => void) | null = null;
   onUpgradeBranch: ((slot: number, branchId: string) => boolean) | null = null;
   onUnlockHardpoint: ((slot: number) => boolean) | null = null;
+  /** Returns true if evolve succeeded. */
+  onEvolve: (() => boolean) | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -144,9 +155,14 @@ export class ShopUI {
     this.vitalsSnapshot = v;
   }
 
-  setLoadoutContext(loadout: LoadoutState, highestLevel: number): void {
+  setLoadoutContext(
+    loadout: LoadoutState,
+    highestLevel: number,
+    ascensionTier = 0
+  ): void {
     this.loadout = loadout;
     this.highestLevel = highestLevel;
+    this.ascensionTier = ascensionTier;
   }
 
   show(tree: TechTree, currency: Currency, tab?: ShopTabId): void {
@@ -170,11 +186,13 @@ export class ShopUI {
     const L = this.loadout;
     const loadoutDps = L?.estimateLoadoutDps() ?? 0;
     const hpUsed = L ? L.allDerived().length : 0;
+    const hpMax = L?.hardpointUnlocks ?? 1;
     const snap = buildStatsSnapshot(
       tree.stats,
       this.vitalsSnapshot ?? undefined,
       loadoutDps,
-      hpUsed
+      hpUsed,
+      hpMax
     );
     const visible = getSequentialVisibleNodes(tree.owned, currency, this.activeTab);
 
@@ -243,6 +261,8 @@ export class ShopUI {
                 </button>`
               ).join('')}
             </div>
+
+            ${this.renderEvolveBanner(currency)}
 
             ${
               this.activeTab === 'loadouts' && weaponReco
@@ -347,6 +367,74 @@ export class ShopUI {
     this.root.querySelector('#hp-unlock')?.addEventListener('click', () => {
       if (this.onUnlockHardpoint?.(this.selectedSlot)) this.render(tree, currency);
     });
+
+    this.root.querySelector('#evolve-open')?.addEventListener('click', () => {
+      this.confirmEvolve = true;
+      this.render(tree, currency);
+    });
+    this.root.querySelector('#evolve-cancel')?.addEventListener('click', () => {
+      this.confirmEvolve = false;
+      this.render(tree, currency);
+    });
+    this.root.querySelector('#evolve-confirm')?.addEventListener('click', () => {
+      if (this.onEvolve?.()) {
+        this.confirmEvolve = false;
+        this.render(tree, currency);
+      }
+    });
+  }
+
+  private renderEvolveBanner(currency: Currency): string {
+    const cost = evolveCost(this.ascensionTier);
+    const check = canEvolve(
+      currency.dataFragments,
+      this.highestLevel,
+      this.ascensionTier
+    );
+    const ratio = currency.dataFragments / Math.max(1, cost);
+    if (ratio < EVOLVE_UI_PREVIEW_RATIO && !check.ok && !this.confirmEvolve) {
+      // Still show compact ascension chip
+      return `
+        <div class="evolve-chip">
+          Ascension ${this.ascensionTier} · Next Evolve ${cost.toLocaleString()} FRAG
+          · Core grant ${evolveCoreGrant(this.ascensionTier + 1)}
+        </div>`;
+    }
+
+    if (this.confirmEvolve) {
+      const grant = evolveCoreGrant(this.ascensionTier + 1);
+      return `
+        <div class="evolve-panel confirm">
+          <div class="evolve-title">EVOLVE HULL?</div>
+          <p class="evolve-desc">
+            Spend <strong>${cost.toLocaleString()} FRAG</strong>. Retrain all combat shop upgrades.
+            Permanent <strong>Ascension ${this.ascensionTier + 1}</strong>.
+            Grant <strong>${grant} Core Energy</strong>. Weapons &amp; Research kept.
+          </p>
+          <div class="evolve-actions">
+            <button type="button" class="menu-btn" id="evolve-cancel">Cancel</button>
+            <button type="button" class="menu-btn primary" id="evolve-confirm"
+              ${check.ok ? '' : 'disabled'}>
+              CONFIRM EVOLVE
+            </button>
+          </div>
+          ${check.reason ? `<div class="evolve-warn">${check.reason}</div>` : ''}
+        </div>`;
+    }
+
+    return `
+      <div class="evolve-panel ${check.ok ? 'ready' : ''}">
+        <div class="evolve-title">EVOLVE · ASCENSION ${this.ascensionTier}</div>
+        <p class="evolve-desc">
+          Soft wall reached? Evolve raises permanent baselines and grants Core for the Research Lattice.
+          Cost <strong>${cost.toLocaleString()} FRAG</strong>
+          ${check.minLevel ? ` · Sector ${check.minLevel}+` : ''}
+        </p>
+        <button type="button" class="menu-btn primary evolve-btn" id="evolve-open"
+          ${ratio >= EVOLVE_UI_PREVIEW_RATIO ? '' : 'disabled'}>
+          ${check.ok ? 'EVOLVE HULL' : `EVOLVE · ${Math.floor(ratio * 100)}%`}
+        </button>
+      </div>`;
   }
 
   private renderLoadoutPanel(currency: Currency, tree: TechTree): string {
@@ -368,13 +456,13 @@ export class ShopUI {
           <div class="loadout-slot-idx">HP${i + 1}</div>
           <div class="loadout-slot-name">${
             !unlocked
-              ? `LOCKED · ${rule.costCore} CORE`
+              ? `LOCKED · ASC ${rule.minAscension}+ · ${rule.costCore} CORE`
               : def
                 ? def.name
                 : 'EMPTY'
           }</div>
           <div class="loadout-slot-sub">${
-            unlocked ? (def ? def.family : 'Select module') : 'Hardpoint bay'
+            unlocked ? (def ? def.family : 'Select module') : 'Evolve to unlock'
           }</div>
         </button>`;
     }
@@ -390,14 +478,24 @@ export class ShopUI {
 
     if (!unlocked) {
       const rule = HARDPOINT_UNLOCK[slot];
+      const ascOk = this.ascensionTier >= rule.minAscension;
       const can =
         slot === L.hardpointUnlocks &&
         currency.coreEnergy >= rule.costCore &&
-        this.highestLevel >= rule.minLevel;
+        this.highestLevel >= rule.minLevel &&
+        ascOk;
       detail = `
         <div class="loadout-detail shop-card">
           <div class="shop-card-top"><span class="shop-card-name">Hardpoint ${slot + 1}</span></div>
-          <div class="shop-card-desc">Unlock for <strong>${rule.costCore} Core Energy</strong>.</div>
+          <div class="shop-card-desc">
+            Requires <strong>Ascension ${rule.minAscension}+</strong>
+            and <strong>${rule.costCore} Core Energy</strong>.
+            ${
+              !ascOk
+                ? `<br/><span class="evolve-warn">Evolve the hull first (you are Ascension ${this.ascensionTier}).</span>`
+                : ''
+            }
+          </div>
           <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}" id="hp-unlock" ${
             can ? '' : 'disabled'
           }>
@@ -464,10 +562,14 @@ export class ShopUI {
       <div class="loadout-shop-wrap">
         <div class="loadout-slots">${slots}</div>
         ${detail}
-        <div class="shop-cards loadout-hp-cards">
-          <div class="branch-title" style="grid-column:1/-1;margin:8px 0 4px;opacity:0.7;font-size:11px;letter-spacing:0.15em">HARDPOINT BAYS</div>
-          ${hpCards}
-        </div>
+        ${
+          hpCards
+            ? `<div class="shop-cards loadout-hp-cards">${hpCards}</div>`
+            : `<div class="shop-reco dim" style="margin-top:8px">
+                Extra hardpoints unlock via <strong>Evolve</strong> (Ascension)
+                then Core Energy in the slots above.
+              </div>`
+        }
         <div class="loadout-dps">Loadout DPS est. ~${Math.round(L.estimateLoadoutDps())}</div>
       </div>`;
   }
@@ -523,6 +625,9 @@ export class ShopUI {
         <div class="stat-row"><span>Hardpoints</span><span class="stat-val">${s.hardpointsUsed}/${s.hardpointsMax}</span></div>
         <div class="stat-row"><span>Drones</span><span class="stat-val">${s.droneCount}</span></div>
         <div class="stat-row"><span>Frag mult</span><span class="stat-val">×${s.fragmentMul.toFixed(2)}</span></div>
+        <div class="stat-div"></div>
+        <div class="stat-row"><span>Ascension</span><span class="stat-val magenta">T${this.ascensionTier}</span></div>
+        <div class="stat-row"><span>Dmg mult</span><span class="stat-val">×${s.damageMul.toFixed(2)}</span></div>
       </div>`;
   }
 

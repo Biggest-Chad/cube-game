@@ -7,7 +7,8 @@ export type AdPlacement =
   | 'shop_pack'
   | 'death_repair'
   | 'idle_boost'
-  | 'hardpoint_discount';
+  | 'hardpoint_discount'
+  | 'core_energy';
 
 export type AdResultStatus = 'rewarded' | 'skipped' | 'failed' | 'not_ready';
 
@@ -30,4 +31,5 @@ export const AD_PLACEMENT_LABELS: Record<AdPlacement, string> = {
   death_repair: 'Emergency Repair',
   idle_boost: 'Boost Offline',
   hardpoint_discount: 'Sponsorship Surge',
+  core_energy: 'Core Energy Drip',
 };

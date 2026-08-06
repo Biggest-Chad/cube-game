@@ -199,11 +199,12 @@ finalDamage = base * shopDamage * baseline.damageMul * researchDamage;
 
 | Phase | Deliverable |
 |-------|-------------|
-| **P0** (this pass) | Death repair immunity; VFX/perf budget; frag soft-cap; late combat sinks; this design doc |
+| **P0** | Death repair immunity; VFX/perf budget; frag soft-cap; late combat sinks; this design doc |
 | **P1** | Evolve button + cost + reset combat upgrades + baseline mult + Core grant + save fields |
 | **P2** | Hardpoints gated by Ascension; shop UI Evolve panel |
 | **P3** | Research Lattice UI + Core-only nodes + menu entry |
-| **P4** | IAP / ad Core packs; analytics; balance pass on evolve costs |
+| **P4** | IAP / ad Core packs; balance pass on evolve costs |
+| **P5** | Sub-agent adversarial quality review (logic, economy, save, UI, balance exploits) |
 
 ---
 
@@ -212,7 +213,7 @@ finalDamage = base * shopDamage * baseline.damageMul * researchDamage;
 | Dial | Start value |
 |------|-------------|
 | Evolve cost base | 100_000 |
-| Core grant | 80 + 40×tier |
+| Core grant | 100 + 60×tier (Asc1 = 160, covers HP2) |
 | Frag surplus after Evolve | keep all remaining |
 | Weapons on Evolve | keep owned + branches |
 | Combat tree re-max cost | ~0.5× next evolve |

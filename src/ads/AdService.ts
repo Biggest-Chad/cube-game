@@ -2,6 +2,7 @@
  * Placement orchestration, daily caps, reward application hooks.
  */
 import { bus } from '../core/EventBus';
+import { AD_CORE_REWARD } from '../data/research';
 import type { AdPlacement, AdProvider, AdResult } from './AdProvider';
 import { DummyAdProvider } from './DummyAdProvider';
 
@@ -18,6 +19,7 @@ export const DAILY_CAPS: Record<AdPlacement, number> = {
   death_repair: 5,
   idle_boost: 4,
   hardpoint_discount: 3,
+  core_energy: 6,
 };
 
 export interface AdRewardPayload {
@@ -27,6 +29,8 @@ export interface AdRewardPayload {
   coreMul?: number;
   /** Flat fragment grant */
   fragments?: number;
+  /** Flat Core Energy grant */
+  coreEnergy?: number;
   /** Hull / shield restore fractions */
   hullRestore?: number;
   shieldFull?: boolean;
@@ -47,6 +51,7 @@ export class AdService {
   private counts: Partial<Record<AdPlacement, number>> = {};
   /** One-shot flags consumed by Game after reward */
   pendingOfflineBoostMul = 1;
+  /** Public peek for UI affordability; consume only after successful unlock. */
   pendingHardpointDiscount = 0;
 
   constructor(provider: AdProvider = new DummyAdProvider()) {
@@ -140,6 +145,8 @@ export class AdService {
         return { placement, offlineBoostMul: 1.5 };
       case 'hardpoint_discount':
         return { placement, hardpointDiscount: 0.2 };
+      case 'core_energy':
+        return { placement, coreEnergy: AD_CORE_REWARD };
       default:
         return { placement };
     }

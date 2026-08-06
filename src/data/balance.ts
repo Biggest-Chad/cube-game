@@ -91,18 +91,18 @@ export function clampMult(value: number, hardCap: number): number {
 export interface HardpointUnlockDef {
   /** Slot index 0..2 */
   slot: number;
-  /** Minimum highestLevel (or current level cleared) required */
-  levelGate: number;
+  /** Minimum Ascension tier required (Evolve count). */
+  ascensionGate: number;
   /** Core Energy cost */
   coreEnergyCost: number;
   label: string;
 }
 
-/** HP0 is free / always unlocked. HP1 and HP2 are milestone sinks. */
+/** HP0 free. HP1/HP2 gated by Ascension + Core (see weapons.HARDPOINT_UNLOCK). */
 export const HARDPOINT_UNLOCKS: readonly HardpointUnlockDef[] = [
-  { slot: 0, levelGate: 1, coreEnergyCost: 0, label: 'Hardpoint Alpha' },
-  { slot: 1, levelGate: 9, coreEnergyCost: 180, label: 'Hardpoint Beta' },
-  { slot: 2, levelGate: 19, coreEnergyCost: 520, label: 'Hardpoint Gamma' },
+  { slot: 0, ascensionGate: 0, coreEnergyCost: 0, label: 'Hardpoint Alpha' },
+  { slot: 1, ascensionGate: 1, coreEnergyCost: 160, label: 'Hardpoint Beta' },
+  { slot: 2, ascensionGate: 2, coreEnergyCost: 480, label: 'Hardpoint Gamma' },
 ] as const;
 
 export function hardpointUnlockCost(slot: number): number {
@@ -110,9 +110,14 @@ export function hardpointUnlockCost(slot: number): number {
   return def?.coreEnergyCost ?? 0;
 }
 
-export function hardpointLevelGate(slot: number): number {
+export function hardpointAscensionGate(slot: number): number {
   const def = HARDPOINT_UNLOCKS.find((h) => h.slot === slot);
-  return def?.levelGate ?? 999;
+  return def?.ascensionGate ?? 999;
+}
+
+/** @deprecated use hardpointAscensionGate */
+export function hardpointLevelGate(slot: number): number {
+  return hardpointAscensionGate(slot);
 }
 
 // ---------------------------------------------------------------------------
