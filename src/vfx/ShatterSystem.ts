@@ -68,33 +68,44 @@ export class ShatterSystem {
     style: ShatterStyle = 'default',
     nx = 0,
     ny = 0,
-    nz = 0
+    nz = 0,
+    /** 0.3–1: scale particle/mesh count for mobile GPU budget */
+    vfxScale = 1
   ): void {
     const color = colorForType(type);
     const isCore = type === BlockType.Core;
     const isExplosive = type === BlockType.Explosive || style === 'explosive';
     const isData = type === BlockType.DataNode;
+    const vs = Math.max(0.25, Math.min(1, vfxScale));
 
-    // Particle punch
-    const nDebris = isCore ? 22 : isExplosive ? 20 : 14;
+    // Particle punch (scaled for thermal/FPS budget)
+    const nDebris = Math.max(2, Math.floor((isCore ? 22 : isExplosive ? 20 : 14) * vs));
     const speed = isExplosive ? 12 : style === 'beam' ? 6 : style === 'bolt' ? 9 : 7;
     this.pool.spawn(x, y, z, color, nDebris, speed, 'debris');
-    this.pool.spawn(x, y, z, 0xffffff, isCore ? 12 : 7, 6, 'glow');
-    this.pool.spawn(x, y, z, color, style === 'beam' ? 16 : 10, 12, 'spark');
+    this.pool.spawn(x, y, z, 0xffffff, Math.max(2, Math.floor((isCore ? 12 : 7) * vs)), 6, 'glow');
+    this.pool.spawn(
+      x,
+      y,
+      z,
+      color,
+      Math.max(2, Math.floor((style === 'beam' ? 16 : 10) * vs)),
+      12,
+      'spark'
+    );
 
     if (isExplosive) {
-      this.pool.spawn(x, y, z, 0xff6622, 24, 16, 'ember');
-      this.pool.spawn(x, y, z, 0xffaa44, 12, 9, 'glow');
+      this.pool.spawn(x, y, z, 0xff6622, Math.max(4, Math.floor(24 * vs)), 16, 'ember');
+      if (vs > 0.5) this.pool.spawn(x, y, z, 0xffaa44, Math.max(3, Math.floor(12 * vs)), 9, 'glow');
     }
-    if (isData) {
-      this.pool.spawn(x, y, z, 0xaa66ff, 16, 7, 'ember');
+    if (isData && vs > 0.4) {
+      this.pool.spawn(x, y, z, 0xaa66ff, Math.max(3, Math.floor(16 * vs)), 7, 'ember');
     }
     if (isCore) {
-      this.pool.spawn(x, y, z, 0xff4488, 20, 14, 'spark');
+      this.pool.spawn(x, y, z, 0xff4488, Math.max(4, Math.floor(20 * vs)), 14, 'spark');
     }
 
     // Mesh debris with physics
-    const count = isCore ? 10 : isExplosive ? 12 : 7;
+    const count = Math.max(2, Math.floor((isCore ? 10 : isExplosive ? 12 : 7) * vs));
     const len = Math.hypot(nx, ny, nz);
     const ix = len > 1e-4 ? nx / len : 0;
     const iy = len > 1e-4 ? ny / len : 0;

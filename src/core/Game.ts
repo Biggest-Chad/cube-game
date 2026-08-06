@@ -140,6 +140,10 @@ export class Game {
   private deathTimer = 0;
   private deathFadeStarted = false;
   private deathOrigin = new THREE.Vector3();
+  /** Seconds of post-repair IFF immunity (ad revive grace). */
+  private reviveImmunity = 0;
+  /** Runtime VFX scale 0.35–1 from graphics tier + adaptive FPS. */
+  private vfxScale = 1;
   private readonly _aimPoint = new THREE.Vector3();
   private readonly _ndc = new THREE.Vector3();
 
@@ -487,6 +491,9 @@ export class Game {
     this.particles.setBudget(Math.min(PERF.maxParticles, preset.particleBudget));
     this.ambient.setQuality(preset.ambientTier);
     this.cameraCtrl.resize(window.innerWidth / window.innerHeight);
+    // Base VFX density from tier (adaptive FPS may pull this down further)
+    this.vfxScale =
+      quality === 'high' ? 1 : quality === 'medium' ? 0.72 : 0.42;
   }
 
   private openSettings(): void {
@@ -558,17 +565,32 @@ export class Game {
               (r.type === BlockType.Explosive
                 ? 'explosive'
                 : 'bolt');
-            this.shatter.shatter(r.x, r.y, r.z, r.type, style, nx, ny, nz);
-            this.rings.spawn(
+            // Scale mesh debris / particles for GPU budget
+            this.shatter.shatter(
               r.x,
               r.y,
               r.z,
-              colorForType(r.type),
-              r.type === BlockType.Core ? 2.0 : 1.35
+              r.type,
+              style,
+              nx,
+              ny,
+              nz,
+              this.vfxScale
             );
-            this.cameraCtrl.shake(
-              r.type === BlockType.Core ? 0.24 : r.crit ? 0.16 : 0.12
-            );
+            if (this.vfxScale > 0.45 || r.type === BlockType.Core || r.crit) {
+              this.rings.spawn(
+                r.x,
+                r.y,
+                r.z,
+                colorForType(r.type),
+                (r.type === BlockType.Core ? 2.0 : 1.35) * this.vfxScale
+              );
+            }
+            if (r.type === BlockType.Core || r.crit || Math.random() < this.vfxScale) {
+              this.cameraCtrl.shake(
+                (r.type === BlockType.Core ? 0.24 : r.crit ? 0.16 : 0.1) * this.vfxScale
+              );
+            }
             this.audio.playDestroy(
               r.type === BlockType.Core || r.type === BlockType.Explosive
             );
@@ -580,14 +602,19 @@ export class Game {
             }
             this.refreshShopPrompt();
           } else {
-            this.shatter.impact(r.x, r.y, r.z, nx, ny, nz, !!r.crit);
-            this.rings.spawn(
-              r.x,
-              r.y,
-              r.z,
-              r.crit ? COLORS.magenta : COLORS.cyan,
-              r.crit ? 0.85 : 0.65
-            );
+            // Non-destroy hits: skip most rings on low VFX to cut draw calls
+            if (r.crit || this.vfxScale > 0.7) {
+              this.shatter.impact(r.x, r.y, r.z, nx, ny, nz, !!r.crit);
+            }
+            if (r.crit || Math.random() < this.vfxScale * 0.55) {
+              this.rings.spawn(
+                r.x,
+                r.y,
+                r.z,
+                r.crit ? COLORS.magenta : COLORS.cyan,
+                (r.crit ? 0.85 : 0.55) * this.vfxScale
+              );
+            }
             this.audio.playHit(!!r.crit);
           }
         }
@@ -599,12 +626,18 @@ export class Game {
         'explosion',
         (p: { x: number; y: number; z: number; radius?: number; family?: string }) => {
           const r = p.radius ?? 2;
-          this.rings.spawn(p.x, p.y, p.z, COLORS.magenta, 1.2 + r * 0.35);
-          this.rings.spawn(p.x, p.y, p.z, COLORS.gold, 0.8 + r * 0.25);
-          this.particles.spawn(p.x, p.y, p.z, 0xff6622, 18, 14, 'ember');
-          this.particles.spawn(p.x, p.y, p.z, 0xffffff, 10, 8, 'glow');
-          this.particles.spawn(p.x, p.y, p.z, COLORS.gold, 12, 11, 'spark');
-          this.cameraCtrl.shake(0.1 + Math.min(0.2, r * 0.04));
+          const s = this.vfxScale;
+          this.rings.spawn(p.x, p.y, p.z, COLORS.magenta, (1.0 + r * 0.3) * s);
+          if (s > 0.55) {
+            this.rings.spawn(p.x, p.y, p.z, COLORS.gold, (0.7 + r * 0.2) * s);
+          }
+          const n = Math.max(3, Math.floor(14 * s));
+          this.particles.spawn(p.x, p.y, p.z, 0xff6622, n, 12 * s, 'ember');
+          this.particles.spawn(p.x, p.y, p.z, 0xffffff, Math.floor(n * 0.5), 7 * s, 'glow');
+          if (s > 0.6) {
+            this.particles.spawn(p.x, p.y, p.z, COLORS.gold, Math.floor(n * 0.6), 10 * s, 'spark');
+          }
+          this.cameraCtrl.shake((0.08 + Math.min(0.18, r * 0.035)) * s);
           this.audio.playExplosion(r, p.family);
         }
       ),
@@ -633,11 +666,19 @@ export class Game {
 
   private onPlayerDamaged(amount: number): void {
     if (this.mode !== 'playing') return;
+    // Post-ad repair grace — ignore all combat damage
+    if (this.reviveImmunity > 0) return;
     const hit = this.vitals.takeDamage(amount);
     this.cameraCtrl.shake(0.1);
     this.audio.playPlayerHit();
     this.updateHudVitals();
     if (hit.died) this.beginShipDeath();
+  }
+
+  /** 5s combat immunity after emergency repair revive. */
+  private grantReviveImmunity(seconds = 5): void {
+    this.reviveImmunity = Math.max(this.reviveImmunity, seconds);
+    this.toast(`IFF REBOOT · ${seconds.toFixed(0)}s IMMUNITY`);
   }
 
   /** Explosive ship death → black fade → game-over card. */
@@ -750,6 +791,7 @@ export class Game {
         this.hardpoints.group.visible = true;
         this.mode = 'playing';
         this.hud.setVisible(true);
+        this.grantReviveImmunity(5);
         this.toast('REPAIR UNAVAILABLE — FULL RESTORE');
       } else {
         this.adsUI.onAccepted = (p) => {
@@ -760,6 +802,7 @@ export class Game {
               this.hardpoints.group.visible = true;
               this.mode = 'playing';
               this.hud.setVisible(true);
+              this.grantReviveImmunity(5);
             }
           });
         };
@@ -1559,26 +1602,48 @@ export class Game {
     const dt = this.time.tick();
     const now = this.time.elapsed;
 
-    // Temporary FPS demotion (one step) without changing user settings preference
+    // Adaptive VFX + temporary quality demotion under thermal/FPS pressure
     if (
-      this.time.fps < PERF.lowFpsThreshold &&
-      (this.mode === 'playing' || this.mode === 'intro' || this.mode === 'cinematic')
+      this.mode === 'playing' ||
+      this.mode === 'intro' ||
+      this.mode === 'cinematic' ||
+      this.mode === 'levelclear'
     ) {
-      this.lowFpsTimer += dt;
-      if (this.lowFpsTimer > PERF.lowFpsSeconds) {
-        const demoted =
-          this.effectiveQuality === 'high'
-            ? 'medium'
-            : this.effectiveQuality === 'medium'
-              ? 'low'
-              : null;
-        if (demoted) {
-          this.applyGraphics(demoted, true);
-          this.lowFpsTimer = 0;
+      if (this.time.fps < PERF.lowFpsThreshold) {
+        this.lowFpsTimer += dt;
+        // Soft: pull VFX scale before hard quality demotion
+        if (this.lowFpsTimer > 0.6) {
+          this.vfxScale = Math.max(0.32, this.vfxScale * 0.92);
+          const budget = Math.floor(
+            getGraphicsPreset(this.effectiveQuality).particleBudget * this.vfxScale
+          );
+          this.particles.setBudget(Math.max(120, budget));
         }
+        if (this.lowFpsTimer > PERF.lowFpsSeconds) {
+          const demoted =
+            this.effectiveQuality === 'high'
+              ? 'medium'
+              : this.effectiveQuality === 'medium'
+                ? 'low'
+                : null;
+          if (demoted) {
+            this.applyGraphics(demoted, true);
+            this.lowFpsTimer = 0;
+          }
+        }
+      } else if (this.time.fps > PERF.targetFps + 8) {
+        this.lowFpsTimer = 0;
+        // Slowly recover VFX if we demoted only the soft scale
+        const target =
+          this.effectiveQuality === 'high'
+            ? 1
+            : this.effectiveQuality === 'medium'
+              ? 0.72
+              : 0.42;
+        this.vfxScale = Math.min(target, this.vfxScale + dt * 0.08);
+      } else {
+        this.lowFpsTimer = Math.max(0, this.lowFpsTimer - dt * 0.5);
       }
-    } else {
-      this.lowFpsTimer = 0;
     }
 
     this.ambient.update(dt);
@@ -1663,6 +1728,9 @@ export class Game {
       this.ship.update(this.cameraCtrl, dt, this.particles);
 
       if (this.mode === 'playing') {
+        if (this.reviveImmunity > 0) {
+          this.reviveImmunity = Math.max(0, this.reviveImmunity - dt);
+        }
         this.vitals.update(dt);
         this.updateHudVitals();
         this.updateCombatWarmup(dt);

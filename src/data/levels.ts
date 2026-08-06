@@ -56,8 +56,8 @@ function makeLevel(
     defensiveFactor,
   };
   const s = scoreOf(base);
-  // ~35% cut vs old (40 + s*0.02 + id*12)
-  const defaultFrags = Math.round((40 + s * 0.02 + id * 12) * 0.65);
+  // Steeper soft-cap: clear rewards grow slowly so prestige sinks stay relevant
+  const defaultFrags = Math.round((28 + Math.sqrt(s) * 0.35 + id * 5.5) * 0.55);
   return {
     id,
     name,

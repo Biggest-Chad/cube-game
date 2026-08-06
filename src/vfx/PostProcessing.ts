@@ -39,7 +39,10 @@ export class PostProcessing {
 
   setSize(w: number, h: number): void {
     this.composer.setSize(w, h);
-    this.bloom.resolution.set(w, h);
+    // Half-res bloom on medium/low — big mobile GPU win
+    const scale =
+      this.quality === 'high' ? 1 : this.quality === 'medium' ? 0.5 : 0.35;
+    this.bloom.resolution.set(Math.max(1, w * scale), Math.max(1, h * scale));
   }
 
   setQuality(quality: GraphicsQuality | boolean): void {
@@ -69,8 +72,8 @@ export class PostProcessing {
     let strength = p.bloomStrength;
     let threshold = p.bloomThreshold;
     if (this.presentationBoost && this.quality !== 'low') {
-      strength *= 1.12;
-      threshold = Math.max(0.52, threshold - 0.04);
+      strength *= 1.08;
+      threshold = Math.max(0.55, threshold - 0.03);
     }
     this.bloom.strength = strength;
     this.bloom.threshold = threshold;

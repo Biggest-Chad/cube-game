@@ -75,10 +75,11 @@ export const COMBAT = {
 
 export const PERF = {
   targetFps: 50,
-  lowFpsThreshold: 30,
-  lowFpsSeconds: 1.6,
-  maxParticles: 900,
-  lowMaxParticles: 280,
+  lowFpsThreshold: 32,
+  /** Faster demotion on sustained jank (thermal protection) */
+  lowFpsSeconds: 1.1,
+  maxParticles: 640,
+  lowMaxParticles: 160,
   maxProjectiles: 40,
   instanceRebuildBudgetMs: 4,
 } as const;

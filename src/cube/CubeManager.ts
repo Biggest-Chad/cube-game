@@ -357,7 +357,11 @@ export class CubeManager {
     }
 
     const def = BLOCK_DEFS[t];
-    const fragments = Math.max(1, Math.round((this.level.avgHP / 10) * def.fragmentMul));
+    // Soft sqrt curve — late levels no longer mint absurd frag/block
+    const fragments = Math.max(
+      1,
+      Math.round(Math.sqrt(Math.max(1, this.level.avgHP)) * 0.55 * def.fragmentMul)
+    );
     const explosive = t === BlockType.Explosive;
     chunk.clearBlock(i);
     this.removeInstance(instanceId);

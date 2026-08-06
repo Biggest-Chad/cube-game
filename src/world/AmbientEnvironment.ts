@@ -30,9 +30,9 @@ export class AmbientEnvironment {
   private prevFog: THREE.Fog | THREE.FogExp2 | null = null;
   private sceneRef: THREE.Scene | null = null;
 
-  private readonly dustByTier = [48, 100, 160] as const;
-  private readonly monoByTier = [10, 18, 26] as const;
-  private readonly starByTier = [80, 180, 280] as const;
+  private readonly dustByTier = [28, 64, 110] as const;
+  private readonly monoByTier = [6, 12, 18] as const;
+  private readonly starByTier = [48, 100, 180] as const;
 
   private _dummy = new THREE.Object3D();
   private _spin = 0;
