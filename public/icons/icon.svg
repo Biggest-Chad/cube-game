@@ -1,10 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="96" fill="#000000"/>
-  <rect x="128" y="128" width="256" height="256" stroke="#00f0ff" stroke-width="18" fill="#001a1f"/>
-  <rect x="176" y="176" width="64" height="64" fill="#00f0ff" opacity="0.9"/>
-  <rect x="272" y="176" width="64" height="64" fill="#ff00aa" opacity="0.85"/>
-  <rect x="176" y="272" width="64" height="64" fill="#ff00aa" opacity="0.7"/>
-  <rect x="272" y="272" width="64" height="64" fill="#ffffff" opacity="0.95"/>
-  <circle cx="400" cy="112" r="18" fill="#00f0ff"/>
-  <line x1="400" y1="112" x2="320" y2="200" stroke="#00f0ff" stroke-width="6" opacity="0.8"/>
+  <!-- THE CUBE launcher mark — neon lattice cube + ship -->
+  <rect width="512" height="512" fill="#000000"/>
+  <!-- Cube (isometric-ish wire grid) -->
+  <g transform="translate(270,240)" opacity="0.98">
+    <path d="M0,-110 L95,-55 L95,55 L0,110 L-95,55 L-95,-55 Z"
+          stroke="#00f0ff" stroke-width="6" fill="#001018" opacity="0.9"/>
+    <path d="M0,-110 L95,-55 L0,0 L-95,-55 Z" stroke="#ff00aa" stroke-width="4" fill="none"/>
+    <path d="M0,0 L95,-55 L95,55 L0,110 Z" stroke="#00f0ff" stroke-width="4" fill="none"/>
+    <path d="M0,0 L-95,-55 L-95,55 L0,110 Z" stroke="#00e8ff" stroke-width="4" fill="none"/>
+    <!-- grid lines -->
+    <path d="M-48,-82 L48,-27 M-48,-27 L48,28 M-48,28 L48,83" stroke="#00f0ff" stroke-width="2" opacity="0.45"/>
+    <path d="M-48,-82 L-48,28 M0,-110 L0,0 M48,-27 L48,83" stroke="#ff00aa" stroke-width="2" opacity="0.35"/>
+    <circle cx="8" cy="4" r="22" fill="#ff00aa" opacity="0.55"/>
+    <circle cx="8" cy="4" r="10" fill="#ffffff" opacity="0.85"/>
+  </g>
+  <!-- Ship lower-left -->
+  <g transform="translate(120,340) rotate(-18)">
+    <path d="M40,0 L-28,-18 L-18,0 L-28,18 Z" fill="#00f0ff" stroke="#e8ffff" stroke-width="3"/>
+    <path d="M-18,0 L-40,-10 L-34,0 L-40,10 Z" fill="#00a8c8"/>
+    <circle cx="10" cy="0" r="4" fill="#ffffff"/>
+    <!-- thrusters -->
+    <path d="M-40,-6 L-58,-10 L-40,-2 Z" fill="#ff66cc" opacity="0.9"/>
+    <path d="M-40,6 L-58,10 L-40,2 Z" fill="#ff66cc" opacity="0.9"/>
+  </g>
+  <!-- Beam -->
+  <line x1="155" y1="325" x2="250" y2="270" stroke="#00f0ff" stroke-width="4" opacity="0.95"/>
+  <circle cx="250" cy="270" r="10" fill="#ffffff" opacity="0.9"/>
+  <circle cx="250" cy="270" r="18" fill="#00f0ff" opacity="0.35"/>
 </svg>
