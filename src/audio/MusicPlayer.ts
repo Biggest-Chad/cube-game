@@ -385,7 +385,8 @@ export class MusicPlayer {
 
   private targetGain(): number {
     const base = this.muted ? 0 : this.masterVol;
-    return base * (this.muffled ? 0.28 : 1);
+    // Shop / UI: ~40% bed + low-pass “next room” filter
+    return base * (this.muffled ? 0.4 : 1);
   }
 
   private applyGains(rampSec = 0.18): void {
