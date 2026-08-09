@@ -129,6 +129,7 @@ export class Game {
   private tutorial!: TutorialDirector;
   private screenFx!: ScreenTransition;
   private overlay: HTMLElement;
+  private toastRoot: HTMLElement;
   private cinematicRoot: HTMLElement;
   private orientLock: HTMLElement | null = null;
 
@@ -270,6 +271,8 @@ export class Game {
     this.settingsUI = new SettingsUI(document.getElementById('settings-root')!);
     this.adsUI = new AdsOfferUI(document.getElementById('ads-root')!);
     this.overlay = document.getElementById('overlay-root')!;
+    this.toastRoot =
+      document.getElementById('toast-root') ?? this.overlay;
     this.tutorial = new TutorialDirector(document.getElementById('hud-root')!, {
       stage1Done: false,
       loadoutDone: false,
@@ -952,15 +955,12 @@ export class Game {
       bus.on(
         'core-notify',
         (p: { title?: string; body?: string; kind?: string }) => {
-          this.showCoreBanner(p.title ?? 'NUCLEUS', p.body ?? '', p.kind ?? '');
-          if (p.kind === 'overload' || p.kind === 'exposed') {
-            this.cameraCtrl.shake(p.kind === 'overload' ? 0.14 : 0.08);
-            this.audio.playUi();
-          }
+          // Purely informational — no shake / SFX / gameplay interrupt
+          this.showPhaseChip(p.title ?? 'NUCLEUS', p.kind ?? '');
         }
       ),
       bus.on('core-destroyed', () => {
-        this.cameraCtrl.shake(0.16);
+        this.cameraCtrl.shake(0.1);
         this.audio.playCrit();
       }),
       bus.on('enemy-drone-destroyed', () => {
@@ -969,12 +969,16 @@ export class Game {
     );
   }
 
-  private showCoreBanner(title: string, body: string, kind: string): void {
+  /** Small non-blocking phase label (does not steal focus or block input). */
+  private showPhaseChip(title: string, kind: string): void {
+    // Host on toast-root — never #overlay-root (that dims + blocks input)
+    this.toastRoot.querySelectorAll('.phase-chip').forEach((n) => n.remove());
     const el = document.createElement('div');
-    el.className = `core-banner ${kind === 'overload' ? 'overload' : ''}`;
-    el.innerHTML = `<div class="core-banner-title">${title}</div><div class="core-banner-body">${body}</div>`;
-    this.overlay.appendChild(el);
-    setTimeout(() => el.remove(), 2800);
+    el.className = `phase-chip phase-${kind || 'info'}`;
+    el.textContent = title;
+    el.setAttribute('aria-live', 'polite');
+    this.toastRoot.appendChild(el);
+    setTimeout(() => el.remove(), 1600);
   }
 
   private onPlayerDamaged(amount: number): void {
@@ -2073,7 +2077,8 @@ export class Game {
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = msg;
-    this.overlay.appendChild(el);
+    // Non-modal host — must not use #overlay-root
+    this.toastRoot.appendChild(el);
     setTimeout(() => el.remove(), 2200);
   }
 

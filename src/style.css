@@ -978,10 +978,21 @@ body {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   overscroll-behavior: contain;
+  background: transparent;
 }
-#overlay-root:not(:empty) {
+/* Only modal overlay cards dim + capture input — never chips/toasts */
+#overlay-root:has(.overlay-card) {
   pointer-events: auto;
   background: rgba(0, 0, 0, 0.55);
+}
+
+/* Non-blocking toast / phase chip host */
+#toast-root {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  pointer-events: none;
+  overflow: visible;
 }
 .overlay-card {
   position: relative;
@@ -1291,22 +1302,24 @@ body {
   border-color: rgba(0, 255, 160, 0.45);
 }
 
-/* Toast */
+/* Toast — non-blocking, lives under #toast-root */
 .toast {
   position: absolute;
   left: 50%;
-  bottom: 28%;
+  bottom: 22%;
   transform: translateX(-50%);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  padding: 10px 18px;
-  font-size: 12px;
-  letter-spacing: 0.15em;
+  background: rgba(0, 12, 18, 0.78);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  padding: 8px 14px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
   color: var(--cyan);
-  box-shadow: var(--glow-cyan);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);
   pointer-events: none;
   animation: toast-in 0.25s ease-out;
   z-index: 50;
+  max-width: min(70vw, 320px);
+  text-align: center;
 }
 
 @keyframes toast-in {
@@ -3387,42 +3400,44 @@ body.orientation-portrait #rotate-overlay {
   50% { filter: brightness(1.35); }
 }
 
-/* Core event toast banner */
-.core-banner {
+/* Nucleus phase chip — small, non-blocking, purely informational */
+.phase-chip {
   position: absolute;
-  top: 18%;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 60;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  z-index: 45;
   pointer-events: none;
-  text-align: center;
-  padding: 12px 22px;
-  border: 1px solid rgba(255, 0, 120, 0.65);
-  background: rgba(8, 0, 10, 0.82);
-  box-shadow: 0 0 28px rgba(255, 0, 100, 0.4);
-  animation: core-banner-in 0.35s ease-out;
+  max-width: min(42vw, 220px);
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 210, 230, 0.92);
+  background: rgba(6, 2, 10, 0.72);
+  border: 1px solid rgba(255, 100, 160, 0.4);
+  border-radius: 2px;
+  box-shadow: 0 0 10px rgba(255, 0, 100, 0.12);
+  animation: phase-chip-in 0.2s ease-out;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.core-banner-title {
-  font-size: 14px;
-  letter-spacing: 0.28em;
-  color: #ff66aa;
-  font-weight: 800;
+.phase-chip.phase-overload {
+  border-color: rgba(255, 80, 40, 0.55);
+  color: #ffb0a0;
 }
-.core-banner-body {
-  margin-top: 4px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: rgba(255, 230, 240, 0.85);
-  max-width: 42ch;
+.phase-chip.phase-exposed {
+  border-color: rgba(255, 160, 80, 0.5);
+  color: #ffd0a8;
 }
-.core-banner.overload {
-  border-color: #ff3300;
-  box-shadow: 0 0 36px rgba(255, 40, 0, 0.55);
+.phase-chip.phase-destroyed {
+  border-color: rgba(0, 255, 170, 0.45);
+  color: #a8ffe0;
 }
-.core-banner.overload .core-banner-title { color: #ff4422; }
-@keyframes core-banner-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(-12px) scale(0.94); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+@keyframes phase-chip-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .evolve-chip.collapsible {
