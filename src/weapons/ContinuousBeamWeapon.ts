@@ -518,7 +518,8 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
         new THREE.Vector3(result.x, result.y, result.z),
         this.stats.splashRadius,
         rolled.damage * 0.3,
-        now
+        now,
+        instanceId
       );
       for (const c of splash) if (c.destroyed) bus.emit('beam-hit', c);
     }

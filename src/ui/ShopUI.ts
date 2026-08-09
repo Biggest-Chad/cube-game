@@ -148,6 +148,7 @@ export class ShopUI {
   private evolveExpanded = false;
   private dragPayload: { kind: 'drone' | 'weapon'; role?: DroneRole; weaponId?: string; fromSlot?: number } | null =
     null;
+  private dragEndBound = false;
 
   onClose: (() => void) | null = null;
   onPurchase: ((node: UpgradeNodeDef) => void) | null = null;
@@ -292,6 +293,8 @@ export class ShopUI {
 
     const isCore = (n: UpgradeNodeDef) => n.costCurrency === 'coreEnergy';
 
+    // Weapon branch recos only on LOAD tab — elsewhere prefer sequential shop chains
+    const showBranchReco = this.activeTab === 'loadouts' && branchReco;
     const recoHtml =
       this.activeTab === 'loadouts' && weaponReco
         ? `<div class="shop-reco compact">
@@ -301,13 +304,13 @@ export class ShopUI {
               BUY · ${weaponUnlockCost(weaponReco).fragments} FRAG
             </button>
           </div>`
-        : branchReco
+        : showBranchReco
           ? `<div class="shop-reco compact">
               <span class="shop-reco-tag">WEAPON</span>
-              <span class="shop-reco-name">${branchReco.weaponName} · ${branchReco.name}</span>
+              <span class="shop-reco-name">${branchReco!.weaponName} · ${branchReco!.name}</span>
               <button class="shop-reco-buy" type="button"
-                data-reco-branch="${branchReco.branchId}" data-reco-slot="${branchReco.slot}">
-                UPGRADE · ${branchReco.cost} FRAG
+                data-reco-branch="${branchReco!.branchId}" data-reco-slot="${branchReco!.slot}">
+                UPGRADE · ${branchReco!.cost} FRAG
               </button>
             </div>`
           : recommended
@@ -417,14 +420,14 @@ export class ShopUI {
         this.render(tree, currency);
       });
     });
-    // Clear stale drag payload if user cancels the drag
-    this.root.addEventListener(
-      'dragend',
-      () => {
+    // Clear stale HTML5 drag payload once (not every re-render)
+    if (!this.dragEndBound) {
+      this.dragEndBound = true;
+      this.root.addEventListener('dragend', () => {
         this.dragPayload = null;
-      },
-      { once: false }
-    );
+        this.clearPickVisual();
+      });
+    }
 
     this.root.querySelectorAll('[data-loadout-sub]').forEach((el) => {
       el.addEventListener('click', () => {
@@ -523,6 +526,35 @@ export class ShopUI {
 
     this.bindDroneBayDnD(tree, currency);
     this.bindWeaponDnD(tree, currency);
+    // Re-apply pick highlight after DOM rebuild (touch equip flow)
+    if (this.dragPayload) this.markPickArmed();
+  }
+
+  private clearPickVisual(): void {
+    this.root.querySelectorAll('.pick-armed').forEach((el) => el.classList.remove('pick-armed'));
+    this.root.querySelectorAll('.drop-ready').forEach((el) => el.classList.remove('drop-ready'));
+  }
+
+  private markPickArmed(): void {
+    this.clearPickVisual();
+    const p = this.dragPayload;
+    if (!p) return;
+    if (p.kind === 'weapon' && p.weaponId) {
+      this.root
+        .querySelectorAll(`[data-drag-weapon="${p.weaponId}"]`)
+        .forEach((el) => el.classList.add('pick-armed'));
+      this.root.querySelectorAll('[data-hp-drop]').forEach((el) => {
+        if (!(el as HTMLElement).classList.contains('locked')) {
+          el.classList.add('drop-ready');
+        }
+      });
+    }
+    if (p.kind === 'drone' && p.role) {
+      this.root
+        .querySelectorAll(`[data-drag-drone="${p.role}"]`)
+        .forEach((el) => el.classList.add('pick-armed'));
+      this.root.querySelectorAll('[data-bay-slot]').forEach((el) => el.classList.add('drop-ready'));
+    }
   }
 
   private bindDroneBayDnD(tree: TechTree, currency: Currency): void {
@@ -549,10 +581,11 @@ export class ShopUI {
         if (!B || !role) return;
         const empty = B.state.slots.findIndex((s) => s == null);
         if (empty < 0) return;
+        this.dragPayload = null;
+        this.clearPickVisual();
         if (this.onAssignDroneSlot?.(empty, role)) this.render(tree, currency);
       });
     });
-    // Tap empty bay then tap inventory chip also works via assign buttons above
     this.root.querySelectorAll('[data-clear-bay]').forEach((btn) => {
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -563,13 +596,30 @@ export class ShopUI {
       btn.addEventListener('dragstart', (ev) => ev.preventDefault());
     });
 
-    // Inventory chips — drag source
+    // Inventory chips — drag + tap-to-pick (Android WebView DnD is unreliable)
     this.root.querySelectorAll('[data-drag-drone]').forEach((el) => {
       el.addEventListener('dragstart', (e) => {
         const role = (el as HTMLElement).dataset.dragDrone as DroneRole;
         this.dragPayload = { kind: 'drone', role };
         (e as DragEvent).dataTransfer?.setData('text/plain', `drone:${role}`);
         (e as DragEvent).dataTransfer!.effectAllowed = 'copyMove';
+      });
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if ((el as HTMLElement).getAttribute('draggable') === 'false') return;
+        const role = (el as HTMLElement).dataset.dragDrone as DroneRole;
+        if (
+          this.dragPayload?.kind === 'drone' &&
+          this.dragPayload.role === role &&
+          this.dragPayload.fromSlot == null
+        ) {
+          this.dragPayload = null;
+          this.clearPickVisual();
+          return;
+        }
+        this.dragPayload = { kind: 'drone', role };
+        this.markPickArmed();
       });
     });
     // Bay slots as sources (move) and targets
@@ -596,7 +646,22 @@ export class ShopUI {
         (el as HTMLElement).classList.remove('drop-hover');
         const p = this.dragPayload;
         this.dragPayload = null;
+        this.clearPickVisual();
         if (!p || p.kind !== 'drone') return;
+        if (p.fromSlot != null) {
+          if (this.onMoveDroneSlot?.(p.fromSlot, slot)) this.render(tree, currency);
+        } else if (p.role) {
+          if (this.onAssignDroneSlot?.(slot, p.role)) this.render(tree, currency);
+        }
+      });
+      // Tap target when a drone is picked (touch path)
+      el.addEventListener('click', (e) => {
+        const p = this.dragPayload;
+        if (!p || p.kind !== 'drone') return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.dragPayload = null;
+        this.clearPickVisual();
         if (p.fromSlot != null) {
           if (this.onMoveDroneSlot?.(p.fromSlot, slot)) this.render(tree, currency);
         } else if (p.role) {
@@ -613,6 +678,19 @@ export class ShopUI {
         this.dragPayload = { kind: 'weapon', weaponId: id };
         (e as DragEvent).dataTransfer?.setData('text/plain', `weapon:${id}`);
       });
+      // Tap-to-pick for touch / WebView (no HTML5 DnD)
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = (el as HTMLElement).dataset.dragWeapon!;
+        if (this.dragPayload?.kind === 'weapon' && this.dragPayload.weaponId === id) {
+          this.dragPayload = null;
+          this.clearPickVisual();
+          return;
+        }
+        this.dragPayload = { kind: 'weapon', weaponId: id };
+        this.markPickArmed();
+      });
     });
     this.root.querySelectorAll('[data-hp-drop]').forEach((el) => {
       const slot = Number((el as HTMLElement).dataset.hpDrop);
@@ -626,7 +704,21 @@ export class ShopUI {
         (el as HTMLElement).classList.remove('drop-hover');
         const p = this.dragPayload;
         this.dragPayload = null;
+        this.clearPickVisual();
         if (!p || p.kind !== 'weapon' || !p.weaponId) return;
+        this.onEquipWeapon?.(slot, p.weaponId);
+        this.selectedSlot = slot;
+        this.render(tree, currency);
+      });
+      // Tap hardpoint while a weapon is picked → equip
+      el.addEventListener('click', (e) => {
+        const p = this.dragPayload;
+        if (!p || p.kind !== 'weapon' || !p.weaponId) return;
+        if ((el as HTMLElement).classList.contains('locked')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.dragPayload = null;
+        this.clearPickVisual();
         this.onEquipWeapon?.(slot, p.weaponId);
         this.selectedSlot = slot;
         this.render(tree, currency);
@@ -789,7 +881,7 @@ export class ShopUI {
     return `
       <div class="dnd-panel blueprint-panel">
         <div class="bp-toolbar">
-          <span class="bp-hint">Drag drones onto bay pads · UPGRADES = drone tech</span>
+          <span class="bp-hint">Tap/drag drone → bay · UPGRADES = drone tech</span>
           <button type="button" class="menu-btn primary bp-unlock-btn" id="drone-bay-unlock"
             ${canBay ? '' : 'disabled'}>
             ${
@@ -1129,7 +1221,7 @@ export class ShopUI {
     return `
       <div class="loadout-shop-wrap blueprint-panel">
         <div class="bp-toolbar">
-          <span class="bp-hint">Drag weapons onto hardpoint pads · UPG opens branch upgrades</span>
+          <span class="bp-hint">Tap/drag weapon → pad · UPG for branches</span>
           <span class="loadout-dps">DPS ~${Math.round(L.estimateLoadoutDps())}</span>
         </div>
         <div class="bp-layout loadout-split">

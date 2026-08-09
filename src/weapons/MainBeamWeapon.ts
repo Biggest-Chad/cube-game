@@ -484,7 +484,8 @@ export class MainBeamWeapon implements WeaponBehavior {
         new THREE.Vector3(result.x, result.y, result.z),
         b.splash,
         b.damage * 0.35,
-        now
+        now,
+        instanceId
       );
       for (const c of splash) if (c.destroyed) bus.emit('beam-hit', c);
     }

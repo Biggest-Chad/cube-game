@@ -382,7 +382,12 @@ export class Game {
     this.shopUI.onPurchase = (node) => this.buyUpgrade(node);
     this.shopUI.onBuyWeapon = (defId) => this.buyWeapon(defId);
     this.shopUI.onEquipWeapon = (slot, defId) => {
-      this.loadout.equip(slot, defId);
+      if (!this.loadout.equip(slot, defId)) {
+        if (defId && slot >= this.loadout.hardpointUnlocks) {
+          this.toast('HARDPOINT LOCKED');
+        }
+        return;
+      }
       this.hardpoints.rebuildFromLoadout();
       this.syncLoadoutToSave();
       this.persist();

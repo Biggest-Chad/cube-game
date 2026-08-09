@@ -223,7 +223,15 @@ export class TorpedoWeapon implements WeaponBehavior {
           bt === BlockType.Core ? 50 : bt === BlockType.Reinforced ? 10 : 2;
         const n = cube.findNearest(t.pos, 40, prefer);
         if (n) {
-          cube.getBlockWorldPos(n.instanceId, this.desired);
+          // Home to solid nucleus center when locked on core voxels
+          if (
+            cube.nucleus.isActive &&
+            cube.getBlockType(n.instanceId) === BlockType.Core
+          ) {
+            cube.nucleus.getWorldCenter(this.desired);
+          } else {
+            cube.getBlockWorldPos(n.instanceId, this.desired);
+          }
           this.desired.sub(t.pos).normalize();
           t.vel
             .normalize()
@@ -246,8 +254,7 @@ export class TorpedoWeapon implements WeaponBehavior {
       attr.needsUpdate = true;
       t.trail.geometry.computeBoundingSphere();
 
-      if (t.armed > 0) continue;
-
+      // Always solid-collide (including during arm window) so torps never tunnel
       if (cube.nucleus.isActive && cube.nucleus.containsPoint(t.pos)) {
         const coreId = cube.findCoreInstanceId();
         if (coreId >= 0) {
@@ -277,11 +284,13 @@ export class TorpedoWeapon implements WeaponBehavior {
     now: number
   ): void {
     if (!t.active) return;
+    // Pre-arm impact still detonates but at reduced warhead yield (safety fuse)
+    const yieldMul = t.armed > 0 ? 0.45 : 1;
     if (instanceId >= 0) {
       const type = cube.getBlockType(instanceId);
       const applied = applyToBlock(
         {
-          raw: t.damage,
+          raw: t.damage * yieldMul,
           armorPierce: t.armorPierce,
           forceCrit: t.crit,
           critChance: 0,
@@ -297,7 +306,13 @@ export class TorpedoWeapon implements WeaponBehavior {
         bus.emit('beam-hit', { ...r, crit: t.crit });
       }
     }
-    const splashHits = cube.applySplash(point, t.splash, t.damage * 0.55, now, instanceId);
+    const splashHits = cube.applySplash(
+      point,
+      t.splash,
+      t.damage * 0.55 * yieldMul,
+      now,
+      instanceId
+    );
     for (const h of splashHits) bus.emit('beam-hit', h);
 
     bus.emit('explosion', {

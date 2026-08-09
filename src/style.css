@@ -3599,6 +3599,25 @@ body.orientation-portrait #rotate-overlay {
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* Touch pick-and-place: selected inventory piece + ready drop pads */
+.bp-inv-chip.pick-armed,
+.loadout-weapon.pick-armed,
+[data-drag-weapon].pick-armed {
+  outline: 2px solid var(--magenta, #ff00aa);
+  box-shadow: 0 0 14px rgba(255, 0, 170, 0.45);
+  background: rgba(60, 0, 40, 0.75);
+}
+.bp-pad.drop-ready,
+.bay-pad.drop-ready,
+.loadout-slot.drop-ready {
+  border-style: solid;
+  border-color: rgba(0, 240, 255, 0.75);
+  animation: shop-pick-pulse 1s ease-in-out infinite;
+}
+@keyframes shop-pick-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(0, 240, 255, 0.2); }
+  50% { box-shadow: 0 0 14px rgba(0, 240, 255, 0.45); }
+}
 .bp-inv-actions {
   display: flex;
   flex-wrap: wrap;
