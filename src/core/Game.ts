@@ -41,11 +41,13 @@ import { CinematicIntro } from '../vfx/CinematicIntro';
 import { PostProcessing } from '../vfx/PostProcessing';
 import { AmbientEnvironment } from '../world/AmbientEnvironment';
 import { AudioEngine } from '../audio/AudioEngine';
+import { MusicPlayer } from '../audio/MusicPlayer';
 import { AdService } from '../ads/AdService';
 import { DummyAdProvider } from '../ads/DummyAdProvider';
 import { IapService } from '../platform/IapService';
 import { HUD } from '../ui/HUD';
 import { MenuUI } from '../ui/MenuUI';
+import { MusicRadioUI } from '../ui/MusicRadioUI';
 import { ShopUI } from '../ui/ShopUI';
 import { ResearchUI } from '../ui/ResearchUI';
 import { LevelSelectUI } from '../ui/LevelSelectUI';
@@ -109,6 +111,8 @@ export class Game {
   private reticle = new AimReticle();
   private cinematic: CinematicIntro | null = null;
   private audio = new AudioEngine();
+  private music = new MusicPlayer();
+  private radio: MusicRadioUI | null = null;
   private ads = new AdService(new DummyAdProvider());
   private iap = new IapService();
   private readonly _muzzle = new THREE.Vector3();
@@ -256,6 +260,9 @@ export class Game {
 
     this.hud = new HUD(document.getElementById('hud-root')!);
     this.menu = new MenuUI(document.getElementById('menu-root')!);
+    // Radio widget lives on ui-root so menu re-renders don't destroy it
+    const uiHost = document.getElementById('ui-root') ?? document.body;
+    this.radio = new MusicRadioUI(uiHost, this.music);
     this.shopUI = new ShopUI(document.getElementById('tech-tree-root')!);
     this.researchUI = new ResearchUI(document.getElementById('research-root')!);
     this.levelUI = new LevelSelectUI(document.getElementById('level-select-root')!);
@@ -322,6 +329,7 @@ export class Game {
   private wireUI(): void {
     this.menu.onPlay = () => {
       void this.audio.resume();
+      void this.music.unlock();
       this.startLevel(this.currentLevelId);
     };
     this.menu.onTech = () => this.openTech();
@@ -340,6 +348,7 @@ export class Game {
     });
     els.btnMute.addEventListener('click', () => {
       this.audio.setMuted(!this.audio.muted);
+      this.music.setMuted(this.audio.muted);
       this.save.data.muted = this.audio.muted;
       this.hud.setMuted(this.audio.muted);
       this.persist();
@@ -647,12 +656,14 @@ export class Game {
     };
     this.settingsUI.onMuteChange = (m) => {
       this.audio.setMuted(m);
+      this.music.setMuted(m);
       this.save.data.muted = m;
       this.hud.setMuted(m);
       this.persist();
     };
     this.settingsUI.onVolumeChange = (v) => {
       this.audio.setVolume(v);
+      this.music.setMasterVolume(Math.min(1, v * 0.85));
       this.save.data.masterVolume = v;
       this.persist();
     };
@@ -720,6 +731,7 @@ export class Game {
       muted: this.audio.muted,
       volume: this.audio.volume,
     });
+    this.syncMusicToMode();
   }
 
   private async handleAdReward(placement: import('../ads/AdProvider').AdPlacement): Promise<void> {
@@ -808,6 +820,7 @@ export class Game {
       this.save.data.ascensionTier,
       this.ads.remaining('core_energy')
     );
+    this.syncMusicToMode();
   }
 
   private wireEvents(): void {
@@ -1144,6 +1157,38 @@ export class Game {
     this.hud.setCrosshairVisible(true);
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
     this.tutorial.showIfActive();
+    this.syncMusicToMode();
+  }
+
+  /** Drive BGM context from current game mode. */
+  private syncMusicToMode(): void {
+    const m = this.mode;
+    if (m === 'menu') {
+      this.music.setContext('menu');
+      this.radio?.show();
+      return;
+    }
+    this.radio?.hide();
+    if (m === 'cinematic') {
+      this.music.setContext('intro');
+      return;
+    }
+    if (m === 'intro' || m === 'playing' || m === 'levelclear') {
+      if (this.currentLevelId <= 1) this.music.setContext('stage1');
+      else this.music.setContext('stage', { levelId: this.currentLevelId });
+      return;
+    }
+    if (
+      m === 'tech' ||
+      m === 'research' ||
+      m === 'settings' ||
+      m === 'levels' ||
+      m === 'loadout'
+    ) {
+      this.music.setContext('ui');
+      return;
+    }
+    // dying / dead — keep stage bed soft via ui duck optional; leave as-is
   }
 
   private extractToMenu(): void {
@@ -1266,6 +1311,8 @@ export class Game {
     this.currentLevelId = data.currentLevel;
     this.audio.setMuted(data.muted);
     this.audio.setVolume(data.masterVolume);
+    this.music.setMuted(data.muted);
+    this.music.setMasterVolume(Math.min(1, data.masterVolume * 0.85));
     this.hud.setMuted(data.muted);
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
     this.graphicsQuality = data.graphicsQuality ?? DEFAULT_GRAPHICS_QUALITY;
@@ -1458,6 +1505,8 @@ export class Game {
     this.menu.setMeta(this.save.data.ascensionTier, this.currency.coreEnergy);
     this.menu.show();
     this.startMenuDemo();
+    void this.music.unlock().then(() => this.syncMusicToMode());
+    this.syncMusicToMode();
   }
 
   /** Passive demo cube on main menu — rubik slices + slow orbit. */
@@ -1537,6 +1586,7 @@ export class Game {
       tab ??
       (!ownsDrone ? 'drones' : this.droneBays.state.bays === 0 ? 'drone_bays' : undefined);
     this.shopUI.show(this.tech, this.currency, openTab);
+    this.syncMusicToMode();
   }
 
   private openLoadout(): void {
@@ -1553,6 +1603,7 @@ export class Game {
     this.mode = 'levels';
     this.hud.setVisible(false);
     this.levelUI.show(this.save.data.highestLevel, this.currentLevelId);
+    this.syncMusicToMode();
   }
 
   private buyUpgrade(node: UpgradeNodeDef): void {
@@ -1739,9 +1790,11 @@ export class Game {
       });
       try {
         void this.audio.resume();
+        void this.music.unlock();
       } catch {
         /* audio may be locked until gesture */
       }
+      this.syncMusicToMode(); // Final Protocol through cinematic → stage 1
     } else {
       this.mode = 'intro';
       this.introTimer = 0;
@@ -1754,6 +1807,8 @@ export class Game {
       this.cameraCtrl.beginLevelIntro(this.cameraCtrl.yaw);
       // Seat ship on the intro orbit immediately so chase framing is coherent
       for (let i = 0; i < 8; i++) this.ship.update(this.cameraCtrl, 0.05);
+      void this.music.unlock();
+      this.syncMusicToMode();
     }
   }
 
@@ -1767,6 +1822,9 @@ export class Game {
   }
 
   private finishIntroImmediate(): void {
+    this.mode = 'playing';
+    // Keep Final Protocol rolling if already active (no restart)
+    this.syncMusicToMode();
     // Tear down cinematic instance; restore pristine gameplay cube
     this.cinematicCube.group.visible = false;
     this.cinematicCube.group.position.set(0, 0, 0);

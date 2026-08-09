@@ -3614,3 +3614,94 @@ body.orientation-portrait #rotate-overlay {
   font: inherit;
 }
 .dim { opacity: 0.55; font-size: 11px; }
+
+/* —— Music radio (main menu) —— */
+.music-radio {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  z-index: 25;
+  width: min(280px, 42vw);
+  pointer-events: auto;
+}
+.music-radio.panel-hidden { display: none !important; }
+.music-radio-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 8, 14, 0.82);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.12), inset 0 0 20px rgba(0, 40, 60, 0.35);
+  backdrop-filter: blur(6px);
+}
+.music-radio-eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 22px;
+  width: 18px;
+  flex-shrink: 0;
+}
+.music-radio-eq i {
+  display: block;
+  width: 3px;
+  background: var(--cyan, #00f0ff);
+  border-radius: 1px;
+  height: 30%;
+  opacity: 0.45;
+}
+.music-radio.playing .music-radio-eq i {
+  animation: radio-eq 0.55s ease-in-out infinite alternate;
+  opacity: 0.95;
+}
+.music-radio.playing .music-radio-eq i:nth-child(2) { animation-delay: 0.1s; height: 70%; }
+.music-radio.playing .music-radio-eq i:nth-child(3) { animation-delay: 0.2s; height: 45%; }
+.music-radio.playing .music-radio-eq i:nth-child(4) { animation-delay: 0.05s; height: 90%; }
+@keyframes radio-eq {
+  from { transform: scaleY(0.45); }
+  to { transform: scaleY(1); }
+}
+.music-radio-meta {
+  flex: 1;
+  min-width: 0;
+}
+.music-radio-kicker {
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  color: rgba(0, 240, 255, 0.65);
+  margin-bottom: 2px;
+}
+.music-radio-title {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #e8ffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-radio-controls {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.music-radio-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  background: rgba(0, 20, 30, 0.75);
+  color: #a8f0ff;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.music-radio-btn.primary {
+  border-color: rgba(0, 240, 255, 0.65);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+}
+.music-radio-btn:hover {
+  background: rgba(0, 50, 70, 0.9);
+}
