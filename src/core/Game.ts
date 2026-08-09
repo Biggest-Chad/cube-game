@@ -1182,17 +1182,19 @@ export class Game {
       else this.music.setContext('stage', { levelId: this.currentLevelId });
       return;
     }
-    if (
-      m === 'tech' ||
-      m === 'research' ||
-      m === 'settings' ||
-      m === 'levels' ||
-      m === 'loadout'
-    ) {
+    // Sector select / settings: keep current bed (menu Boot Sequence) playing — no pause
+    if (m === 'levels' || m === 'settings') {
+      this.music.setContext('preserve');
+      // If we came from main menu, radio can stay hidden but bed continues
+      return;
+    }
+    // Shop / research / loadout: duck + muffle, never stop the bed
+    if (m === 'tech' || m === 'research' || m === 'loadout') {
       this.music.setContext('ui');
       return;
     }
-    // dying / dead — keep stage bed soft via ui duck optional; leave as-is
+    // dying / dead — keep whatever is playing
+    this.music.ensurePlaying();
   }
 
   private extractToMenu(): void {
