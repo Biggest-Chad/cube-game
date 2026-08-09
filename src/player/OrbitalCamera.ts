@@ -91,9 +91,10 @@ export class OrbitalCamera {
    *                 When false, only update limits and clamp current radius (no pose pop).
    */
   setOrbitLimits(halfExtent: number, hardSnap = true): void {
-    this.minR = Math.max(ORBIT.minRadius, halfExtent * 1.55);
-    this.maxR = Math.max(this.minR + 8, halfExtent * 4.5 + ORBIT.maxRadius * 0.25);
-    const preferred = THREE.MathUtils.clamp(halfExtent * 2.7, this.minR, this.maxR);
+    // Spawn / combat distance scales with cube size (2× prior seat distance).
+    this.minR = Math.max(ORBIT.minRadius, halfExtent * 3.1);
+    this.maxR = Math.max(this.minR + 8, halfExtent * 9.0 + ORBIT.maxRadius * 0.25);
+    const preferred = THREE.MathUtils.clamp(halfExtent * 5.4, this.minR, this.maxR);
     if (hardSnap) {
       this.targetRadius = preferred;
       this.radius = this.targetRadius;
