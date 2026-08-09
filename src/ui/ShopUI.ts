@@ -744,185 +744,145 @@ export class ShopUI {
     }
     const st = B.state;
     const dronesOn = tree.stats.dronesUnlocked || tree.owned.has('drone_unlock');
+    // Without Ally Protocol, always show UPGRADES (where the unlock lives)
+    const sub: DroneSubTab = !dronesOn ? 'upgrades' : this.droneSubTab;
+    const stockActive = sub === 'stock';
+    const upgradesActive = sub === 'upgrades';
+
     const techCards = getSequentialVisibleNodes(tree.owned, currency, 'drone_bays')
       .map((v) => this.renderCard(v, tree, currency))
       .join('');
-
-    // Prefer upgrades until Ally Protocol is owned (first-shop flow)
-    const sub: DroneSubTab = !dronesOn ? 'upgrades' : this.droneSubTab;
 
     const bayCost = B.nextBayCost();
     const canBay = dronesOn && B.canUnlockBay() && currency.dataFragments >= bayCost;
     const bayCount = Math.max(st.bays, 0);
 
-    const padSizeClass = bayCount > 8 ? 'compact' : bayCount > 5 ? 'mid' : '';
-    const bayPads = !dronesOn
-      ? `<div class="bp-empty-hint">Authorize drones via UPGRADES · Ally Protocol</div>`
-      : bayCount === 0
-        ? `<div class="bp-empty-hint">No bays yet — unlock one in STOCK</div>`
-        : Array.from({ length: bayCount }, (_, i) => {
-            const role = st.slots[i] ?? null;
-            const def = role ? DRONE_ROLES[role] : null;
-            return `
-              <div class="bp-pad bay-pad ${padSizeClass} ${role ? 'filled' : 'empty'}"
-                style="${this.baySlotStyle(i, bayCount)};${def ? `--accent:${def.colorCss}` : ''}"
-                data-bay-slot="${i}" data-bay-role="${role ?? ''}"
-                draggable="${role ? 'true' : 'false'}"
-                title="${def ? def.name : `Bay ${i + 1} empty`}">
-                <span class="bp-pad-idx">B${i + 1}</span>
-                <span class="bp-pad-name">${def ? def.name.slice(0, 3).toUpperCase() : '—'}</span>
-                ${
-                  def
-                    ? `<button type="button" class="bp-pad-clear" data-clear-bay="${i}" title="Clear">×</button>`
-                    : ''
-                }
-              </div>`;
-          }).join('');
-
-    const invRail = !dronesOn
-      ? `<div class="loadout-upgrades-empty">
-          <div class="bp-inv-title">Bays locked</div>
-          <p class="dim">Buy <strong>Ally Protocol</strong> under UPGRADES to field a fleet.</p>
-          <button type="button" class="loadout-equip-btn upgrade-jump" data-drone-sub="upgrades">
-            OPEN UPGRADES
-          </button>
-        </div>`
-      : (['fighter', 'bomber', 'defender'] as DroneRole[])
-          .map((role) => {
-            const def = DRONE_ROLES[role];
-            const unlocked = B.isTypeUnlocked(role);
-            const free = freeInventory(st, role);
-            const owned = st.owned[role] ?? 0;
-            const levelOk = this.highestLevel >= def.unlockLevel;
-            if (!unlocked) {
-              const can = levelOk && currency.dataFragments >= def.unlockCost;
+    // Compact horizontal bay chips (not a full-screen blueprint)
+    const baySlots =
+      !dronesOn
+        ? `<div class="lo-slot lo-slot-msg">Unlock Ally Protocol in UPGRADES</div>`
+        : bayCount === 0
+          ? `<div class="lo-slot lo-slot-msg">No bays — unlock below</div>`
+          : Array.from({ length: bayCount }, (_, i) => {
+              const role = st.slots[i] ?? null;
+              const def = role ? DRONE_ROLES[role] : null;
               return `
-                <div class="bp-inv-card locked" style="--accent:${def.colorCss}">
-                  <div class="bp-inv-title">${def.name}</div>
-                  <div class="bp-inv-sub">${levelOk ? `${def.unlockCost} FRAG` : `STAGE ${def.unlockLevel}+`}</div>
-                  <p class="dim" style="margin:0;font-size:10px;line-height:1.3">${def.description}</p>
-                  <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
-                    data-unlock-type="${role}" ${can ? '' : 'disabled'}>
-                    ${levelOk ? 'UNLOCK' : 'LOCKED'}
-                  </button>
+                <div class="lo-slot bay-slot ${role ? 'filled' : 'empty'}"
+                  style="${def ? `--accent:${def.colorCss}` : ''}"
+                  data-bay-slot="${i}" data-bay-role="${role ?? ''}"
+                  draggable="${role ? 'true' : 'false'}"
+                  title="${def ? def.name : `Bay ${i + 1} empty`}">
+                  <span class="lo-slot-idx">B${i + 1}</span>
+                  <span class="lo-slot-name">${def ? def.name : 'Empty'}</span>
+                  ${
+                    def
+                      ? `<button type="button" class="lo-slot-x" data-clear-bay="${i}" title="Clear">×</button>`
+                      : ''
+                  }
                 </div>`;
-            }
-            const canBuy = currency.dataFragments >= def.unitCost;
-            const emptyBay = st.slots.findIndex((s) => s == null);
-            const canAssign = free > 0 && emptyBay >= 0;
-            return `
-              <div class="bp-inv-card" style="--accent:${def.colorCss}">
-                <div class="bp-inv-title">${def.name}</div>
-                <div class="bp-inv-sub">Free ${free} · Own ${owned}</div>
-                <p class="dim" style="margin:0;font-size:10px;line-height:1.3">${def.description}</p>
-                <div class="bp-inv-chip" draggable="${free > 0 ? 'true' : 'false'}"
-                  data-drag-drone="${role}" title="Drag onto a bay pad">
-                  ☰ DRAG
-                </div>
-                <div class="bp-inv-actions">
-                  <button type="button" class="loadout-equip-btn ${canAssign ? '' : 'equipped'}"
-                    data-assign-drone="${role}" ${canAssign ? '' : 'disabled'}>
-                    ${canAssign ? 'ASSIGN' : free <= 0 ? 'NONE' : 'FULL'}
-                  </button>
-                  <button type="button" class="shop-card-buy ${canBuy ? 'buyable' : ''}"
-                    data-buy-unit="${role}" ${canBuy ? '' : 'disabled'}>
-                    +1 · ${def.unitCost}
-                  </button>
-                </div>
-              </div>`;
-          })
-          .join('');
+            }).join('');
 
-    const upgradesPanel = `
-      <div class="loadout-upgrades-head" style="--accent:var(--cyan,#00f0ff)">
-        <div class="shop-card-top">
-          <span class="shop-card-name">Drone Tech</span>
-          <span class="shop-card-rank">${dronesOn ? 'ONLINE' : 'LOCKED'}</span>
+    const stockBody = !dronesOn
+      ? `<div class="lo-empty">
+          <strong>Fleet offline</strong>
+          <p class="dim">Buy <strong>Ally Protocol</strong> under UPGRADES to authorize bays and field drones.</p>
+          <button type="button" class="menu-btn primary" data-drone-sub="upgrades">GO TO UPGRADES</button>
+        </div>`
+      : `
+        <div class="lo-toolbar">
+          <button type="button" class="menu-btn primary bp-unlock-btn" id="drone-bay-unlock"
+            ${canBay ? '' : 'disabled'}>
+            ${B.canUnlockBay() ? `+ BAY · ${bayCost} FRAG` : 'MAX BAYS'}
+          </button>
+          <span class="dim">${st.bays} bays · ${B.equippedCount()} active · tap type then bay</span>
         </div>
-        <p class="dim loadout-upgrades-blurb">
-          ${
-            dronesOn
-              ? 'Fleet damage, fire rate, HP, respawn, and defender shields.'
-              : 'Purchase Ally Protocol to unlock bay authorization and your first wingman.'
-          }
-        </p>
+        <div class="lo-card-grid">
+          ${(['fighter', 'bomber', 'defender'] as DroneRole[])
+            .map((role) => {
+              const def = DRONE_ROLES[role];
+              const unlocked = B.isTypeUnlocked(role);
+              const free = freeInventory(st, role);
+              const owned = st.owned[role] ?? 0;
+              const levelOk = this.highestLevel >= def.unlockLevel;
+              if (!unlocked) {
+                const can = levelOk && currency.dataFragments >= def.unlockCost;
+                return `
+                  <div class="lo-card locked" style="--accent:${def.colorCss}">
+                    <div class="lo-card-title">${def.name}</div>
+                    <div class="lo-card-sub">${levelOk ? `${def.unlockCost} FRAG` : `STAGE ${def.unlockLevel}+`}</div>
+                    <p class="lo-card-desc">${def.description}</p>
+                    <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
+                      data-unlock-type="${role}" ${can ? '' : 'disabled'}>
+                      ${levelOk ? 'UNLOCK TYPE' : 'LOCKED'}
+                    </button>
+                  </div>`;
+              }
+              const canBuy = currency.dataFragments >= def.unitCost;
+              const emptyBay = st.slots.findIndex((s) => s == null);
+              const canAssign = free > 0 && emptyBay >= 0;
+              return `
+                <div class="lo-card" style="--accent:${def.colorCss}">
+                  <div class="lo-card-title">${def.name}</div>
+                  <div class="lo-card-sub">Free ${free} · Own ${owned}</div>
+                  <p class="lo-card-desc">${def.description}</p>
+                  <button type="button" class="lo-pick"
+                    draggable="${free > 0 ? 'true' : 'false'}"
+                    data-drag-drone="${role}"
+                    ${free > 0 ? '' : 'disabled'}>
+                    ${free > 0 ? '☰ TAP / DRAG TO BAY' : 'NONE FREE'}
+                  </button>
+                  <div class="lo-card-actions">
+                    <button type="button" class="loadout-equip-btn ${canAssign ? '' : 'equipped'}"
+                      data-assign-drone="${role}" ${canAssign ? '' : 'disabled'}>
+                      ${canAssign ? 'ASSIGN' : free <= 0 ? 'NONE' : 'FULL'}
+                    </button>
+                    <button type="button" class="shop-card-buy ${canBuy ? 'buyable' : ''}"
+                      data-buy-unit="${role}" ${canBuy ? '' : 'disabled'}>
+                      +1 · ${def.unitCost}
+                    </button>
+                  </div>
+                </div>`;
+            })
+            .join('')}
+        </div>`;
+
+    const upgradesBody = `
+      <div class="lo-upgrades-banner">
+        <div>
+          <strong>Drone Tech</strong>
+          <span class="dim"> · ${dronesOn ? 'fleet online' : 'buy Ally Protocol first'}</span>
+        </div>
         ${
           dronesOn
-            ? `<button type="button" class="loadout-equip-btn" data-drone-sub="stock">FLEET STOCK</button>`
+            ? `<button type="button" class="loadout-equip-btn" data-drone-sub="stock">FLEET</button>`
             : ''
         }
       </div>
-      <div class="shop-cards drone-tech-cards">
+      <div class="shop-cards lo-tech-cards">
         ${
           techCards ||
-          `<div class="dim" style="padding:8px">All drone tech chains complete.</div>`
+          `<div class="dim" style="padding:10px">All drone tech chains complete.</div>`
         }
       </div>`;
 
-    const stockActive = sub === 'stock';
-    const upgradesActive = sub === 'upgrades';
-
-    const fleetCta = dronesOn
-      ? `<div class="loadout-slot-cta">
-          <span class="loadout-slot-cta-label">
-            ${st.bays} bays · ${B.equippedCount()} active
-          </span>
-          <button type="button" class="menu-btn primary loadout-upgrade-cta" data-drone-sub="upgrades">
-            UPGRADES
-          </button>
-        </div>`
-      : `<div class="loadout-slot-cta">
-          <span class="loadout-slot-cta-label">Ally Protocol required</span>
-          <button type="button" class="menu-btn primary loadout-upgrade-cta" data-drone-sub="upgrades">
-            UPGRADES
-          </button>
-        </div>`;
-
     return `
-      <div class="dnd-panel blueprint-panel">
-        <div class="bp-toolbar">
-          <span class="bp-hint">Tap/drag drone → bay · UPGRADES = drone tech</span>
-          <button type="button" class="menu-btn primary bp-unlock-btn" id="drone-bay-unlock"
-            ${canBay ? '' : 'disabled'}>
-            ${
-              !dronesOn
-                ? 'BAYS LOCKED'
-                : B.canUnlockBay()
-                  ? `+ BAY · ${bayCost} FRAG`
-                  : 'MAX BAYS'
-            }
+      <div class="lo-panel drone-lo">
+        <div class="lo-slot-row" aria-label="Drone bays">
+          ${baySlots}
+        </div>
+        <div class="lo-subtabs" role="tablist">
+          <button type="button" role="tab" class="lo-subtab ${stockActive ? 'active' : ''}"
+            data-drone-sub="stock" aria-selected="${stockActive}">
+            FLEET
           </button>
-          <span class="dnd-toolbar-meta">${st.bays} bays · ${B.equippedCount()} active</span>
+          <button type="button" role="tab" class="lo-subtab ${upgradesActive ? 'active' : ''}"
+            data-drone-sub="upgrades" aria-selected="${upgradesActive}">
+            UPGRADES
+          </button>
         </div>
-        <div class="bp-layout loadout-split">
-          <div class="bp-diagram" aria-label="Ship drone bay blueprint">
-            ${this.renderShipBlueprintSvg()}
-            <div class="bp-pads drone-pads">${bayPads}</div>
-          </div>
-          <aside class="bp-rail loadout-rail">
-            <div class="loadout-subtabs" role="tablist" aria-label="Drone sections">
-              <button type="button" role="tab"
-                class="loadout-subtab ${stockActive ? 'active' : ''}"
-                data-drone-sub="stock" aria-selected="${stockActive}">
-                STOCK
-              </button>
-              <button type="button" role="tab"
-                class="loadout-subtab ${upgradesActive ? 'active' : ''}"
-                data-drone-sub="upgrades" aria-selected="${upgradesActive}">
-                UPGRADES
-              </button>
-            </div>
-            <div class="bp-rail-scroll loadout-subpanel ${stockActive ? 'active' : 'panel-hidden'}"
-              role="tabpanel" ${stockActive ? '' : 'hidden'}>
-              ${invRail}
-            </div>
-            <div class="bp-rail-scroll loadout-subpanel upgrades ${upgradesActive ? 'active' : 'panel-hidden'}"
-              role="tabpanel" ${upgradesActive ? '' : 'hidden'}>
-              ${upgradesPanel}
-            </div>
-          </aside>
+        <div class="lo-body">
+          ${upgradesActive ? upgradesBody : stockBody}
         </div>
-        ${fleetCta}
       </div>`;
   }
 
@@ -1046,86 +1006,81 @@ export class ShopUI {
     const slot = this.selectedSlot;
     const unlocked = slot < L.hardpointUnlocks;
     const selectedDerived = unlocked ? L.getDerived(slot) : null;
+    const sub = this.loadoutSubTab;
+    const weaponsActive = sub === 'weapons';
+    const upgradesActive = sub === 'upgrades';
+    const labels = ['NOSE', 'PORT', 'STBD'];
 
-    const pads = Array.from({ length: MAX_HARDPOINTS }, (_, i) => {
+    const slotsHtml = Array.from({ length: MAX_HARDPOINTS }, (_, i) => {
       const padUnlocked = i < L.hardpointUnlocks;
       const inst = L.slots[i];
       const def = inst ? getWeaponDef(inst.defId) : null;
       const rule = HARDPOINT_UNLOCK[i];
-      const pos = ShopUI.HP_PAD_POS[i] ?? { left: '50%', top: '50%', label: `HP${i + 1}` };
       const lockedHint = !padUnlocked
         ? `ASC ${rule.minAscension}+ · ${rule.costCore} CORE`
         : def
           ? def.name
           : 'EMPTY';
-      const upgradeBtn =
-        padUnlocked && def
-          ? `<button type="button" class="bp-pad-upgrade" data-loadout-upgrade="${i}"
-               title="Upgrade ${def.name}">UPG</button>`
-          : '';
       return `
-        <div class="bp-pad hp-pad loadout-slot dnd-slot ${
-          this.selectedSlot === i ? 'active' : ''
-        } ${padUnlocked ? (def ? 'filled' : 'empty') : 'locked'}"
-          style="left:${pos.left};top:${pos.top};${def ? `--accent:${def.colorCss}` : ''}"
+        <div class="lo-slot hp-slot loadout-slot ${this.selectedSlot === i ? 'active' : ''} ${
+          padUnlocked ? (def ? 'filled' : 'empty') : 'locked'
+        }"
+          style="${def ? `--accent:${def.colorCss}` : ''}"
           data-slot="${i}" data-hp-drop="${i}"
           title="${lockedHint}">
-          <button type="button" class="bp-pad-hit loadout-slot-hit">
-            <span class="bp-pad-idx">HP${i + 1}</span>
-            <span class="bp-pad-label">${pos.label}</span>
-            <span class="bp-pad-name">${
-              !padUnlocked ? 'LOCK' : def ? def.name.slice(0, 8) : 'DROP'
-            }</span>
-          </button>
-          ${upgradeBtn}
+          <span class="lo-slot-idx">HP${i + 1}</span>
+          <span class="lo-slot-label">${labels[i] ?? ''}</span>
+          <span class="lo-slot-name">${
+            !padUnlocked ? 'Locked' : def ? def.name : 'Empty'
+          }</span>
+          ${
+            padUnlocked && def
+              ? `<button type="button" class="lo-slot-upg" data-loadout-upgrade="${i}">UPG</button>`
+              : ''
+          }
         </div>`;
     }).join('');
 
-    // Hardpoint upgrade cards from tech tree
-    const hpCards = getSequentialVisibleNodes(tree.owned, currency, 'loadouts')
-      .map((v) => this.renderCard(v, tree, currency))
-      .join('');
-
-    const weaponRail = WEAPONS.map((w) => {
+    const weaponCards = WEAPONS.map((w) => {
       const owned = L.isOwned(w.id);
       const cost = weaponUnlockCost(w);
       const minLv =
         w.unlock.type === 'shop' || w.unlock.type === 'core' ? w.unlock.minLevel ?? 1 : 1;
       const levelOk = this.highestLevel >= minLv;
-      const equippedOnSelected =
-        unlocked && selectedDerived?.def.id === w.id;
+      const equippedOnSelected = unlocked && selectedDerived?.def.id === w.id;
       if (!owned && w.unlock.type === 'shop') {
         if (!levelOk) {
           return `
-            <div class="bp-inv-card locked" style="--accent:${w.colorCss}">
-              <div class="bp-inv-title">${w.name}</div>
-              <div class="bp-inv-sub">STAGE ${minLv}+</div>
+            <div class="lo-card locked" style="--accent:${w.colorCss}">
+              <div class="lo-card-title">${w.name}</div>
+              <div class="lo-card-sub">STAGE ${minLv}+</div>
             </div>`;
         }
         const can = currency.dataFragments >= cost.fragments;
         return `
-          <div class="bp-inv-card buy" style="--accent:${w.colorCss}">
-            <div class="bp-inv-title">${w.name}</div>
-            <div class="bp-inv-sub">${w.family}</div>
+          <div class="lo-card buy" style="--accent:${w.colorCss}">
+            <div class="lo-card-title">${w.name}</div>
+            <div class="lo-card-sub">${w.family}</div>
+            <p class="lo-card-desc">${w.description}</p>
             <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
               data-buy-weapon="${w.id}" ${can ? '' : 'disabled'}>
-              BUY · ${cost.fragments}
+              BUY · ${cost.fragments} FRAG
             </button>
           </div>`;
       }
       if (!owned) return '';
       return `
-        <div class="bp-inv-card ${equippedOnSelected ? 'selected' : ''}" style="--accent:${w.colorCss}">
-          <div class="bp-inv-title">${w.name}</div>
-          <div class="bp-inv-sub">${w.family}</div>
-          <div class="bp-inv-chip" draggable="true" data-drag-weapon="${w.id}"
-            title="Drag onto a hardpoint pad">
-            ☰ DRAG
-          </div>
-          <div class="bp-inv-actions">
+        <div class="lo-card ${equippedOnSelected ? 'selected' : ''}" style="--accent:${w.colorCss}">
+          <div class="lo-card-title">${w.name}</div>
+          <div class="lo-card-sub">${w.family}${equippedOnSelected ? ' · ON HP' : ''}</div>
+          <p class="lo-card-desc">${w.description}</p>
+          <button type="button" class="lo-pick" draggable="true" data-drag-weapon="${w.id}">
+            ☰ TAP / DRAG TO SLOT
+          </button>
+          <div class="lo-card-actions">
             <button type="button" class="loadout-equip-btn ${equippedOnSelected ? 'equipped' : ''}"
               data-equip-btn="${w.id}" ${equippedOnSelected ? 'disabled' : ''}>
-              ${equippedOnSelected ? 'ON BAY' : 'EQUIP'}
+              ${equippedOnSelected ? 'EQUIPPED' : 'EQUIP'}
             </button>
             ${
               equippedOnSelected
@@ -1137,7 +1092,7 @@ export class ShopUI {
         </div>`;
     }).join('');
 
-    let upgradesPanel = '';
+    let upgradesBody = '';
     if (!unlocked) {
       const rule = HARDPOINT_UNLOCK[slot];
       const ascOk = this.ascensionTier >= rule.minAscension;
@@ -1146,127 +1101,72 @@ export class ShopUI {
         currency.coreEnergy >= rule.costCore &&
         this.highestLevel >= rule.minLevel &&
         ascOk;
-      upgradesPanel = `
-        <div class="loadout-detail shop-card bp-detail">
-          <div class="shop-card-top"><span class="shop-card-name">Hardpoint ${slot + 1}</span></div>
-          <div class="shop-card-desc">
-            Requires <strong>Ascension ${rule.minAscension}+</strong>
-            and <strong>${rule.costCore} Core Energy</strong>.
-            ${
-              !ascOk
-                ? `<br/><span class="evolve-warn">Evolve the hull first (you are Ascension ${this.ascensionTier}).</span>`
-                : ''
-            }
-          </div>
-          <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}" id="hp-unlock" ${
-            can ? '' : 'disabled'
-          }>
+      upgradesBody = `
+        <div class="lo-empty">
+          <strong>Hardpoint ${slot + 1} locked</strong>
+          <p class="dim">
+            Requires Ascension ${rule.minAscension}+ and ${rule.costCore} CORE.
+            ${!ascOk ? `<br/>You are Ascension ${this.ascensionTier}.` : ''}
+          </p>
+          <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}" id="hp-unlock"
+            ${can ? '' : 'disabled'}>
             Unlock · ${rule.costCore} CORE
           </button>
         </div>`;
     } else if (!selectedDerived) {
-      upgradesPanel = `
-        <div class="loadout-upgrades-empty">
-          <div class="bp-inv-title">No weapon on HP${slot + 1}</div>
+      upgradesBody = `
+        <div class="lo-empty">
+          <strong>HP${slot + 1} is empty</strong>
           <p class="dim">Equip a weapon first, then upgrade its branches here.</p>
-          <button type="button" class="loadout-equip-btn" data-loadout-sub="weapons">
+          <button type="button" class="menu-btn primary" data-loadout-sub="weapons">
             BROWSE WEAPONS
           </button>
         </div>`;
     } else {
-      upgradesPanel = `
-        <div class="loadout-upgrades-head" style="--accent:${selectedDerived.def.colorCss}">
-          <div class="shop-card-top">
-            <span class="shop-card-name" style="color:${selectedDerived.def.colorCss}">
-              ${selectedDerived.def.name}
-            </span>
-            <span class="shop-card-rank">HP${slot + 1}</span>
+      upgradesBody = `
+        <div class="lo-upgrades-banner" style="--accent:${selectedDerived.def.colorCss}">
+          <div>
+            <strong style="color:${selectedDerived.def.colorCss}">${selectedDerived.def.name}</strong>
+            <span class="dim"> · HP${slot + 1}</span>
+            <p class="lo-card-desc" style="margin:4px 0 0">${selectedDerived.def.description}</p>
           </div>
-          <p class="dim loadout-upgrades-blurb">${selectedDerived.def.description}</p>
-          <div class="bp-inv-actions">
-            <button type="button" class="loadout-weapon empty bp-unequip" data-equip="">
-              Unequip
-            </button>
-            <button type="button" class="loadout-equip-btn" data-loadout-sub="weapons">
-              ARSENAL
-            </button>
+          <div class="lo-card-actions">
+            <button type="button" class="loadout-weapon empty" data-equip="">Unequip</button>
+            <button type="button" class="loadout-equip-btn" data-loadout-sub="weapons">Arsenal</button>
           </div>
         </div>
         ${this.renderBranches(selectedDerived.def, slot, L, currency)}`;
     }
 
-    const sub = this.loadoutSubTab;
-    const weaponsActive = sub === 'weapons';
-    const upgradesActive = sub === 'upgrades';
-
-    // Selected-slot upgrade CTA strip (always visible under diagram when armed)
-    const slotUpgradeStrip =
-      unlocked && selectedDerived
-        ? `<div class="loadout-slot-cta">
-            <span class="loadout-slot-cta-label">
-              HP${slot + 1} ·
-              <strong style="color:${selectedDerived.def.colorCss}">${selectedDerived.def.name}</strong>
-            </span>
-            <button type="button" class="menu-btn primary loadout-upgrade-cta"
-              data-loadout-upgrade="${slot}">
-              UPGRADE
-            </button>
-          </div>`
-        : unlocked
-          ? `<div class="loadout-slot-cta dim">
-              <span class="loadout-slot-cta-label">HP${slot + 1} · empty — equip a weapon</span>
-            </div>`
-          : '';
+    const weaponsBody = `
+      <div class="lo-toolbar">
+        <span class="dim">Tap weapon then a hardpoint · DPS ~${Math.round(L.estimateLoadoutDps())}</span>
+        ${
+          unlocked
+            ? `<button type="button" class="loadout-weapon empty" data-equip="">Unequip HP${slot + 1}</button>`
+            : ''
+        }
+      </div>
+      <div class="lo-card-grid">${weaponCards}</div>`;
 
     return `
-      <div class="loadout-shop-wrap blueprint-panel">
-        <div class="bp-toolbar">
-          <span class="bp-hint">Tap/drag weapon → pad · UPG for branches</span>
-          <span class="loadout-dps">DPS ~${Math.round(L.estimateLoadoutDps())}</span>
+      <div class="lo-panel loadout-lo">
+        <div class="lo-slot-row" aria-label="Hardpoints">
+          ${slotsHtml}
         </div>
-        <div class="bp-layout loadout-split">
-          <div class="bp-diagram" aria-label="Ship weapon hardpoint blueprint">
-            ${this.renderShipBlueprintSvg()}
-            <div class="bp-pads hp-pads">${pads}</div>
-          </div>
-          <aside class="bp-rail loadout-rail">
-            <div class="loadout-subtabs" role="tablist" aria-label="Loadout sections">
-              <button type="button" role="tab"
-                class="loadout-subtab ${weaponsActive ? 'active' : ''}"
-                data-loadout-sub="weapons" aria-selected="${weaponsActive}">
-                WEAPONS
-              </button>
-              <button type="button" role="tab"
-                class="loadout-subtab ${upgradesActive ? 'active' : ''}"
-                data-loadout-sub="upgrades" aria-selected="${upgradesActive}">
-                UPGRADES
-              </button>
-            </div>
-            <div class="bp-rail-scroll loadout-subpanel ${weaponsActive ? 'active' : 'panel-hidden'}"
-              role="tabpanel" ${weaponsActive ? '' : 'hidden'}>
-              ${
-                unlocked
-                  ? `<button type="button" class="loadout-weapon empty bp-unequip" data-equip="">
-                      Unequip HP${slot + 1}
-                    </button>`
-                  : ''
-              }
-              ${weaponRail}
-            </div>
-            <div class="bp-rail-scroll loadout-subpanel upgrades ${upgradesActive ? 'active' : 'panel-hidden'}"
-              role="tabpanel" ${upgradesActive ? '' : 'hidden'}>
-              ${upgradesPanel}
-            </div>
-          </aside>
+        <div class="lo-subtabs" role="tablist">
+          <button type="button" role="tab" class="lo-subtab ${weaponsActive ? 'active' : ''}"
+            data-loadout-sub="weapons" aria-selected="${weaponsActive}">
+            WEAPONS
+          </button>
+          <button type="button" role="tab" class="lo-subtab ${upgradesActive ? 'active' : ''}"
+            data-loadout-sub="upgrades" aria-selected="${upgradesActive}">
+            UPGRADES
+          </button>
         </div>
-        ${slotUpgradeStrip}
-        ${
-          hpCards
-            ? `<div class="shop-cards loadout-hp-cards bp-extra-cards">${hpCards}</div>`
-            : `<div class="shop-reco dim compact" style="margin-top:6px">
-                Extra hardpoints via <strong>Evolve</strong> then Core on locked pads.
-              </div>`
-        }
+        <div class="lo-body">
+          ${upgradesActive ? upgradesBody : weaponsBody}
+        </div>
       </div>`;
   }
 
