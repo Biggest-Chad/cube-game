@@ -349,11 +349,20 @@ export class RocketWeapon implements WeaponBehavior {
         r.mesh.scale.setScalar(s);
       }
 
+      // Solid nucleus proximity fuse after ignition
+      if (r.phase !== 'drop' && cube.nucleus.isActive && cube.nucleus.containsPoint(r.pos)) {
+        const coreId = cube.findCoreInstanceId();
+        if (coreId >= 0) {
+          this.detonate(r, cube, coreId, r.pos.clone(), now);
+          continue;
+        }
+      }
+
       const move = this.move.copy(r.pos).sub(prev);
       const dist = move.length();
       // Only collide after drop (don't hit ship/cube during release)
       if (r.phase !== 'drop' && dist > 1e-5) {
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.55, -1, 0.65);
+        const hit = cube.raycast(prev, move.normalize(), dist + 0.75, -1, 0.7);
         if (hit) {
           this.detonate(r, cube, hit.instanceId, hit.point, now);
           continue;
@@ -396,7 +405,7 @@ export class RocketWeapon implements WeaponBehavior {
     }
     if (r.splash > 0) {
       const splashDmg = r.damage * 0.5;
-      const hits = cube.applySplash(point, r.splash, splashDmg, now);
+      const hits = cube.applySplash(point, r.splash, splashDmg, now, instanceId);
       for (const h of hits) bus.emit('beam-hit', { ...h, style: 'splash' as const });
     }
     bus.emit('explosion', {

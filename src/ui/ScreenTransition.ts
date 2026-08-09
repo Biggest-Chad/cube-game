@@ -64,7 +64,8 @@ export class ScreenTransition {
    * Ignores re-entry while already active (queues not needed for game).
    */
   play(opts: TransitionOptions = {}): boolean {
-    if (this.phase !== 'idle') return false;
+    // Supersede any in-flight cut so double-taps / re-entry cannot stack onBlack
+    if (this.phase !== 'idle') this.cancel();
     this.outDur = opts.fadeOut ?? DEFAULTS.fadeOut;
     this.holdDur = opts.hold ?? DEFAULTS.hold;
     this.inDur = opts.fadeIn ?? DEFAULTS.fadeIn;
@@ -79,9 +80,24 @@ export class ScreenTransition {
     return true;
   }
 
+  /**
+   * Abort the transition immediately (clear veil + letterbox + pointer capture).
+   * Does not invoke onBlack / onComplete.
+   */
+  cancel(): void {
+    this.phase = 'idle';
+    this.t = 0;
+    this.blackFired = true;
+    this.onBlack = null;
+    this.onComplete = null;
+    this.setVisual(0, 0);
+    this.root.classList.remove('active');
+    this.root.style.pointerEvents = 'none';
+  }
+
   /** Instant black then fade in (e.g. first boot optional). */
   fadeInOnly(opts: { fadeIn?: number; onBlack?: () => void; onComplete?: () => void } = {}): boolean {
-    if (this.phase !== 'idle') return false;
+    if (this.phase !== 'idle') this.cancel();
     this.outDur = 0;
     this.holdDur = 0.05;
     this.inDur = opts.fadeIn ?? DEFAULTS.fadeIn;

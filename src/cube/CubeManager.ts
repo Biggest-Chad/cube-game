@@ -224,10 +224,8 @@ export class CubeManager {
   }
 
   /**
-   * Raycast against axis-aligned blocks via ray-box on remaining instances (coarse but fine for mobile).
-   * Returns approximate outward face normal for bounce / refract weapons.
-   */
-  /**
+   * Raycast against shell blocks + solid nucleus hitbox.
+   * Nucleus is a real collision sphere so projectiles cannot tunnel through the core VFX.
    * @param halfExtent Block AABB half-size for hit tests (default 0.52 = mild forgiveness).
    */
   raycast(
@@ -241,53 +239,100 @@ export class CubeManager {
     point: THREE.Vector3;
     distance: number;
     normal: THREE.Vector3;
+    /** True when the solid nucleus sphere was the closest hit (not a shell voxel). */
+    nucleusSolid?: boolean;
   } | null {
-    if (!this.mesh || this.mesh.count === 0 || !this.generated) return null;
+    if (!this.generated) return null;
+    const dirLen = direction.lengthSq();
+    if (dirLen < 1e-12) return null;
     const dir = direction.clone().normalize();
     let bestDist = maxDist;
     let bestId = -1;
     let bestPoint: THREE.Vector3 | null = null;
+    let nucleusSolid = false;
     const half = halfExtent;
     const box = new THREE.Box3();
     const hitPt = new THREE.Vector3();
 
-    for (let id = 0; id < this.mesh.count; id++) {
-      if (id === ignoreId) continue;
-      this.mesh.getMatrixAt(id, _matrix);
-      _pos.setFromMatrixPosition(_matrix);
-      box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
-      box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
-      const hit = new THREE.Ray(origin, dir).intersectBox(box, hitPt);
-      if (!hit) continue;
-      const d = origin.distanceTo(hit);
-      if (d < bestDist && d > 1e-4) {
-        bestDist = d;
-        bestId = id;
-        bestPoint = hit.clone();
+    // —— Solid nucleus sphere (priority when closer than shell voxels) ——
+    if (this.nucleus.isActive) {
+      const nucPt = new THREE.Vector3();
+      const nucDist = this.nucleus.raycastSolid(origin, dir, maxDist, nucPt);
+      if (nucDist != null && nucDist <= bestDist) {
+        const coreId = this.findCoreInstanceId(ignoreId);
+        if (coreId >= 0) {
+          bestDist = nucDist;
+          bestId = coreId;
+          bestPoint = nucPt.clone();
+          nucleusSolid = true;
+        }
       }
     }
+
+    // —— Block AABBs ——
+    if (this.mesh && this.mesh.count > 0) {
+      for (let id = 0; id < this.mesh.count; id++) {
+        if (id === ignoreId) continue;
+        this.mesh.getMatrixAt(id, _matrix);
+        _pos.setFromMatrixPosition(_matrix);
+        box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
+        box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
+        const hit = new THREE.Ray(origin, dir).intersectBox(box, hitPt);
+        if (!hit) continue;
+        const d = origin.distanceTo(hit);
+        // Allow d === 0 for overlap; still require strictly closer than current best
+        if (d < bestDist && d >= 0) {
+          // Prefer surface hits over co-located; tiny epsilon for floating origin-in-box
+          if (d < 1e-5 && bestId >= 0 && !nucleusSolid) continue;
+          bestDist = d;
+          bestId = id;
+          bestPoint = hit.clone();
+          nucleusSolid = false;
+        }
+      }
+    }
+
     if (bestId < 0 || !bestPoint) return null;
 
-    // Face normal from nearest axis of hit relative to block center
-    this.mesh.getMatrixAt(bestId, _matrix);
-    _pos.setFromMatrixPosition(_matrix);
-    const lx = bestPoint.x - _pos.x;
-    const ly = bestPoint.y - _pos.y;
-    const lz = bestPoint.z - _pos.z;
-    const ax = Math.abs(lx);
-    const ay = Math.abs(ly);
-    const az = Math.abs(lz);
     const normal = new THREE.Vector3();
-    if (ax >= ay && ax >= az) normal.set(Math.sign(lx) || 1, 0, 0);
-    else if (ay >= ax && ay >= az) normal.set(0, Math.sign(ly) || 1, 0);
-    else normal.set(0, 0, Math.sign(lz) || 1);
+    if (nucleusSolid) {
+      // Outward from nucleus center
+      this.nucleus.getWorldCenter(_pos);
+      normal.copy(bestPoint).sub(_pos);
+      if (normal.lengthSq() < 1e-8) normal.copy(dir).multiplyScalar(-1);
+      else normal.normalize();
+    } else {
+      // Face normal from nearest axis of hit relative to block center
+      this.mesh!.getMatrixAt(bestId, _matrix);
+      _pos.setFromMatrixPosition(_matrix);
+      const lx = bestPoint.x - _pos.x;
+      const ly = bestPoint.y - _pos.y;
+      const lz = bestPoint.z - _pos.z;
+      const ax = Math.abs(lx);
+      const ay = Math.abs(ly);
+      const az = Math.abs(lz);
+      if (ax >= ay && ax >= az) normal.set(Math.sign(lx) || 1, 0, 0);
+      else if (ay >= ax && ay >= az) normal.set(0, Math.sign(ly) || 1, 0);
+      else normal.set(0, 0, Math.sign(lz) || 1);
+    }
 
     return {
       instanceId: bestId,
       point: bestPoint,
       distance: bestDist,
       normal,
+      nucleusSolid,
     };
+  }
+
+  /** First live Core block instance (for routing solid-nucleus hits into the shared pool). */
+  findCoreInstanceId(ignoreId = -1): number {
+    if (!this.mesh) return -1;
+    for (let id = 0; id < this.mesh.count; id++) {
+      if (id === ignoreId) continue;
+      if (this.getBlockType(id) === BlockType.Core) return id;
+    }
+    return -1;
   }
 
   /** Find nearest block to a world point (for drones / splash). */
@@ -552,22 +597,51 @@ export class CubeManager {
     return this.nucleus.isLevelComplete();
   }
 
-  /** Splash damage around world point */
-  applySplash(center: THREE.Vector3, radius: number, damage: number, now: number): DamageResult[] {
+  /**
+   * Splash damage around world point.
+   * Core voxels in radius route through the shared nucleus (once — first core only).
+   * @param ignoreId Skip this instance (usually the primary impact already damaged).
+   */
+  applySplash(
+    center: THREE.Vector3,
+    radius: number,
+    damage: number,
+    now: number,
+    ignoreId = -1
+  ): DamageResult[] {
     const results: DamageResult[] = [];
     if (!this.mesh) return results;
     // collect ids first (mutation shifts ids)
     const hits: number[] = [];
     for (let id = 0; id < this.mesh.count; id++) {
+      if (id === ignoreId) continue;
       this.mesh.getMatrixAt(id, _matrix);
       _pos.setFromMatrixPosition(_matrix);
       if (center.distanceTo(_pos) <= radius) hits.push(id);
     }
+    // Also include solid nucleus if blast overlaps the hitbox but no core voxel was in range
+    // (and primary impact was not already a core hit)
+    if (this.nucleus.isActive) {
+      const primaryWasCore =
+        ignoreId >= 0 && this.getBlockType(ignoreId) === BlockType.Core;
+      if (!primaryWasCore) {
+        this.nucleus.getWorldCenter(_pos);
+        const nucR = this.nucleus.hitRadius;
+        if (center.distanceTo(_pos) <= radius + nucR * 0.85) {
+          const coreId = this.findCoreInstanceId(ignoreId);
+          if (coreId >= 0 && !hits.includes(coreId)) hits.push(coreId);
+        }
+      }
+    }
     // damage from high id to low so swap-remove is safer... actually applyDamage uses swap-remove
     // so process sorted descending
     hits.sort((a, b) => b - a);
+    let coreSplashed = false;
     for (const id of hits) {
-      // id may be stale if earlier removal shifted — re-find by position is safer for splash
+      if (this.getBlockType(id) === BlockType.Core) {
+        if (coreSplashed) continue;
+        coreSplashed = true;
+      }
       const r = this.applyDamage(id, damage, now);
       if (r) results.push(r);
     }

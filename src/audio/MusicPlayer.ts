@@ -93,14 +93,13 @@ export class MusicPlayer {
 
   /**
    * High-level bed selection.
-   * - menu: Boot Sequence (loop) — only restarts if not already that track
-   * - intro/stage1: Final Protocol seamless
-   * - stage (2+): shuffle with fade between tracks
-   * - ui: duck/muffle only (keep bed)
-   * - preserve: keep bed, no duck (sectors/settings)
+   * Continuity-first: never restart or swap mid-song when changing levels / menus / modes.
+   * Track only advances on natural end, user skip, or when nothing is loaded yet.
+   * - ui: duck/muffle only
+   * - preserve: unmuffle, keep bed
+   * - menu / stage / intro: keep current song if one is already loaded
    */
-  setContext(ctx: MusicContext, opts?: { levelId?: number }): void {
-    const prev = this.context;
+  setContext(ctx: MusicContext, _opts?: { levelId?: number }): void {
     this.context = ctx;
 
     if (ctx === 'ui') {
@@ -117,59 +116,65 @@ export class MusicPlayer {
 
     this.setMuffled(false);
 
+    // Level 1 maps to stage1 for onEnded routing only — never force a restart
+    if (ctx === 'stage' && (_opts?.levelId ?? 2) <= 1) {
+      this.context = 'stage1';
+      ctx = 'stage1';
+    }
+
+    // Something already loaded → keep it (levels, menu, shop return, etc.)
+    if (this.hasActiveBed()) {
+      this.applyLoopForContext(ctx);
+      void this.audio.play().catch(() => undefined);
+      this.onTrackChange?.(this.current);
+      return;
+    }
+
+    // Cold start only — pick a bed for this context
     if (ctx === 'menu') {
-      // Never restart Boot Sequence just because we re-entered menu from a submenu
-      const alreadyMenu =
-        this.current?.id === MUSIC_MENU.id && (this.isPlaying || !!this.audio.src);
-      this.playTrack(MUSIC_MENU, {
-        loop: true,
-        forceRestart: !alreadyMenu && prev !== 'menu' && prev !== 'preserve' && prev !== 'ui',
-        fade: prev === 'stage' || prev === 'stage1' || prev === 'intro',
-      });
+      this.playTrack(MUSIC_MENU, { loop: true, forceRestart: false, fade: false });
       return;
     }
-
     if (ctx === 'intro' || ctx === 'stage1') {
-      if (this.current?.id === MUSIC_INTRO.id && (this.isPlaying || !!this.audio.src)) {
-        this.audio.loop = true;
-        void this.audio.play().catch(() => undefined);
-        this.onTrackChange?.(this.current);
-        return;
-      }
-      this.playTrack(MUSIC_INTRO, {
-        loop: true,
-        forceRestart: false,
-        fade: prev === 'menu' || prev === 'stage',
-      });
+      this.playTrack(MUSIC_INTRO, { loop: true, forceRestart: false, fade: false });
       return;
     }
-
     if (ctx === 'stage') {
-      const id = opts?.levelId ?? 2;
-      if (id <= 1) {
-        this.setContext('stage1');
-        return;
-      }
-      // New stage: always pick a shuffled track with fade (unless same request mid-song keep)
       this.ensureShuffle();
-      const next = this.pickShuffleNext(true);
-      if (next) {
-        const same = this.current?.id === next.id && this.isPlaying;
-        this.playTrack(next, {
-          loop: false,
-          forceRestart: !same,
-          fade: true,
-        });
-      } else {
-        this.ensurePlaying();
-      }
+      const next = this.pickShuffleNext(true) ?? MUSIC_POOL[0] ?? MUSIC_MENU;
+      this.playTrack(next, { loop: false, forceRestart: false, fade: false });
     }
   }
 
-  /** If nothing is playing, start an appropriate bed. */
+  /** True if a track is loaded and not finished (paused is still "active"). */
+  private hasActiveBed(): boolean {
+    if (!this.current || !this.audio.src) return false;
+    if (this.audio.ended) return false;
+    return true;
+  }
+
+  /** Loop only dedicated beds; shuffle tracks always play through once. */
+  private applyLoopForContext(ctx: MusicContext): void {
+    if (!this.current) return;
+    if (this.current.id === MUSIC_MENU.id) {
+      // Boot Sequence loops on menu/submenus; if it rode into combat, let it finish once
+      this.audio.loop = ctx === 'menu' || ctx === 'preserve' || ctx === 'ui';
+      return;
+    }
+    if (this.current.id === MUSIC_INTRO.id) {
+      // Final Protocol loops on sector 1 / intro only; later sectors keep the song but
+      // allow natural end → shuffle (no mid-track restart on level change).
+      this.audio.loop = ctx === 'intro' || ctx === 'stage1';
+      return;
+    }
+    // Combat shuffle / radio picks — never infinite-loop across stages
+    this.audio.loop = false;
+  }
+
+  /** If nothing is playing, start an appropriate bed. Never restarts a live track. */
   ensurePlaying(): void {
     if (this.muted) return;
-    if (this.isPlaying) {
+    if (this.hasActiveBed()) {
       void this.audio.play().catch(() => undefined);
       return;
     }
@@ -181,10 +186,10 @@ export class MusicPlayer {
       this.playTrack(MUSIC_INTRO, { loop: true, forceRestart: false, fade: false });
       return;
     }
-    // stage / ui: random from pool
+    // stage / ui: random from pool (only when nothing is loaded)
     this.ensureShuffle();
     const t = this.pickShuffleNext(true) ?? MUSIC_POOL[0] ?? MUSIC_MENU;
-    this.playTrack(t, { loop: false, forceRestart: true, fade: false });
+    this.playTrack(t, { loop: false, forceRestart: false, fade: false });
   }
 
   playTrack(
@@ -311,9 +316,9 @@ export class MusicPlayer {
 
   private onEnded(): void {
     if (this.audio.loop) return;
-    // Always continue with something
+    // Natural end only — pick the next bed for the *current* mode (no mid-level restarts)
     if (this.context === 'menu' || this.context === 'preserve') {
-      // If user skipped to a pool track on menu, after it ends return to Boot Sequence
+      // Pool/radio pick finished on menu → ease back into Boot Sequence
       this.playTrack(MUSIC_MENU, { loop: true, forceRestart: true, fade: true });
       return;
     }
@@ -321,7 +326,7 @@ export class MusicPlayer {
       this.playTrack(MUSIC_INTRO, { loop: true, forceRestart: true, fade: false });
       return;
     }
-    // stage / ui: next shuffle
+    // stage / ui / dying: continue shuffle without gaps
     this.ensureShuffle();
     const t = this.pickShuffleNext(true);
     if (t) this.playTrack(t, { loop: false, forceRestart: true, fade: true });

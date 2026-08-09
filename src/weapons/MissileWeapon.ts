@@ -231,8 +231,18 @@ export class MissileWeapon implements WeaponBehavior {
   }
 
   private pickTarget(cube: CubeManager, from: THREE.Vector3): number {
+    // Prefer solid nucleus when active — missiles home into the core hitbox
+    if (cube.nucleus.isActive) {
+      const coreId = cube.findCoreInstanceId();
+      if (coreId >= 0) {
+        // Only force-core when exposed or hunter, otherwise still strong preference
+        if (cube.nucleus.isExposed || this.stats.flags.has('hunter_core')) {
+          return coreId;
+        }
+      }
+    }
     const prefer = (t: BlockType): number => {
-      if (t === BlockType.Core) return this.stats.flags.has('hunter_core') ? 40 : 20;
+      if (t === BlockType.Core) return this.stats.flags.has('hunter_core') ? 40 : 28;
       if (t === BlockType.DataNode) return 18;
       if (t === BlockType.Reinforced) return 6;
       return 3;
@@ -319,7 +329,15 @@ export class MissileWeapon implements WeaponBehavior {
 
       const armed = m.arm <= 0;
       if (m.targetId >= 0) {
-        cube.getBlockWorldPos(m.targetId, this.desired);
+        // Home to solid nucleus center when target is a core block — true solid aimpoint
+        if (
+          cube.nucleus.isActive &&
+          cube.getBlockType(m.targetId) === BlockType.Core
+        ) {
+          cube.nucleus.getWorldCenter(this.desired);
+        } else {
+          cube.getBlockWorldPos(m.targetId, this.desired);
+        }
         this.desired.sub(m.pos).normalize();
         const turn = armed ? turnArmed : turnCoasting;
         // While coasting, bias gently toward target without killing lateral path
@@ -356,10 +374,20 @@ export class MissileWeapon implements WeaponBehavior {
       (m.trail.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
       m.trail.geometry.computeBoundingSphere();
 
+      // Proximity fuse vs solid nucleus (clear explosion feedback)
+      if (cube.nucleus.isActive && cube.nucleus.containsPoint(m.pos)) {
+        const coreId = cube.findCoreInstanceId();
+        if (coreId >= 0) {
+          this.impact(m, cube, coreId, m.pos.clone(), now);
+          continue;
+        }
+      }
+
       const move = this.move.copy(m.pos).sub(prev);
       const dist = move.length();
       if (dist > 1e-5) {
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.5, -1, 0.55);
+        // Slightly thicker cast so fast missiles don't tunnel the core sphere
+        const hit = cube.raycast(prev, move.normalize(), dist + 0.75, -1, 0.6);
         if (hit) {
           this.impact(m, cube, hit.instanceId, hit.point, now);
           continue;
@@ -408,7 +436,7 @@ export class MissileWeapon implements WeaponBehavior {
       });
     }
     if (m.splash > 0) {
-      for (const h of cube.applySplash(point, m.splash, m.damage * 0.3, now)) {
+      for (const h of cube.applySplash(point, m.splash, m.damage * 0.3, now, instanceId)) {
         bus.emit('beam-hit', { ...h, style: 'splash' as const });
       }
     }

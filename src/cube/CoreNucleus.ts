@@ -67,6 +67,10 @@ export class CoreNucleus {
   private ringMat: THREE.MeshBasicMaterial | null = null;
   private baseScale = 1;
   private _tmp = new THREE.Vector3();
+  private _tmp2 = new THREE.Vector3();
+  private _dirN = new THREE.Vector3();
+  private _sphere = new THREE.Sphere();
+  private _ray = new THREE.Ray();
 
   bind(cube: CubeManager): void {
     this.cube = cube;
@@ -99,6 +103,72 @@ export class CoreNucleus {
 
   get rageFireMul(): number {
     return this.attribute === 'rage' ? CORE.rageFireRateMul : 1;
+  }
+
+  /**
+   * Solid collision radius for projectiles — larger than the rendered nucleus
+   * so beams/missiles register clean hits without needing pixel-perfect aim.
+   */
+  get hitRadius(): number {
+    if (!this.active || this.hp <= 0) return 0;
+    // Mesh body ≈ baseScale (unit icosahedron); ring sits ~1.35× that.
+    // Hitbox extends past both for forgiveness (~45% beyond peak visual body).
+    const visualBody = this.baseScale * (1.08 + this.pulse * 0.15);
+    return Math.max(1.35, visualBody * 1.55);
+  }
+
+  /** World-space center of the nucleus solid (cube group origin + local VFX). */
+  getWorldCenter(out = new THREE.Vector3()): THREE.Vector3 {
+    if (this.cube) {
+      // vfxGroup is parented under cube.group at local 0; use world matrix
+      this.vfxGroup.getWorldPosition(out);
+    } else {
+      out.set(0, 0, 0);
+    }
+    return out;
+  }
+
+  /**
+   * Ray / segment test vs solid nucleus sphere.
+   * Returns distance along ray (0 if already overlapping) and fills outPoint, or null.
+   */
+  raycastSolid(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    maxDist: number,
+    outPoint: THREE.Vector3
+  ): number | null {
+    if (!this.active || this.hp <= 0) return null;
+    const radius = this.hitRadius;
+    if (radius <= 0) return null;
+
+    this.getWorldCenter(this._tmp);
+    const toOrigin = origin.distanceTo(this._tmp);
+
+    // Already inside solid — instant contact (prevents tunneling when deep inside)
+    if (toOrigin <= radius) {
+      outPoint.copy(origin);
+      return 0;
+    }
+
+    if (direction.lengthSq() < 1e-12) return null;
+    this._dirN.copy(direction).normalize();
+    this._sphere.center.copy(this._tmp);
+    this._sphere.radius = radius;
+    this._ray.set(origin, this._dirN);
+    const hit = this._ray.intersectSphere(this._sphere, outPoint);
+    if (!hit) return null;
+    const d = origin.distanceTo(outPoint);
+    if (d > maxDist || d < 0) return null;
+    return d;
+  }
+
+  /** True if a world point is inside the solid nucleus hitbox. */
+  containsPoint(world: THREE.Vector3): boolean {
+    if (!this.active || this.hp <= 0) return false;
+    const r = this.hitRadius;
+    if (r <= 0) return false;
+    return this.getWorldCenter(this._tmp2).distanceToSquared(world) <= r * r;
   }
 
   snapshot(): CoreSnapshot {

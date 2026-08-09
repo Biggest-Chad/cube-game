@@ -248,10 +248,18 @@ export class TorpedoWeapon implements WeaponBehavior {
 
       if (t.armed > 0) continue;
 
+      if (cube.nucleus.isActive && cube.nucleus.containsPoint(t.pos)) {
+        const coreId = cube.findCoreInstanceId();
+        if (coreId >= 0) {
+          this.detonate(t, cube, t.pos.clone(), coreId, now);
+          continue;
+        }
+      }
+
       const move = this.move.copy(t.pos).sub(prev);
       const dist = move.length();
       if (dist > 1e-5) {
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.6);
+        const hit = cube.raycast(prev, move.normalize(), dist + 0.75);
         if (hit) {
           this.detonate(t, cube, hit.point, hit.instanceId, now);
           continue;
@@ -289,7 +297,7 @@ export class TorpedoWeapon implements WeaponBehavior {
         bus.emit('beam-hit', { ...r, crit: t.crit });
       }
     }
-    const splashHits = cube.applySplash(point, t.splash, t.damage * 0.55, now);
+    const splashHits = cube.applySplash(point, t.splash, t.damage * 0.55, now, instanceId);
     for (const h of splashHits) bus.emit('beam-hit', h);
 
     bus.emit('explosion', {

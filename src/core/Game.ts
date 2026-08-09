@@ -157,6 +157,10 @@ export class Game {
   private sessionBlocksDestroyed = 0;
   private sessionPurchased = false;
   private shopOpen = false;
+  /** Monotonic token so overlapping startLevelImmediate calls cannot corrupt UI/ship. */
+  private levelLoadGen = 0;
+  /** True while a sector load is in progress (fade or immediate setup). */
+  private levelLoadBusy = false;
   /** Seconds remaining before weapons may fire (3s level warm-up). */
   private combatWarmup = 0;
   /** Tutorial: fire blocked until welcome ack or movement. */
@@ -1142,19 +1146,27 @@ export class Game {
     });
   }
 
+  /** Ensure ship/hardpoints are renderable (clears cinematic scale-0 / death hide). */
+  private restoreShipVisual(): void {
+    this.ship.group.visible = true;
+    this.ship.group.scale.setScalar(1);
+    this.hardpoints.group.visible = true;
+  }
+
   /** Restore combat camera/ship after closing the shop mid-stage. */
   private resumeGameplayFromShop(): void {
     this.mode = 'playing';
     this.menuDemoActive = false;
     this.shopOpen = false;
+    this.levelLoadBusy = false;
     // Force gameplay chase camera (shop must never leave us in cinematic/blend)
     this.cameraCtrl.endCinematic();
     this.cameraCtrl.setTopSpeedMul(this.tech.stats.orbitSpeedMul);
     this.cameraCtrl.extendMaxRadius(this.tech.stats.zoomRangeAdd);
     this.cube.group.visible = true;
-    this.ship.group.visible = true;
-    this.ship.group.scale.setScalar(1);
-    this.hardpoints.group.visible = true;
+    this.cinematicCube.group.visible = false;
+    this.restoreShipVisual();
+    this.hud.setIntro(false);
     // Snap ship onto current orbit seat so chase camera is coherent
     for (let i = 0; i < 12; i++) this.ship.update(this.cameraCtrl, 0.05);
     this.hud.setVisible(true);
@@ -1557,6 +1569,18 @@ export class Game {
       return;
     }
 
+    // Block shop during black cut — opening mid-fade left tech-tree empty + ship at scale 0
+    if (this.screenFx.isActive || this.levelLoadBusy) {
+      this.toast('STAND BY — SECTOR LOADING');
+      return;
+    }
+
+    // Opening during intro/cinematic must complete the combat seat handoff first,
+    // otherwise ship stays hidden/scaled-0 and HUD buttons never rebind cleanly.
+    if (this.mode === 'intro' || this.mode === 'cinematic') {
+      this.finishIntroImmediate();
+    }
+
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
@@ -1564,22 +1588,30 @@ export class Game {
     this.loadoutUI.hide();
     this.settingsUI.hide();
     this.researchUI.hide();
+    this.overlay.innerHTML = '';
     // Only resume combat if we opened shop from an active stage (not menu demo)
     const fromCombat =
       !this.menuDemoActive &&
       (this.mode === 'playing' ||
         this.mode === 'levelclear' ||
         this.mode === 'intro' ||
+        this.mode === 'cinematic' ||
         (this.mode === 'tech' && this.pendingReturnMode === 'playing'));
     this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
     this.mode = 'tech';
     this.shopOpen = true;
     this.hud.setVisible(false);
+    this.hud.setIntro(false);
     this.hud.hideShopHint();
     this.shopHintShown = true;
     this.tutorial.notifyShopOpened();
     // Keep orbit camera frozen on ship (no auto-spin that desyncs chase)
     this.cameraCtrl.endCinematic();
+    this.restoreShipVisual();
+    this.cube.group.visible = true;
+    this.cinematicCube.group.visible = false;
+    // Seat ship on orbit so backdrop is coherent behind the shop
+    for (let i = 0; i < 8; i++) this.ship.update(this.cameraCtrl, 0.05);
     this.shopUI.setVitals(this.vitals.snapshot());
     this.shopUI.setLoadoutContext(
       this.loadout,
@@ -1696,31 +1728,40 @@ export class Game {
    * Start a sector with cinematic letterbox fade (menu → level, level → level).
    */
   private startLevel(id: number): void {
-    const go = () => this.startLevelImmediate(id);
-    if (this.screenFx.isActive) {
-      go();
-      return;
-    }
+    // Always supersede an in-flight cut — never stack two onBlack handlers
+    // (double-tap Next / Play + early shop used to corrupt ship + HUD state).
+    this.levelLoadBusy = true;
     this.screenFx.play({
       fadeOut: 0.55,
       hold: 0.4,
       fadeIn: 0.8,
-      onBlack: go,
+      onBlack: () => this.startLevelImmediate(id),
+      onComplete: () => {
+        this.levelLoadBusy = false;
+      },
     });
   }
 
   private startLevelImmediate(id: number): void {
+    this.levelLoadGen++;
     const level = getLevel(id);
     this.currentLevelId = id;
     this.levelClearHandled = false;
     this.clearRewardMul = 1;
+    // Close any mid-load UI so shop/settings cannot sit on top of a half-started sector
+    this.shopOpen = false;
     this.stopMenuDemo();
     this.menu.hide();
     this.shopUI.hide();
+    this.researchUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.settingsUI.hide();
+    this.adsUI.hide?.();
     this.overlay.innerHTML = '';
+    this.hud.setIntro(false);
+    // Never inherit scale 0 / off-map pose from cinematic or death
+    this.restoreShipVisual();
 
     this.wipeCombatSession();
 
@@ -1874,13 +1915,14 @@ export class Game {
     this.ship.group.scale.setScalar(1);
     this.ship.group.visible = false;
     for (let i = 0; i < 12; i++) this.ship.update(this.cameraCtrl, 0.08);
-    this.ship.group.visible = true;
-    this.hardpoints.group.visible = true;
+    this.restoreShipVisual();
 
     this.mode = 'playing';
+    this.levelLoadBusy = false;
     this.sessionBlocksDestroyed = 0;
     this.sessionPurchased = false;
-    this.combatWarmup = 3;
+    // Keep remaining warmup if re-entering; otherwise arm standard countdown
+    if (this.combatWarmup <= 0) this.combatWarmup = 3;
     this.tutorialFireUnlocked = false;
     this.hud.setVisible(true);
     this.hud.setIntro(false);
@@ -2364,9 +2406,16 @@ export class Game {
       this.mode === 'tech' ||
       this.mode === 'levels' ||
       this.mode === 'loadout' ||
+      this.mode === 'research' ||
       this.mode === 'dead'
     ) {
       // Combat shop: freeze orbit on ship. Menu/demo: gentle spin.
+      // Never leave ship at cinematic scale-0 while the shop is open.
+      if (this.mode === 'tech' && this.pendingReturnMode === 'playing') {
+        if (!this.ship.group.visible || this.ship.group.scale.x < 0.5) {
+          this.restoreShipVisual();
+        }
+      }
       if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
         this.cameraCtrl.update(dt);
         this.ship.update(this.cameraCtrl, dt);
