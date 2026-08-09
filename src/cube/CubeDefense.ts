@@ -6,9 +6,10 @@ import * as THREE from 'three';
 import type { CubeManager } from './CubeManager';
 import { BlockType } from './BlockTypes';
 import { Turret } from './Turret';
-import { EnemyDrone } from './EnemyDrone';
+import { EnemyDrone, type EnemyDroneRole } from './EnemyDrone';
 import { bus } from '../core/EventBus';
 import { COLORS } from '../data/constants';
+import { CORE } from '../data/core';
 
 export interface DefenseSchedule {
   coreShield: boolean;
@@ -132,6 +133,16 @@ export class CubeDefense {
   private hooks: CubeDefenseHooks | null = null;
   private _idSeq = 0;
   private _pos = new THREE.Vector3();
+  private fireRateMul = 1;
+  private unsubs: Array<() => void> = [];
+  /** Rage arc beams — player must dodge. */
+  private arcs: Array<{
+    mesh: THREE.Mesh;
+    pos: THREE.Vector3;
+    vel: THREE.Vector3;
+    life: number;
+    damage: number;
+  }> = [];
 
   constructor() {
     this.group.add(this.projectileRoot);
@@ -149,6 +160,8 @@ export class CubeDefense {
     this.reset();
     this.levelId = levelId;
     this.schedule = defenseScheduleForLevel(levelId);
+    this.fireRateMul = 1;
+    this.bindCoreEvents();
     if (!this.cube) return;
 
     const he = this.cube.halfExtent;
@@ -240,14 +253,7 @@ export class CubeDefense {
     }
 
     for (let i = 0; i < this.schedule.enemyDroneCount; i++) {
-      const d = new EnemyDrone(`ed_${this._idSeq++}`, i, he, {
-        hp: 35 + levelId * 4,
-        damage: 6 + levelId * 0.5,
-        fireRate: this.schedule.elite ? 1.4 : 1.0,
-        color: 0xff2244,
-      });
-      this.enemyDrones.push(d);
-      this.group.add(d.group);
+      this.spawnEnemyDrone('attack', false);
     }
 
     bus.emit('cube-defense-started', {
@@ -255,6 +261,88 @@ export class CubeDefense {
       latticeTurrets: turretIds.length,
       totalTurrets: this.links.length,
     });
+  }
+
+  private bindCoreEvents(): void {
+    for (const u of this.unsubs) u();
+    this.unsubs = [];
+    this.unsubs.push(
+      bus.on(
+        'core-spawn-drones',
+        (p: { count: number; role: 'attack' | 'repair' | 'mixed'; enraged?: boolean }) => {
+          for (let i = 0; i < p.count; i++) {
+            let role: EnemyDroneRole = 'attack';
+            if (p.role === 'repair') role = 'repair';
+            else if (p.role === 'mixed') role = Math.random() > 0.45 ? 'attack' : 'repair';
+            this.spawnEnemyDrone(role, !!p.enraged);
+          }
+        }
+      ),
+      bus.on('core-resurrect', (p: { fraction: number }) => {
+        if (!this.cube) return;
+        this.cube.resurrectShellFraction(p.fraction, performance.now() / 1000);
+      }),
+      bus.on('core-started', (p: { attribute?: string }) => {
+        if (p.attribute === 'rage') this.fireRateMul = CORE.rageFireRateMul;
+        else this.fireRateMul = 1;
+      })
+    );
+  }
+
+  spawnEnemyDrone(role: EnemyDroneRole = 'attack', enraged = false): EnemyDrone | null {
+    if (!this.cube) return null;
+    // Soft cap to avoid meltdown
+    if (this.enemyDrones.filter((d) => d.alive).length >= 18) return null;
+    const he = this.cube.halfExtent;
+    const idx = this.enemyDrones.length;
+    const isRepair = role === 'repair';
+    const d = new EnemyDrone(`ed_${this._idSeq++}`, idx, he, {
+      hp: (isRepair ? 28 : 40) + this.levelId * (isRepair ? 3 : 5),
+      damage: 6 + this.levelId * 0.55,
+      fireRate: (this.schedule.elite ? 1.35 : 1.0) * this.fireRateMul,
+      speed: isRepair ? 4.5 : 6.5,
+      color: isRepair ? 0x44ff88 : 0xff2244,
+      role,
+      repairFrac: 0.07,
+    });
+    if (enraged) d.setEnraged(true);
+    // Spawn near cube surface
+    const ang = Math.random() * Math.PI * 2;
+    d.group.position.set(
+      Math.cos(ang) * he * 1.2,
+      (Math.random() - 0.5) * he,
+      Math.sin(ang) * he * 1.2
+    );
+    this.enemyDrones.push(d);
+    this.group.add(d.group);
+    return d;
+  }
+
+  /** Fire a dodgeable arc beam from cube center. */
+  fireArcBeam(dir: THREE.Vector3, speed: number, damage: number): void {
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.22, 2.4, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xff3300,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    mesh.rotation.x = Math.PI / 2;
+    const pos = new THREE.Vector3(0, 0, 0);
+    const vel = dir.clone().normalize().multiplyScalar(speed);
+    // Orient along velocity
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      vel.clone().normalize()
+    );
+    mesh.quaternion.copy(q);
+    mesh.position.copy(pos);
+    this.projectileRoot.add(mesh);
+    this.arcs.push({ mesh, pos, vel, life: 4.5, damage });
+    bus.emit('core-arc-fire', { damage, speed });
   }
 
   private spawnTurretOnInstance(instanceId: number, levelId: number, floating: boolean): void {
@@ -363,17 +451,21 @@ export class CubeDefense {
         this.cube.getInstanceWorldPos(link.instanceId, this._pos);
         link.turret.group.position.copy(this._pos).multiplyScalar(1.12);
       }
+      // Temporarily scale fire rate via rage
+      const base = link.turret;
       link.turret.update(
-        dt,
+        dt * Math.min(2, this.fireRateMul),
         playerPos,
         (dmg) => {
           this.hooks?.onPlayerDamage(dmg, 'turret');
         },
         allowFire
       );
+      void base;
     }
 
     const he = this.cube.halfExtent;
+    const now = performance.now() / 1000;
     for (const d of this.enemyDrones) {
       d.update(
         dt,
@@ -381,15 +473,45 @@ export class CubeDefense {
         he,
         (dmg) => this.hooks?.onPlayerDamage(dmg, 'enemy-drone'),
         dronePos,
-        allowFire
+        allowFire,
+        this.cube,
+        now
       );
     }
+
+    // Arc beams
+    if (allowFire) this.updateArcs(dt, playerPos);
 
     if (this.coreShieldMesh && this.coreShield.active) {
       const mat = this.coreShieldMesh.material as THREE.MeshBasicMaterial;
       const ratio = this.coreShield.current / Math.max(1, this.coreShield.max);
       mat.opacity = 0.12 + ratio * 0.18 + Math.sin(performance.now() * 0.004) * 0.03;
     }
+  }
+
+  private updateArcs(dt: number, playerPos: THREE.Vector3): void {
+    for (let i = this.arcs.length - 1; i >= 0; i--) {
+      const a = this.arcs[i];
+      a.life -= dt;
+      a.pos.addScaledVector(a.vel, dt);
+      a.mesh.position.copy(a.pos);
+      // Hit player (generous radius for readability)
+      if (a.pos.distanceTo(playerPos) < 1.35) {
+        this.hooks?.onPlayerDamage(a.damage, 'core-arc');
+        a.life = 0;
+      }
+      if (a.life <= 0 || a.pos.length() > 90) {
+        this.projectileRoot.remove(a.mesh);
+        a.mesh.geometry.dispose();
+        (a.mesh.material as THREE.Material).dispose();
+        this.arcs.splice(i, 1);
+      }
+    }
+  }
+
+  /** Apply nucleus fire-rate aura (Rage). */
+  setFireRateMul(mul: number): void {
+    this.fireRateMul = Math.max(1, mul);
   }
 
   private tickShield(pool: ShieldPool, mesh: THREE.Mesh | null, dt: number): void {
@@ -460,6 +582,8 @@ export class CubeDefense {
   }
 
   reset(): void {
+    for (const u of this.unsubs) u();
+    this.unsubs = [];
     for (const link of this.links) {
       link.turret.reset();
       link.turret.dispose();
@@ -472,6 +596,12 @@ export class CubeDefense {
       this.group.remove(d.group);
     }
     this.enemyDrones = [];
+    for (const a of this.arcs) {
+      this.projectileRoot.remove(a.mesh);
+      a.mesh.geometry.dispose();
+      (a.mesh.material as THREE.Material).dispose();
+    }
+    this.arcs = [];
     if (this.coreShieldMesh) {
       this.group.remove(this.coreShieldMesh);
       this.coreShieldMesh.geometry.dispose();
@@ -486,6 +616,7 @@ export class CubeDefense {
     this.faceShieldMeshes = [];
     this.faceShields = [];
     this.coreShield = { current: 0, max: 0, regenDelay: 0, regenPerSec: 0, active: false };
+    this.fireRateMul = 1;
     while (this.projectileRoot.children.length) {
       this.projectileRoot.remove(this.projectileRoot.children[0]);
     }

@@ -22,6 +22,10 @@ export class HUD {
   private hullBar!: HTMLElement;
   private shieldVal!: HTMLElement;
   private hullVal!: HTMLElement;
+  private nucleusWrap!: HTMLElement;
+  private nucleusBar!: HTMLElement;
+  private nucleusVal!: HTMLElement;
+  private nucleusStatus!: HTMLElement;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -42,6 +46,14 @@ export class HUD {
             <div class="level-banner" id="hud-level">LEVEL 1</div>
             <div class="progress-bar"><span id="hud-progress"></span></div>
             <div class="level-banner blocks" id="hud-blocks"></div>
+            <div class="hud-nucleus panel-hidden" id="hud-nucleus" aria-label="Cube nucleus">
+              <div class="hud-nucleus-top">
+                <span class="hud-nucleus-label">NUCLEUS</span>
+                <span class="hud-nucleus-status" id="hud-nucleus-status">STABLE</span>
+              </div>
+              <div class="hud-nucleus-bar"><i id="hud-nucleus-bar"></i></div>
+              <span class="hud-nucleus-val" id="hud-nucleus-val">—</span>
+            </div>
           </div>
           <div class="hud-top-spacer" aria-hidden="true"></div>
         </div>
@@ -151,6 +163,10 @@ export class HUD {
     this.hullBar = this.root.querySelector('#hud-hull-bar')!;
     this.shieldVal = this.root.querySelector('#hud-shield-val')!;
     this.hullVal = this.root.querySelector('#hud-hull-val')!;
+    this.nucleusWrap = this.root.querySelector('#hud-nucleus')!;
+    this.nucleusBar = this.root.querySelector('#hud-nucleus-bar')!;
+    this.nucleusVal = this.root.querySelector('#hud-nucleus-val')!;
+    this.nucleusStatus = this.root.querySelector('#hud-nucleus-status')!;
   }
 
   get elements() {
@@ -264,6 +280,37 @@ export class HUD {
     this.levelEl.textContent = `L${id} · ${name}`;
     this.progressEl.style.width = `${Math.min(100, progress * 100).toFixed(1)}%`;
     this.blocksEl.textContent = `${alive} / ${total} BLOCKS`;
+  }
+
+  updateNucleus(snap: {
+    active: boolean;
+    hp: number;
+    maxHp: number;
+    exposed: boolean;
+    decaying: boolean;
+    overloadActive: boolean;
+    attributeLabel: string;
+  } | null): void {
+    if (!this.nucleusWrap) return;
+    if (!snap?.active) {
+      this.nucleusWrap.classList.add('panel-hidden');
+      this.nucleusWrap.classList.remove('exposed', 'overload', 'decaying');
+      return;
+    }
+    this.nucleusWrap.classList.remove('panel-hidden');
+    const pct = Math.max(0, Math.min(100, (snap.hp / Math.max(1, snap.maxHp)) * 100));
+    if (this.nucleusBar) this.nucleusBar.style.width = `${pct.toFixed(1)}%`;
+    if (this.nucleusVal) {
+      this.nucleusVal.textContent = `${Math.ceil(snap.hp)} / ${Math.ceil(snap.maxHp)}`;
+    }
+    let status = snap.attributeLabel;
+    if (snap.overloadActive) status = 'OVERLOAD';
+    else if (snap.decaying) status = 'DESTABILIZING';
+    else if (snap.exposed) status = 'EXPOSED';
+    if (this.nucleusStatus) this.nucleusStatus.textContent = status;
+    this.nucleusWrap.classList.toggle('exposed', snap.exposed && !snap.overloadActive);
+    this.nucleusWrap.classList.toggle('overload', snap.overloadActive);
+    this.nucleusWrap.classList.toggle('decaying', snap.decaying);
   }
 
   setMuted(m: boolean): void {

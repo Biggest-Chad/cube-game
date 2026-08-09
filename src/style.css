@@ -3322,3 +3322,105 @@ body.orientation-portrait #rotate-overlay {
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px;
 }
+
+/* —— Nucleus HUD —— */
+.hud-nucleus {
+  margin-top: 6px;
+  padding: 6px 10px 8px;
+  min-width: 180px;
+  border: 1px solid rgba(255, 68, 136, 0.45);
+  background: rgba(20, 0, 12, 0.55);
+  box-shadow: 0 0 14px rgba(255, 0, 100, 0.2);
+}
+.hud-nucleus-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: #ff88bb;
+  margin-bottom: 4px;
+}
+.hud-nucleus-status {
+  color: #ffd0e8;
+  font-weight: 700;
+}
+.hud-nucleus-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.hud-nucleus-bar > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #ff4488, #ff00aa);
+  box-shadow: 0 0 8px rgba(255, 0, 170, 0.6);
+  transition: width 0.12s linear;
+}
+.hud-nucleus-val {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 220, 235, 0.85);
+  text-align: right;
+}
+.hud-nucleus.exposed {
+  border-color: rgba(255, 80, 80, 0.8);
+  animation: nucleus-pulse 0.9s ease-in-out infinite;
+}
+.hud-nucleus.overload {
+  border-color: #ff2200;
+  box-shadow: 0 0 22px rgba(255, 40, 0, 0.55);
+  animation: nucleus-pulse 0.35s linear infinite;
+}
+.hud-nucleus.decaying .hud-nucleus-bar > i {
+  background: linear-gradient(90deg, #ffaa44, #ff6622);
+}
+.hud-nucleus.overload .hud-nucleus-bar > i {
+  background: linear-gradient(90deg, #ff2200, #ffee00);
+}
+@keyframes nucleus-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.35); }
+}
+
+/* Core event toast banner */
+.core-banner {
+  position: absolute;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: none;
+  text-align: center;
+  padding: 12px 22px;
+  border: 1px solid rgba(255, 0, 120, 0.65);
+  background: rgba(8, 0, 10, 0.82);
+  box-shadow: 0 0 28px rgba(255, 0, 100, 0.4);
+  animation: core-banner-in 0.35s ease-out;
+}
+.core-banner-title {
+  font-size: 14px;
+  letter-spacing: 0.28em;
+  color: #ff66aa;
+  font-weight: 800;
+}
+.core-banner-body {
+  margin-top: 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 230, 240, 0.85);
+  max-width: 42ch;
+}
+.core-banner.overload {
+  border-color: #ff3300;
+  box-shadow: 0 0 36px rgba(255, 40, 0, 0.55);
+}
+.core-banner.overload .core-banner-title { color: #ff4422; }
+@keyframes core-banner-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-12px) scale(0.94); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}

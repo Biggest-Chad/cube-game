@@ -4,6 +4,7 @@ import type { LevelDefinition } from '../data/levels';
 import { bus } from '../core/EventBus';
 import { BLOCK_DEFS, BlockType, colorForType } from './BlockTypes';
 import { Chunk } from './Chunk';
+import { CoreNucleus } from './CoreNucleus';
 import { chunkWorldPosition, generateCube, type GeneratedCube } from './LevelGenerator';
 
 const _matrix = new THREE.Matrix4();
@@ -21,6 +22,9 @@ export interface DamageResult {
   z: number;
   fragments: number;
   explosive: boolean;
+  /** Shared nucleus was hit (may not destroy instance). */
+  coreHit?: boolean;
+  coreDestroyed?: boolean;
 }
 
 interface InstanceRef {
@@ -31,6 +35,7 @@ interface InstanceRef {
 
 export class CubeManager {
   readonly group = new THREE.Group();
+  readonly nucleus = new CoreNucleus();
   private mesh: THREE.InstancedMesh | null = null;
   private material: THREE.MeshStandardMaterial;
   private generated: GeneratedCube | null = null;
@@ -44,6 +49,8 @@ export class CubeManager {
   totalBlocks = 0;
   private regenTimer = 0;
   private flashMap = new Map<number, number>();
+  /** When true, core block hits route through shared nucleus (prevent re-entry). */
+  private coreRouting = true;
 
   constructor() {
     // Low global emissive — per-instance color carries hue; keeps bloom from washing out the cube
@@ -66,6 +73,13 @@ export class CubeManager {
   }
 
   get progress(): number {
+    if (this.nucleus.isActive || this.nucleus.isDestroyed) {
+      return this.nucleus.combatProgress();
+    }
+    return this.rawBlockProgress();
+  }
+
+  rawBlockProgress(): number {
     if (this.totalBlocks <= 0) return 1;
     return 1 - this.aliveBlocks / this.totalBlocks;
   }
@@ -79,8 +93,9 @@ export class CubeManager {
     this.refs = [];
     this.lookup.clear();
     this.flashMap.clear();
+    this.nucleus.reset();
 
-    this.maxInstances = Math.max(this.totalBlocks + 64, 512);
+    this.maxInstances = Math.max(this.totalBlocks + 256, 512);
     const geo = new THREE.BoxGeometry(0.92, 0.92, 0.92);
     this.mesh = new THREE.InstancedMesh(geo, this.material, this.maxInstances);
     this.mesh.castShadow = false;
@@ -103,6 +118,9 @@ export class CubeManager {
     this.group.add(new THREE.Mesh(shellGeo, shellMat));
 
     this.rebuildAllInstances();
+    this.nucleus.bind(this);
+    this.nucleus.startLevel(level);
+    this.group.add(this.nucleus.vfxGroup);
   }
 
   private key(chunk: Chunk, localIndex: number): string {
@@ -334,6 +352,59 @@ export class CubeManager {
     const t = chunk.types[i] as BlockType;
     if (t === BlockType.Empty) return null;
 
+    this.mesh.getMatrixAt(instanceId, _matrix);
+    _pos.setFromMatrixPosition(_matrix);
+
+    // Shared nucleus routing — shell DR + transfer + pool HP
+    if (t === BlockType.Core && this.coreRouting && this.nucleus.isActive) {
+      const outcome = this.nucleus.applyDamage(damage, now);
+      this.flashMap.set(instanceId, 1);
+      this.updateInstanceVisual(instanceId);
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+      const def = BLOCK_DEFS[t];
+      const fragments = outcome.destroyed
+        ? Math.max(
+            8,
+            Math.round(Math.sqrt(Math.max(1, this.level.avgHP)) * 1.2 * def.fragmentMul)
+          )
+        : 0;
+      if (outcome.destroyed) {
+        bus.emit('block-destroyed', {
+          type: t,
+          x: _pos.x,
+          y: _pos.y,
+          z: _pos.z,
+          fragments,
+        });
+      }
+      return {
+        destroyed: !!outcome.destroyed,
+        type: t,
+        x: _pos.x,
+        y: _pos.y,
+        z: _pos.z,
+        fragments,
+        explosive: false,
+        coreHit: true,
+        coreDestroyed: outcome.destroyed,
+      };
+    }
+
+    return this.applyDamageDirect(instanceId, damage, now);
+  }
+
+  /**
+   * Damage without nucleus routing (shell transfers, final core wipe, idle).
+   */
+  applyDamageDirect(instanceId: number, damage: number, now: number): DamageResult | null {
+    if (!this.mesh || !this.generated || !this.level) return null;
+    const ref = this.refs[instanceId];
+    if (!ref) return null;
+    const { chunk, localIndex: i } = ref;
+    const t = chunk.types[i] as BlockType;
+    if (t === BlockType.Empty) return null;
+
     chunk.health[i] = Math.max(0, chunk.health[i] - damage);
     chunk.lastHitTime = now;
     this.flashMap.set(instanceId, 1);
@@ -357,14 +428,17 @@ export class CubeManager {
     }
 
     const def = BLOCK_DEFS[t];
-    // Soft sqrt curve — late levels no longer mint absurd frag/block
     const fragments = Math.max(
       1,
       Math.round(Math.sqrt(Math.max(1, this.level.avgHP)) * 0.55 * def.fragmentMul)
     );
     const explosive = t === BlockType.Explosive;
+    const wasShell = t !== BlockType.Core;
     chunk.clearBlock(i);
     this.removeInstance(instanceId);
+    if (wasShell && this.nucleus.isActive) {
+      this.nucleus.onShellCountDelta(-1);
+    }
 
     bus.emit('block-destroyed', {
       type: t,
@@ -383,6 +457,99 @@ export class CubeManager {
       fragments,
       explosive,
     };
+  }
+
+  /** Inflate core block HP so instances survive until shared pool dies. */
+  boostCoreBlockHealth(hp: number): void {
+    const cap = 65000;
+    const v = Math.min(cap, Math.max(1, Math.floor(hp)));
+    if (!this.mesh) return;
+    for (let id = 0; id < this.mesh.count; id++) {
+      if (this.getBlockType(id) !== BlockType.Core) continue;
+      const ref = this.refs[id];
+      if (!ref) continue;
+      ref.chunk.health[ref.localIndex] = v;
+      ref.chunk.maxHealth[ref.localIndex] = v;
+    }
+  }
+
+  pickRandomShellInstance(): number {
+    if (!this.mesh || this.mesh.count === 0) return -1;
+    const candidates: number[] = [];
+    for (let id = 0; id < this.mesh.count; id++) {
+      const t = this.getBlockType(id);
+      if (t !== BlockType.Empty && t !== BlockType.Core) candidates.push(id);
+    }
+    if (!candidates.length) return -1;
+    return candidates[(Math.random() * candidates.length) | 0];
+  }
+
+  /** Slow heal on shell blocks (regeneration attribute). */
+  regenShellBlocks(fracOfMaxPerSec: number, now: number): void {
+    if (!this.mesh || fracOfMaxPerSec <= 0) return;
+    let dirty = false;
+    for (let id = 0; id < this.mesh.count; id++) {
+      const t = this.getBlockType(id);
+      if (t === BlockType.Empty || t === BlockType.Core) continue;
+      const ref = this.refs[id];
+      if (!ref) continue;
+      if (now - ref.chunk.lastHitTime < 1.2) continue;
+      const i = ref.localIndex;
+      const max = ref.chunk.maxHealth[i];
+      if (ref.chunk.health[i] >= max) continue;
+      ref.chunk.health[i] = Math.min(max, ref.chunk.health[i] + max * fracOfMaxPerSec);
+      this.updateInstanceVisual(id);
+      dirty = true;
+    }
+    if (dirty) {
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Resurrect destroyed shell density by re-adding blocks near surface.
+   * Simplified: heal all remaining shell to full + spawn fake HP bump via new random fills.
+   */
+  resurrectShellFraction(fraction: number, now: number): number {
+    if (!this.mesh || !this.generated || !this.level) return 0;
+    // Heal all living shell fully
+    for (let id = 0; id < this.mesh.count; id++) {
+      const t = this.getBlockType(id);
+      if (t === BlockType.Empty || t === BlockType.Core) continue;
+      const ref = this.refs[id];
+      if (!ref) continue;
+      ref.chunk.health[ref.localIndex] = ref.chunk.maxHealth[ref.localIndex];
+      this.updateInstanceVisual(id);
+    }
+    // Add HP to damaged shell count as "resurrect" feel — refill weak blocks
+    const targetAdds = Math.max(
+      1,
+      Math.floor(this.nucleus.snapshot().shellTotal * Math.max(0.02, fraction))
+    );
+    // Strengthen remaining shell
+    let buffed = 0;
+    for (let id = 0; id < this.mesh.count && buffed < targetAdds; id++) {
+      const t = this.getBlockType(id);
+      if (t === BlockType.Empty || t === BlockType.Core) continue;
+      const ref = this.refs[id];
+      if (!ref) continue;
+      const i = ref.localIndex;
+      const add = Math.floor(ref.chunk.maxHealth[i] * 0.5);
+      ref.chunk.maxHealth[i] = Math.min(65000, ref.chunk.maxHealth[i] + add);
+      ref.chunk.health[i] = ref.chunk.maxHealth[i];
+      this.updateInstanceVisual(id);
+      buffed++;
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.nucleus.recountShell();
+    bus.emit('core-resurrect-done', { buffed, now });
+    return buffed;
+  }
+
+  isLevelComplete(): boolean {
+    return this.nucleus.isLevelComplete();
   }
 
   /** Splash damage around world point */

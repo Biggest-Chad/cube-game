@@ -1,8 +1,11 @@
 /**
- * Hostile drone — engages player ship and player drones.
+ * Hostile drone — engages player ship / player drones, or repairs cube shell.
  */
 import * as THREE from 'three';
 import { bus } from '../core/EventBus';
+import type { CubeManager } from './CubeManager';
+
+export type EnemyDroneRole = 'attack' | 'repair';
 
 export interface EnemyDroneConfig {
   hp: number;
@@ -11,6 +14,12 @@ export interface EnemyDroneConfig {
   speed: number;
   range: number;
   color: number;
+  role: EnemyDroneRole;
+  /** Temporary enrage mults from Swarm overload. */
+  speedMul: number;
+  fireMul: number;
+  /** Repair amount per pulse as fraction of block max HP. */
+  repairFrac: number;
 }
 
 const DEFAULT: EnemyDroneConfig = {
@@ -20,6 +29,10 @@ const DEFAULT: EnemyDroneConfig = {
   speed: 6,
   range: 28,
   color: 0xff2244,
+  role: 'attack',
+  speedMul: 1,
+  fireMul: 1,
+  repairFrac: 0.06,
 };
 
 export class EnemyDrone {
@@ -28,6 +41,7 @@ export class EnemyDrone {
   hp: number;
   maxHp: number;
   alive = true;
+  role: EnemyDroneRole;
   private cfg: EnemyDroneConfig;
   private cooldown = 0;
   private orbitAngle: number;
@@ -41,6 +55,7 @@ export class EnemyDrone {
   constructor(id: string, index: number, halfExtent: number, cfg: Partial<EnemyDroneConfig> = {}) {
     this.id = id;
     this.cfg = { ...DEFAULT, ...cfg };
+    this.role = this.cfg.role;
     this.hp = this.cfg.hp;
     this.maxHp = this.cfg.hp;
     this.orbitAngle = index * 1.7 + 0.5;
@@ -106,14 +121,21 @@ export class EnemyDrone {
   applyDamage(amount: number): boolean {
     if (!this.alive) return false;
     this.hp -= amount;
+    // Hit flash
+    this.group.scale.setScalar(0.85);
     if (this.hp <= 0) {
       this.alive = false;
       this.group.visible = false;
       this.beam.visible = false;
-      bus.emit('enemy-drone-destroyed', { id: this.id });
+      bus.emit('enemy-drone-destroyed', { id: this.id, role: this.role });
       return true;
     }
     return false;
+  }
+
+  setEnraged(on: boolean): void {
+    this.cfg.speedMul = on ? 1.55 : 1;
+    this.cfg.fireMul = on ? 1.7 : 1;
   }
 
   update(
@@ -123,24 +145,33 @@ export class EnemyDrone {
     onPlayerHit: (damage: number) => void,
     playerDronePositions?: THREE.Vector3[],
     /** When false (stage countdown), fly but do not fire. */
-    allowFire = true
+    allowFire = true,
+    cube?: CubeManager | null,
+    now = 0
   ): void {
     if (!this.alive) return;
 
-    this.orbitRadius = halfExtent * 1.35 + 1;
-    this.orbitAngle += dt * 0.35;
+    // Recover scale after hit flash
+    const s = this.group.scale.x;
+    if (s < 1) this.group.scale.setScalar(Math.min(1, s + dt * 3));
+
+    const speed = this.cfg.speed * this.cfg.speedMul;
+    this.orbitRadius = halfExtent * (this.role === 'repair' ? 1.05 : 1.35) + 1;
+    this.orbitAngle += dt * 0.35 * this.cfg.speedMul;
     this._pos.set(
       Math.cos(this.orbitAngle) * this.orbitRadius,
       this.orbitHeight + Math.sin(this.orbitAngle * 1.3) * 0.8,
       Math.sin(this.orbitAngle) * this.orbitRadius
     );
-    // Occasionally dive toward player
-    const dive = Math.sin(this.orbitAngle * 0.5) > 0.7;
-    if (dive) {
-      this._pos.lerp(playerPos, 0.15);
+    // Attack drones dive toward player; repair drones hug the shell
+    if (this.role === 'attack') {
+      const dive = Math.sin(this.orbitAngle * 0.5) > 0.7;
+      if (dive) this._pos.lerp(playerPos, 0.15);
+      this.group.lookAt(playerPos);
+    } else {
+      this.group.lookAt(0, 0, 0);
     }
-    this.group.position.lerp(this._pos, 1 - Math.exp(-this.cfg.speed * 0.35 * dt));
-    this.group.lookAt(playerPos);
+    this.group.position.lerp(this._pos, 1 - Math.exp(-speed * 0.35 * dt));
 
     if (this.beamLife > 0) {
       this.beamLife -= dt;
@@ -150,11 +181,27 @@ export class EnemyDrone {
     this.cooldown = Math.max(0, this.cooldown - dt);
     if (!allowFire || this.cooldown > 0) return;
 
+    if (this.role === 'repair' && cube) {
+      const near = cube.findNearest(this.group.position, this.cfg.range, () => 1);
+      if (!near) return;
+      this.cooldown = 1 / Math.max(0.3, this.cfg.fireRate * this.cfg.fireMul);
+      cube.getBlockWorldPos(near.instanceId, this._target);
+      this.showBeam(this.group.position, this._target);
+      // Heal via negative damage path — direct HP add
+      const refType = cube.getBlockType(near.instanceId);
+      if (refType) {
+        cube.regenShellBlocks(this.cfg.repairFrac * 0.35, now);
+      }
+      // Also heal nucleus slightly when repairing near core
+      bus.emit('enemy-drone-repair', { id: this.id });
+      return;
+    }
+
     // Prefer shooting nearby player drones, else player
     let target = playerPos;
     let isDrone = false;
     if (playerDronePositions) {
-      let bestD = 12;
+      let bestD = 14;
       for (const pd of playerDronePositions) {
         const d = this.group.position.distanceTo(pd);
         if (d < bestD) {
@@ -168,7 +215,7 @@ export class EnemyDrone {
     const dist = this.group.position.distanceTo(target);
     if (dist > this.cfg.range) return;
 
-    this.cooldown = 1 / this.cfg.fireRate;
+    this.cooldown = 1 / Math.max(0.25, this.cfg.fireRate * this.cfg.fireMul);
     this.showBeam(this.group.position, target);
     if (!isDrone) {
       onPlayerHit(this.cfg.damage);

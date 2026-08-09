@@ -14,14 +14,20 @@ export interface EnemyUnitRef {
  */
 export function targetPriority(type: BlockType, stats: PlayerStats, role: DroneRole = 'miner'): number {
   if (role === 'fighter') {
-    // Fighters mostly ignore blocks
-    return type === BlockType.Core ? 0.5 : 0.2;
+    // Fighters prefer nucleus / turrets after enemies are clear
+    if (type === BlockType.Core) return 28;
+    if (type === BlockType.Turret) return 16;
+    return 0.4;
   }
 
   let p = 1;
   switch (type) {
     case BlockType.Core:
-      p = stats.dronePriorityCore ? 20 : 8;
+      // Shell first — core is heavily DR'd until exposed
+      p = stats.dronePriorityCore ? 14 : 6;
+      break;
+    case BlockType.Turret:
+      p = 11;
       break;
     case BlockType.DataNode:
       p = stats.dronePriorityData ? 16 : 6;

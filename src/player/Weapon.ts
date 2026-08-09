@@ -41,6 +41,9 @@ export class Weapon {
    * @param aimX aim stick X (−1..1) horizontal offset
    * @param aimY aim stick Y (−1..1) vertical offset
    */
+  private enemyTargets: Array<{ position: THREE.Vector3; radius: number; id: string }> = [];
+  private onEnemyHit: ((id: string, dmg: number) => void) | null = null;
+
   update(
     dt: number,
     firing: boolean,
@@ -49,8 +52,14 @@ export class Weapon {
     stats: PlayerStats,
     now: number,
     aimX = 0,
-    aimY = 0
+    aimY = 0,
+    extras?: {
+      enemyTargets?: Array<{ position: THREE.Vector3; radius: number; id: string }>;
+      onEnemyHit?: (id: string, dmg: number) => void;
+    }
   ): void {
+    this.enemyTargets = extras?.enemyTargets ?? [];
+    this.onEnemyHit = extras?.onEnemyHit ?? null;
     ship.getMuzzleWorldPosition(this._origin);
     this.resolveAim(ship, cube, aimX, aimY);
 
@@ -66,12 +75,14 @@ export class Weapon {
       // Exact aim target so primary bolt goes where the crosshair is
       aimTarget: this._aimTarget,
       aimLocked: this._locked,
+      enemyTargets: this.enemyTargets,
+      onEnemyHit: this.onEnemyHit ?? undefined,
     });
   }
 
   /**
-   * Stick offsets a cone around ship→cube, then soft-locks onto the best block
-   * near that ray so crosshair and bolts share one reliable aim point.
+   * Stick offsets a cone around ship→cube, then soft-locks onto the best target
+   * (enemy drones preferred, then blocks) so crosshair and bolts share one ray.
    */
   private resolveAim(ship: Ship, cube: CubeManager, aimX: number, aimY: number): void {
     // Default: aim at cube center
@@ -91,6 +102,31 @@ export class Weapon {
       .addScaledVector(this._right, aimX * maxRad)
       .addScaledVector(this._up, -aimY * maxRad)
       .normalize();
+
+    // Priority: enemy drones near aim cone
+    if (this.enemyTargets.length > 0) {
+      let best: { position: THREE.Vector3; id: string } | null = null;
+      let bestScore = Infinity;
+      for (const et of this.enemyTargets) {
+        const to = this._tmp.copy(et.position).sub(this._origin);
+        const dist = to.length();
+        if (dist < 1e-3 || dist > COMBAT.beamRange) continue;
+        to.multiplyScalar(1 / dist);
+        const ang = 1 - Math.max(-1, Math.min(1, to.dot(this._dir)));
+        if (ang > 0.18) continue; // outside ~soft cone
+        const score = dist + ang * 40;
+        if (score < bestScore) {
+          bestScore = score;
+          best = et;
+        }
+      }
+      if (best) {
+        this._aimTarget.copy(best.position);
+        this._dir.copy(this._aimTarget).sub(this._origin).normalize();
+        this._locked = true;
+        return;
+      }
+    }
 
     // Primary raycast with generous half-extent (cube raycast uses expanded boxes for aim)
     let hit = cube.raycast(this._origin, this._dir, COMBAT.beamRange, -1, 0.62);

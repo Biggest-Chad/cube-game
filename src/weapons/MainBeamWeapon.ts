@@ -203,7 +203,7 @@ export class MainBeamWeapon implements WeaponBehavior {
   }
 
   update(ctx: WeaponFireContext): void {
-    this.updateBolts(ctx.dt, ctx.cube, ctx.now);
+    this.updateBolts(ctx.dt, ctx.cube, ctx.now, ctx);
     this.updateFlashes(ctx.dt);
     this.updateBeams(ctx.dt);
 
@@ -336,11 +336,19 @@ export class MainBeamWeapon implements WeaponBehavior {
     this.orientBolt(b.root, b.pos, b.vel);
   }
 
-  private updateBolts(dt: number, cube: CubeManager, now: number): void {
+  private updateBolts(
+    dt: number,
+    cube: CubeManager,
+    now: number,
+    ctx?: WeaponFireContext
+  ): void {
     for (const b of this.bolts) {
       if (!b.active) continue;
       b.life -= dt;
-      const prev = this.tmp.copy(b.pos);
+      // Snapshot previous position (do not alias this.tmp — enemy tests reuse it)
+      const prevX = b.pos.x;
+      const prevY = b.pos.y;
+      const prevZ = b.pos.z;
       b.pos.addScaledVector(b.vel, dt);
       this.orientBolt(b.root, b.pos, b.vel);
 
@@ -353,8 +361,8 @@ export class MainBeamWeapon implements WeaponBehavior {
       // Trail: previous → current (elongated streak)
       const posAttr = b.trail.geometry.attributes.position as THREE.BufferAttribute;
       const back = this.dir.copy(b.vel).normalize().multiplyScalar(-0.55);
-      posAttr.setXYZ(0, prev.x + back.x, prev.y + back.y, prev.z + back.z);
-      posAttr.setXYZ(1, prev.x, prev.y, prev.z);
+      posAttr.setXYZ(0, prevX + back.x, prevY + back.y, prevZ + back.z);
+      posAttr.setXYZ(1, prevX, prevY, prevZ);
       posAttr.setXYZ(2, b.pos.x, b.pos.y, b.pos.z);
       posAttr.setXYZ(3, b.pos.x, b.pos.y, b.pos.z);
       posAttr.needsUpdate = true;
@@ -362,12 +370,51 @@ export class MainBeamWeapon implements WeaponBehavior {
       b.trail.geometry.computeBoundingSphere();
       (b.trail.material as THREE.LineBasicMaterial).opacity = 0.35 + 0.45 * t;
 
-      const move = this.dir.copy(b.pos).sub(prev);
+      const move = this.dir.set(b.pos.x - prevX, b.pos.y - prevY, b.pos.z - prevZ);
       const dist = move.length();
       if (dist > 1e-5) {
+        // Enemy drones first (priority targets)
+        if (ctx?.enemyTargets && ctx.onEnemyHit) {
+          let hitEnemy = false;
+          for (const et of ctx.enemyTargets) {
+            const toEx = et.position.x - prevX;
+            const toEy = et.position.y - prevY;
+            const toEz = et.position.z - prevZ;
+            const tSeg = Math.max(
+              0,
+              Math.min(1, (toEx * move.x + toEy * move.y + toEz * move.z) / Math.max(1e-6, dist * dist))
+            );
+            const cx = prevX + move.x * tSeg;
+            const cy = prevY + move.y * tSeg;
+            const cz = prevZ + move.z * tSeg;
+            const dx = cx - et.position.x;
+            const dy = cy - et.position.y;
+            const dz = cz - et.position.z;
+            if (dx * dx + dy * dy + dz * dz <= (et.radius + 0.35) ** 2) {
+              ctx.onEnemyHit(et.id, b.damage);
+              b.active = false;
+              b.root.visible = false;
+              b.trail.visible = false;
+              bus.emit('beam-hit', {
+                destroyed: false,
+                type: BlockType.Standard,
+                x: et.position.x,
+                y: et.position.y,
+                z: et.position.z,
+                fragments: 0,
+                crit: b.crit,
+                style: 'bolt' as const,
+              });
+              hitEnemy = true;
+              break;
+            }
+          }
+          if (hitEnemy) continue;
+        }
+
         // Generous hit volume + lead so fast bolts don't tunnel past blocks
         const hit = cube.raycast(
-          prev,
+          this.tmp.set(prevX, prevY, prevZ),
           move.normalize(),
           dist + 0.75,
           b.lastHitId,

@@ -67,8 +67,9 @@ function makeLevel(
     explosive: extras.explosive ?? Math.min(0.12, specialPercent * 0.14),
     dataNode: extras.dataNode ?? Math.min(0.08, specialPercent * 0.1),
     siege: extras.siege ?? Math.min(0.28, Math.max(0, (id - 10) * 0.012 + specialPercent * 0.08)),
-    hasCore: extras.hasCore ?? id >= 5,
-    coreHP: extras.coreHP ?? Math.round(avgHP * 10 + id * 35),
+    // Nucleus is a major pillar from sector 3 onward
+    hasCore: extras.hasCore ?? id >= 3,
+    coreHP: extras.coreHP ?? Math.round(avgHP * 55 + id * 180 + 400),
     rewardFragments: extras.rewardFragments ?? defaultFrags,
     rewardCoreEnergy:
       extras.rewardCoreEnergy ??
@@ -96,7 +97,7 @@ export const LEVELS: LevelDefinition[] = [
     rewardCoreEnergy: 12,
   }),
   makeLevel(3, 'CYAN ARRAY', 8, 0.95, 22, 0.06, 0, 1.05, {
-    hasCore: false,
+    hasCore: true,
     reinforced: 0.08,
     siege: 0,
     rewardFragments: 85,

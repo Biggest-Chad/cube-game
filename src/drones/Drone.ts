@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { COLORS, COMBAT } from '../data/constants';
 import type { CubeManager } from '../cube/CubeManager';
+import { BlockType } from '../cube/BlockTypes';
 import { bus } from '../core/EventBus';
 import type { PlayerStats } from '../progression/TechTree';
 import { DRONE_ROLES, type DroneRole } from '../data/drones';
@@ -241,19 +242,38 @@ export class Drone {
     const rate = 2.2 * stats.droneFireRateMul * def.fireRateMul * (1 - this.heat * 0.5);
     this.cooldown = 1 / Math.max(0.4, rate);
 
-    if (this.role === 'fighter' && combat?.enemies && combat.enemies.length > 0) {
-      const enemy = pickBestEnemy(combat.enemies, this.group.position, 80);
+    // All drones prioritize hostile drones — fighters are dedicated hunters
+    if (combat?.enemies && combat.enemies.length > 0) {
+      const enemy = pickBestEnemy(combat.enemies, this.group.position, 90);
       if (enemy && combat.onEnemyHit) {
         this._target.set(enemy.position.x, enemy.position.y, enemy.position.z);
         this.showBeam(this.group.position, this._target);
-        const dmg =
-          COMBAT.baseDamage * 0.55 * stats.droneDamageMul * def.antiDroneMul;
+        const anti =
+          this.role === 'fighter' ? def.antiDroneMul * 1.35 : def.antiDroneMul * 0.85;
+        const dmg = COMBAT.baseDamage * 0.55 * stats.droneDamageMul * anti;
         combat.onEnemyHit(enemy.id, dmg);
         return;
       }
     }
 
-    if (this.role === 'fighter') return;
+    // Fighters still chip the nucleus / high-value blocks when skies are clear
+    if (this.role === 'fighter') {
+      const nearestCore = cube.findNearest(this.group.position, 80, (t) =>
+        t === BlockType.Core ? 30 : t === BlockType.Turret ? 12 : 1
+      );
+      if (!nearestCore) return;
+      cube.getBlockWorldPos(nearestCore.instanceId, this._target);
+      this.showBeam(this.group.position, this._target);
+      const type = cube.getBlockType(nearestCore.instanceId);
+      const raw = COMBAT.baseDamage * 0.4 * stats.droneDamageMul * def.blockDamageMul;
+      const applied = applyToBlock(
+        { raw, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
+        type
+      );
+      const result = cube.applyDamage(nearestCore.instanceId, applied.finalDamage, now);
+      if (result) bus.emit('beam-hit', { ...result, style: 'beam' as const });
+      return;
+    }
 
     const nearest = cube.findNearest(this.group.position, 80, (t) =>
       targetPriority(t, stats, this.role)

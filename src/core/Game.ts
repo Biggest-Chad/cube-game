@@ -839,8 +839,33 @@ export class Game {
         if (this.mode === 'playing' || this.mode === 'cinematic') {
           this.cameraCtrl.shake(Math.min(0.12, p?.amount ?? 0.08));
         }
+      }),
+      bus.on(
+        'core-notify',
+        (p: { title?: string; body?: string; kind?: string }) => {
+          this.showCoreBanner(p.title ?? 'NUCLEUS', p.body ?? '', p.kind ?? '');
+          if (p.kind === 'overload' || p.kind === 'exposed') {
+            this.cameraCtrl.shake(p.kind === 'overload' ? 0.14 : 0.08);
+            this.audio.playUi();
+          }
+        }
+      ),
+      bus.on('core-destroyed', () => {
+        this.cameraCtrl.shake(0.16);
+        this.audio.playCrit();
+      }),
+      bus.on('enemy-drone-destroyed', () => {
+        this.currency.addFragments(3, this.tech.stats.fragmentMul);
       })
     );
+  }
+
+  private showCoreBanner(title: string, body: string, kind: string): void {
+    const el = document.createElement('div');
+    el.className = `core-banner ${kind === 'overload' ? 'overload' : ''}`;
+    el.innerHTML = `<div class="core-banner-title">${title}</div><div class="core-banner-body">${body}</div>`;
+    this.overlay.appendChild(el);
+    setTimeout(() => el.remove(), 2800);
   }
 
   private onPlayerDamaged(amount: number): void {
@@ -2016,7 +2041,11 @@ export class Game {
           combatStats,
           now,
           this.input.aimX,
-          this.input.aimY
+          this.input.aimY,
+          {
+            enemyTargets: this.cubeDefense.getEnemyTargetsForWeapons(),
+            onEnemyHit: (id, dmg) => this.cubeDefense.damageEnemy(id, dmg),
+          }
         );
 
         this.weapon.getAimDirection(this._aimDir);
@@ -2076,6 +2105,13 @@ export class Game {
 
         this.cube.update(dt, now);
         this.cubeAnimator.update(dt);
+        // Nucleus: decay / regen / swarm factory / rage arcs
+        this.cube.nucleus.update(dt, now, {
+          onArcBeam: (dir, speed, damage) => {
+            this.cubeDefense.fireArcBeam(dir, speed, damage);
+          },
+        });
+        this.cubeDefense.setFireRateMul(this.cube.nucleus.rageFireMul);
         // Turrets/enemy drones locked during stage countdown same as player
         this.cubeDefense.update(dt, this.canFireWeapons());
 
@@ -2087,9 +2123,11 @@ export class Game {
           this.cube.aliveBlocks,
           this.cube.totalBlocks
         );
+        this.hud.updateNucleus(this.cube.nucleus.snapshot());
         this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
 
-        if (this.cube.aliveBlocks <= 0) this.onLevelClear();
+        // Level ends only when nucleus is destroyed (or no nucleus + no blocks)
+        if (this.cube.isLevelComplete()) this.onLevelClear();
       }
     } else if (this.mode === 'dying') {
       this.updateDying(dt);
