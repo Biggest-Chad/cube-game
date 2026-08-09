@@ -10,6 +10,7 @@ import {
   STAT_CAPS,
   UPGRADES,
   getSequentialVisibleNodes,
+  normalizeShopTabId,
   type SequentialVisibleNode,
   type ShopTabId,
   type UpgradeNodeDef,
@@ -115,18 +116,23 @@ const TAB_ICONS: Record<ShopTabId, string> = {
   main_gun: '⚡',
   loadouts: '◎',
   drone_bays: '⬡',
-  drones: '◈',
-  economy: '◈',
-  global: '✶',
+  other: '✶',
 };
 
 /**
- * Tabbed sequential shop + integrated loadout management on LOADOUTS tab.
+ * Tabbed sequential shop + integrated loadout / drone bay management.
  */
+type LoadoutSubTab = 'weapons' | 'upgrades';
+type DroneSubTab = 'stock' | 'upgrades';
+
 export class ShopUI {
   private root: HTMLElement;
   private activeTab: ShopTabId = 'ship';
   private selectedSlot = 0;
+  /** Loadouts panel: arsenal list vs branch upgrades for the selected hardpoint. */
+  private loadoutSubTab: LoadoutSubTab = 'weapons';
+  /** Drone bay panel: fleet stock vs drone tech upgrades. */
+  private droneSubTab: DroneSubTab = 'stock';
   private vitalsSnapshot: {
     hull: number;
     maxHull: number;
@@ -185,8 +191,14 @@ export class ShopUI {
     this.droneBay = ctrl;
   }
 
-  show(tree: TechTree, currency: Currency, tab?: ShopTabId): void {
-    if (tab) this.activeTab = tab;
+  show(tree: TechTree, currency: Currency, tab?: ShopTabId | string): void {
+    const normalized = normalizeShopTabId(tab ?? null);
+    if (normalized) {
+      this.activeTab = normalized;
+      // Deep-link legacy "drone tech" → DRONES upgrades sub-tab
+      if (tab === 'drones') this.droneSubTab = 'upgrades';
+    }
+    // Unknown ids: keep previous activeTab (never assign garbage)
     this.root.classList.remove('panel-hidden');
     this.render(tree, currency);
   }
@@ -398,8 +410,49 @@ export class ShopUI {
     });
 
     this.root.querySelectorAll('[data-slot]').forEach((el) => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (ev) => {
+        // Outer pad + inner hit both carry data-slot; stop double full re-render
+        ev.stopPropagation();
         this.selectedSlot = Number((el as HTMLElement).dataset.slot);
+        this.render(tree, currency);
+      });
+    });
+    // Clear stale drag payload if user cancels the drag
+    this.root.addEventListener(
+      'dragend',
+      () => {
+        this.dragPayload = null;
+      },
+      { once: false }
+    );
+
+    this.root.querySelectorAll('[data-loadout-sub]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const sub = (el as HTMLElement).dataset.loadoutSub as LoadoutSubTab;
+        if (sub === 'weapons' || sub === 'upgrades') {
+          this.loadoutSubTab = sub;
+          this.render(tree, currency);
+        }
+      });
+    });
+
+    this.root.querySelectorAll('[data-drone-sub]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const sub = (el as HTMLElement).dataset.droneSub as DroneSubTab;
+        if (sub === 'stock' || sub === 'upgrades') {
+          this.droneSubTab = sub;
+          this.render(tree, currency);
+        }
+      });
+    });
+
+    this.root.querySelectorAll('[data-loadout-upgrade]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const slot = Number((el as HTMLElement).dataset.loadoutUpgrade);
+        if (!Number.isFinite(slot)) return;
+        this.selectedSlot = slot;
+        this.loadoutSubTab = 'upgrades';
         this.render(tree, currency);
       });
     });
@@ -424,7 +477,12 @@ export class ShopUI {
     this.root.querySelectorAll('[data-branch]').forEach((el) => {
       el.addEventListener('click', () => {
         const branchId = (el as HTMLElement).dataset.branch!;
-        if (this.onUpgradeBranch?.(this.selectedSlot, branchId)) {
+        const slotAttr = (el as HTMLElement).dataset.branchSlot;
+        const slot =
+          slotAttr != null && slotAttr !== ''
+            ? Number(slotAttr)
+            : this.selectedSlot;
+        if (this.onUpgradeBranch?.(slot, branchId)) {
           this.render(tree, currency);
         }
       });
@@ -594,20 +652,22 @@ export class ShopUI {
     }
     const st = B.state;
     const dronesOn = tree.stats.dronesUnlocked || tree.owned.has('drone_unlock');
-    if (!dronesOn) {
-      return `<div class="dnd-panel blueprint-panel">
-        <p class="research-blurb">Purchase <strong>Ally Protocol</strong> in DRONE TECH to authorize bays.</p>
-      </div>`;
-    }
+    const techCards = getSequentialVisibleNodes(tree.owned, currency, 'drone_bays')
+      .map((v) => this.renderCard(v, tree, currency))
+      .join('');
+
+    // Prefer upgrades until Ally Protocol is owned (first-shop flow)
+    const sub: DroneSubTab = !dronesOn ? 'upgrades' : this.droneSubTab;
 
     const bayCost = B.nextBayCost();
-    const canBay = B.canUnlockBay() && currency.dataFragments >= bayCost;
+    const canBay = dronesOn && B.canUnlockBay() && currency.dataFragments >= bayCost;
     const bayCount = Math.max(st.bays, 0);
 
     const padSizeClass = bayCount > 8 ? 'compact' : bayCount > 5 ? 'mid' : '';
-    const bayPads =
-      bayCount === 0
-        ? `<div class="bp-empty-hint">No bays yet — unlock one below.</div>`
+    const bayPads = !dronesOn
+      ? `<div class="bp-empty-hint">Authorize drones via UPGRADES · Ally Protocol</div>`
+      : bayCount === 0
+        ? `<div class="bp-empty-hint">No bays yet — unlock one in STOCK</div>`
         : Array.from({ length: bayCount }, (_, i) => {
             const role = st.slots[i] ?? null;
             const def = role ? DRONE_ROLES[role] : null;
@@ -627,75 +687,150 @@ export class ShopUI {
               </div>`;
           }).join('');
 
-    const invRail = (['fighter', 'bomber', 'defender'] as DroneRole[])
-      .map((role) => {
-        const def = DRONE_ROLES[role];
-        const unlocked = B.isTypeUnlocked(role);
-        const free = freeInventory(st, role);
-        const owned = st.owned[role] ?? 0;
-        const levelOk = this.highestLevel >= def.unlockLevel;
-        if (!unlocked) {
-          const can = levelOk && currency.dataFragments >= def.unlockCost;
-          return `
-            <div class="bp-inv-card locked" style="--accent:${def.colorCss}">
-              <div class="bp-inv-title">${def.name}</div>
-              <div class="bp-inv-sub">${levelOk ? `${def.unlockCost} FRAG` : `STAGE ${def.unlockLevel}+`}</div>
-              <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
-                data-unlock-type="${role}" ${can ? '' : 'disabled'}>
-                ${levelOk ? 'UNLOCK' : 'LOCKED'}
-              </button>
-            </div>`;
+    const invRail = !dronesOn
+      ? `<div class="loadout-upgrades-empty">
+          <div class="bp-inv-title">Bays locked</div>
+          <p class="dim">Buy <strong>Ally Protocol</strong> under UPGRADES to field a fleet.</p>
+          <button type="button" class="loadout-equip-btn upgrade-jump" data-drone-sub="upgrades">
+            OPEN UPGRADES
+          </button>
+        </div>`
+      : (['fighter', 'bomber', 'defender'] as DroneRole[])
+          .map((role) => {
+            const def = DRONE_ROLES[role];
+            const unlocked = B.isTypeUnlocked(role);
+            const free = freeInventory(st, role);
+            const owned = st.owned[role] ?? 0;
+            const levelOk = this.highestLevel >= def.unlockLevel;
+            if (!unlocked) {
+              const can = levelOk && currency.dataFragments >= def.unlockCost;
+              return `
+                <div class="bp-inv-card locked" style="--accent:${def.colorCss}">
+                  <div class="bp-inv-title">${def.name}</div>
+                  <div class="bp-inv-sub">${levelOk ? `${def.unlockCost} FRAG` : `STAGE ${def.unlockLevel}+`}</div>
+                  <p class="dim" style="margin:0;font-size:10px;line-height:1.3">${def.description}</p>
+                  <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
+                    data-unlock-type="${role}" ${can ? '' : 'disabled'}>
+                    ${levelOk ? 'UNLOCK' : 'LOCKED'}
+                  </button>
+                </div>`;
+            }
+            const canBuy = currency.dataFragments >= def.unitCost;
+            const emptyBay = st.slots.findIndex((s) => s == null);
+            const canAssign = free > 0 && emptyBay >= 0;
+            return `
+              <div class="bp-inv-card" style="--accent:${def.colorCss}">
+                <div class="bp-inv-title">${def.name}</div>
+                <div class="bp-inv-sub">Free ${free} · Own ${owned}</div>
+                <p class="dim" style="margin:0;font-size:10px;line-height:1.3">${def.description}</p>
+                <div class="bp-inv-chip" draggable="${free > 0 ? 'true' : 'false'}"
+                  data-drag-drone="${role}" title="Drag onto a bay pad">
+                  ☰ DRAG
+                </div>
+                <div class="bp-inv-actions">
+                  <button type="button" class="loadout-equip-btn ${canAssign ? '' : 'equipped'}"
+                    data-assign-drone="${role}" ${canAssign ? '' : 'disabled'}>
+                    ${canAssign ? 'ASSIGN' : free <= 0 ? 'NONE' : 'FULL'}
+                  </button>
+                  <button type="button" class="shop-card-buy ${canBuy ? 'buyable' : ''}"
+                    data-buy-unit="${role}" ${canBuy ? '' : 'disabled'}>
+                    +1 · ${def.unitCost}
+                  </button>
+                </div>
+              </div>`;
+          })
+          .join('');
+
+    const upgradesPanel = `
+      <div class="loadout-upgrades-head" style="--accent:var(--cyan,#00f0ff)">
+        <div class="shop-card-top">
+          <span class="shop-card-name">Drone Tech</span>
+          <span class="shop-card-rank">${dronesOn ? 'ONLINE' : 'LOCKED'}</span>
+        </div>
+        <p class="dim loadout-upgrades-blurb">
+          ${
+            dronesOn
+              ? 'Fleet damage, fire rate, HP, respawn, and defender shields.'
+              : 'Purchase Ally Protocol to unlock bay authorization and your first wingman.'
+          }
+        </p>
+        ${
+          dronesOn
+            ? `<button type="button" class="loadout-equip-btn" data-drone-sub="stock">FLEET STOCK</button>`
+            : ''
         }
-        const canBuy = currency.dataFragments >= def.unitCost;
-        const emptyBay = st.slots.findIndex((s) => s == null);
-        const canAssign = free > 0 && emptyBay >= 0;
-        return `
-          <div class="bp-inv-card" style="--accent:${def.colorCss}">
-            <div class="bp-inv-title">${def.name}</div>
-            <div class="bp-inv-sub">Free ${free} · Own ${owned}</div>
-            <div class="bp-inv-chip" draggable="${free > 0 ? 'true' : 'false'}"
-              data-drag-drone="${role}" title="Drag onto a bay pad">
-              ☰ DRAG
-            </div>
-            <div class="bp-inv-actions">
-              <button type="button" class="loadout-equip-btn ${canAssign ? '' : 'equipped'}"
-                data-assign-drone="${role}" ${canAssign ? '' : 'disabled'}>
-                ${canAssign ? 'ASSIGN' : free <= 0 ? 'NONE' : 'FULL'}
-              </button>
-              <button type="button" class="shop-card-buy ${canBuy ? 'buyable' : ''}"
-                data-buy-unit="${role}" ${canBuy ? '' : 'disabled'}>
-                +1 · ${def.unitCost}
-              </button>
-            </div>
-          </div>`;
-      })
-      .join('');
+      </div>
+      <div class="shop-cards drone-tech-cards">
+        ${
+          techCards ||
+          `<div class="dim" style="padding:8px">All drone tech chains complete.</div>`
+        }
+      </div>`;
+
+    const stockActive = sub === 'stock';
+    const upgradesActive = sub === 'upgrades';
+
+    const fleetCta = dronesOn
+      ? `<div class="loadout-slot-cta">
+          <span class="loadout-slot-cta-label">
+            ${st.bays} bays · ${B.equippedCount()} active
+          </span>
+          <button type="button" class="menu-btn primary loadout-upgrade-cta" data-drone-sub="upgrades">
+            UPGRADES
+          </button>
+        </div>`
+      : `<div class="loadout-slot-cta">
+          <span class="loadout-slot-cta-label">Ally Protocol required</span>
+          <button type="button" class="menu-btn primary loadout-upgrade-cta" data-drone-sub="upgrades">
+            UPGRADES
+          </button>
+        </div>`;
 
     return `
       <div class="dnd-panel blueprint-panel">
         <div class="bp-toolbar">
-          <span class="bp-hint">Drag drones onto bay pads on the hull diagram</span>
+          <span class="bp-hint">Drag drones onto bay pads · UPGRADES = drone tech</span>
           <button type="button" class="menu-btn primary bp-unlock-btn" id="drone-bay-unlock"
             ${canBay ? '' : 'disabled'}>
-            ${B.canUnlockBay() ? `+ BAY · ${bayCost} FRAG` : 'MAX BAYS'}
+            ${
+              !dronesOn
+                ? 'BAYS LOCKED'
+                : B.canUnlockBay()
+                  ? `+ BAY · ${bayCost} FRAG`
+                  : 'MAX BAYS'
+            }
           </button>
           <span class="dnd-toolbar-meta">${st.bays} bays · ${B.equippedCount()} active</span>
         </div>
-        <div class="bp-layout">
+        <div class="bp-layout loadout-split">
           <div class="bp-diagram" aria-label="Ship drone bay blueprint">
             ${this.renderShipBlueprintSvg()}
             <div class="bp-pads drone-pads">${bayPads}</div>
           </div>
-          <aside class="bp-rail">
-            <h3 class="bp-rail-title">DRONE STOCK</h3>
-            <div class="bp-rail-scroll">${invRail}</div>
+          <aside class="bp-rail loadout-rail">
+            <div class="loadout-subtabs" role="tablist" aria-label="Drone sections">
+              <button type="button" role="tab"
+                class="loadout-subtab ${stockActive ? 'active' : ''}"
+                data-drone-sub="stock" aria-selected="${stockActive}">
+                STOCK
+              </button>
+              <button type="button" role="tab"
+                class="loadout-subtab ${upgradesActive ? 'active' : ''}"
+                data-drone-sub="upgrades" aria-selected="${upgradesActive}">
+                UPGRADES
+              </button>
+            </div>
+            <div class="bp-rail-scroll loadout-subpanel ${stockActive ? 'active' : 'panel-hidden'}"
+              role="tabpanel" ${stockActive ? '' : 'hidden'}>
+              ${invRail}
+            </div>
+            <div class="bp-rail-scroll loadout-subpanel upgrades ${upgradesActive ? 'active' : 'panel-hidden'}"
+              role="tabpanel" ${upgradesActive ? '' : 'hidden'}>
+              ${upgradesPanel}
+            </div>
           </aside>
         </div>
-        <div class="shop-cards bp-extra-cards">
-          ${getSequentialVisibleNodes(tree.owned, currency, 'drones')
-            .map((v) => this.renderCard(v, tree, currency))
-            .join('')}
-        </div>
+        ${fleetCta}
       </div>`;
   }
 
@@ -816,31 +951,41 @@ export class ShopUI {
       return `<div class="shop-empty">Loadout systems offline.</div>`;
     }
 
+    const slot = this.selectedSlot;
+    const unlocked = slot < L.hardpointUnlocks;
+    const selectedDerived = unlocked ? L.getDerived(slot) : null;
+
     const pads = Array.from({ length: MAX_HARDPOINTS }, (_, i) => {
-      const unlocked = i < L.hardpointUnlocks;
+      const padUnlocked = i < L.hardpointUnlocks;
       const inst = L.slots[i];
       const def = inst ? getWeaponDef(inst.defId) : null;
       const rule = HARDPOINT_UNLOCK[i];
       const pos = ShopUI.HP_PAD_POS[i] ?? { left: '50%', top: '50%', label: `HP${i + 1}` };
-      const lockedHint = !unlocked
+      const lockedHint = !padUnlocked
         ? `ASC ${rule.minAscension}+ · ${rule.costCore} CORE`
         : def
           ? def.name
           : 'EMPTY';
+      const upgradeBtn =
+        padUnlocked && def
+          ? `<button type="button" class="bp-pad-upgrade" data-loadout-upgrade="${i}"
+               title="Upgrade ${def.name}">UPG</button>`
+          : '';
       return `
         <div class="bp-pad hp-pad loadout-slot dnd-slot ${
           this.selectedSlot === i ? 'active' : ''
-        } ${unlocked ? (def ? 'filled' : 'empty') : 'locked'}"
+        } ${padUnlocked ? (def ? 'filled' : 'empty') : 'locked'}"
           style="left:${pos.left};top:${pos.top};${def ? `--accent:${def.colorCss}` : ''}"
           data-slot="${i}" data-hp-drop="${i}"
           title="${lockedHint}">
-          <button type="button" class="bp-pad-hit loadout-slot-hit" data-slot="${i}">
+          <button type="button" class="bp-pad-hit loadout-slot-hit">
             <span class="bp-pad-idx">HP${i + 1}</span>
             <span class="bp-pad-label">${pos.label}</span>
             <span class="bp-pad-name">${
-              !unlocked ? 'LOCK' : def ? def.name.slice(0, 8) : 'DROP'
+              !padUnlocked ? 'LOCK' : def ? def.name.slice(0, 8) : 'DROP'
             }</span>
           </button>
+          ${upgradeBtn}
         </div>`;
     }).join('');
 
@@ -849,55 +994,6 @@ export class ShopUI {
       .map((v) => this.renderCard(v, tree, currency))
       .join('');
 
-    const slot = this.selectedSlot;
-    const unlocked = slot < L.hardpointUnlocks;
-    let detail = '';
-
-    if (!unlocked) {
-      const rule = HARDPOINT_UNLOCK[slot];
-      const ascOk = this.ascensionTier >= rule.minAscension;
-      const can =
-        slot === L.hardpointUnlocks &&
-        currency.coreEnergy >= rule.costCore &&
-        this.highestLevel >= rule.minLevel &&
-        ascOk;
-      detail = `
-        <div class="loadout-detail shop-card bp-detail">
-          <div class="shop-card-top"><span class="shop-card-name">Hardpoint ${slot + 1}</span></div>
-          <div class="shop-card-desc">
-            Requires <strong>Ascension ${rule.minAscension}+</strong>
-            and <strong>${rule.costCore} Core Energy</strong>.
-            ${
-              !ascOk
-                ? `<br/><span class="evolve-warn">Evolve the hull first (you are Ascension ${this.ascensionTier}).</span>`
-                : ''
-            }
-          </div>
-          <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}" id="hp-unlock" ${
-            can ? '' : 'disabled'
-          }>
-            Unlock · ${rule.costCore} CORE
-          </button>
-        </div>`;
-    } else {
-      const equipped = L.getDerived(slot);
-      detail = `
-        <div class="loadout-detail bp-detail">
-          <div class="shop-card-top">
-            <span class="shop-card-name">Hardpoint ${slot + 1}</span>
-            <span class="shop-card-rank">${
-              equipped
-                ? `<span style="color:${equipped.def.colorCss}">${equipped.def.name}</span>`
-                : 'Empty'
-            }</span>
-          </div>
-          <button type="button" class="loadout-weapon empty bp-unequip" data-equip="">
-            Unequip selected bay
-          </button>
-          ${equipped ? this.renderBranches(equipped.def, slot, L, currency) : ''}
-        </div>`;
-    }
-
     const weaponRail = WEAPONS.map((w) => {
       const owned = L.isOwned(w.id);
       const cost = weaponUnlockCost(w);
@@ -905,7 +1001,7 @@ export class ShopUI {
         w.unlock.type === 'shop' || w.unlock.type === 'core' ? w.unlock.minLevel ?? 1 : 1;
       const levelOk = this.highestLevel >= minLv;
       const equippedOnSelected =
-        unlocked && L.getDerived(slot)?.def.id === w.id;
+        unlocked && selectedDerived?.def.id === w.id;
       if (!owned && w.unlock.type === 'shop') {
         if (!levelOk) {
           return `
@@ -934,30 +1030,144 @@ export class ShopUI {
             title="Drag onto a hardpoint pad">
             ☰ DRAG
           </div>
-          <button type="button" class="loadout-equip-btn ${equippedOnSelected ? 'equipped' : ''}"
-            data-equip-btn="${w.id}" ${equippedOnSelected ? 'disabled' : ''}>
-            ${equippedOnSelected ? 'ON BAY' : 'EQUIP'}
-          </button>
+          <div class="bp-inv-actions">
+            <button type="button" class="loadout-equip-btn ${equippedOnSelected ? 'equipped' : ''}"
+              data-equip-btn="${w.id}" ${equippedOnSelected ? 'disabled' : ''}>
+              ${equippedOnSelected ? 'ON BAY' : 'EQUIP'}
+            </button>
+            ${
+              equippedOnSelected
+                ? `<button type="button" class="loadout-equip-btn upgrade-jump"
+                     data-loadout-upgrade="${slot}">UPGRADE</button>`
+                : ''
+            }
+          </div>
         </div>`;
     }).join('');
+
+    let upgradesPanel = '';
+    if (!unlocked) {
+      const rule = HARDPOINT_UNLOCK[slot];
+      const ascOk = this.ascensionTier >= rule.minAscension;
+      const can =
+        slot === L.hardpointUnlocks &&
+        currency.coreEnergy >= rule.costCore &&
+        this.highestLevel >= rule.minLevel &&
+        ascOk;
+      upgradesPanel = `
+        <div class="loadout-detail shop-card bp-detail">
+          <div class="shop-card-top"><span class="shop-card-name">Hardpoint ${slot + 1}</span></div>
+          <div class="shop-card-desc">
+            Requires <strong>Ascension ${rule.minAscension}+</strong>
+            and <strong>${rule.costCore} Core Energy</strong>.
+            ${
+              !ascOk
+                ? `<br/><span class="evolve-warn">Evolve the hull first (you are Ascension ${this.ascensionTier}).</span>`
+                : ''
+            }
+          </div>
+          <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}" id="hp-unlock" ${
+            can ? '' : 'disabled'
+          }>
+            Unlock · ${rule.costCore} CORE
+          </button>
+        </div>`;
+    } else if (!selectedDerived) {
+      upgradesPanel = `
+        <div class="loadout-upgrades-empty">
+          <div class="bp-inv-title">No weapon on HP${slot + 1}</div>
+          <p class="dim">Equip a weapon first, then upgrade its branches here.</p>
+          <button type="button" class="loadout-equip-btn" data-loadout-sub="weapons">
+            BROWSE WEAPONS
+          </button>
+        </div>`;
+    } else {
+      upgradesPanel = `
+        <div class="loadout-upgrades-head" style="--accent:${selectedDerived.def.colorCss}">
+          <div class="shop-card-top">
+            <span class="shop-card-name" style="color:${selectedDerived.def.colorCss}">
+              ${selectedDerived.def.name}
+            </span>
+            <span class="shop-card-rank">HP${slot + 1}</span>
+          </div>
+          <p class="dim loadout-upgrades-blurb">${selectedDerived.def.description}</p>
+          <div class="bp-inv-actions">
+            <button type="button" class="loadout-weapon empty bp-unequip" data-equip="">
+              Unequip
+            </button>
+            <button type="button" class="loadout-equip-btn" data-loadout-sub="weapons">
+              ARSENAL
+            </button>
+          </div>
+        </div>
+        ${this.renderBranches(selectedDerived.def, slot, L, currency)}`;
+    }
+
+    const sub = this.loadoutSubTab;
+    const weaponsActive = sub === 'weapons';
+    const upgradesActive = sub === 'upgrades';
+
+    // Selected-slot upgrade CTA strip (always visible under diagram when armed)
+    const slotUpgradeStrip =
+      unlocked && selectedDerived
+        ? `<div class="loadout-slot-cta">
+            <span class="loadout-slot-cta-label">
+              HP${slot + 1} ·
+              <strong style="color:${selectedDerived.def.colorCss}">${selectedDerived.def.name}</strong>
+            </span>
+            <button type="button" class="menu-btn primary loadout-upgrade-cta"
+              data-loadout-upgrade="${slot}">
+              UPGRADE
+            </button>
+          </div>`
+        : unlocked
+          ? `<div class="loadout-slot-cta dim">
+              <span class="loadout-slot-cta-label">HP${slot + 1} · empty — equip a weapon</span>
+            </div>`
+          : '';
 
     return `
       <div class="loadout-shop-wrap blueprint-panel">
         <div class="bp-toolbar">
-          <span class="bp-hint">Drag weapons onto hardpoint pads on the hull</span>
+          <span class="bp-hint">Drag weapons onto hardpoint pads · UPG opens branch upgrades</span>
           <span class="loadout-dps">DPS ~${Math.round(L.estimateLoadoutDps())}</span>
         </div>
-        <div class="bp-layout">
+        <div class="bp-layout loadout-split">
           <div class="bp-diagram" aria-label="Ship weapon hardpoint blueprint">
             ${this.renderShipBlueprintSvg()}
             <div class="bp-pads hp-pads">${pads}</div>
           </div>
-          <aside class="bp-rail">
-            <h3 class="bp-rail-title">WEAPONS</h3>
-            <div class="bp-rail-scroll">${weaponRail}</div>
+          <aside class="bp-rail loadout-rail">
+            <div class="loadout-subtabs" role="tablist" aria-label="Loadout sections">
+              <button type="button" role="tab"
+                class="loadout-subtab ${weaponsActive ? 'active' : ''}"
+                data-loadout-sub="weapons" aria-selected="${weaponsActive}">
+                WEAPONS
+              </button>
+              <button type="button" role="tab"
+                class="loadout-subtab ${upgradesActive ? 'active' : ''}"
+                data-loadout-sub="upgrades" aria-selected="${upgradesActive}">
+                UPGRADES
+              </button>
+            </div>
+            <div class="bp-rail-scroll loadout-subpanel ${weaponsActive ? 'active' : 'panel-hidden'}"
+              role="tabpanel" ${weaponsActive ? '' : 'hidden'}>
+              ${
+                unlocked
+                  ? `<button type="button" class="loadout-weapon empty bp-unequip" data-equip="">
+                      Unequip HP${slot + 1}
+                    </button>`
+                  : ''
+              }
+              ${weaponRail}
+            </div>
+            <div class="bp-rail-scroll loadout-subpanel upgrades ${upgradesActive ? 'active' : 'panel-hidden'}"
+              role="tabpanel" ${upgradesActive ? '' : 'hidden'}>
+              ${upgradesPanel}
+            </div>
           </aside>
         </div>
-        ${detail}
+        ${slotUpgradeStrip}
         ${
           hpCards
             ? `<div class="shop-cards loadout-hp-cards bp-extra-cards">${hpCards}</div>`
@@ -976,9 +1186,12 @@ export class ShopUI {
   ): string {
     const inst = L.slots[slot];
     if (!inst) return '';
+    if (!def.branches.length) {
+      return `<div class="dim" style="padding:8px">No upgrade branches on this weapon.</div>`;
+    }
     return `
       <div class="loadout-branches">
-        <div class="branch-title">Weapon Branches</div>
+        <div class="branch-title">Weapon Branches · HP${slot + 1}</div>
         ${def.branches
           .map((b) => {
             const rank = inst.branchRanks[b.id] ?? 0;
@@ -992,7 +1205,8 @@ export class ShopUI {
                 </div>
                 <p>${b.description}</p>
                 <button type="button" class="shop-card-buy ${check.ok ? 'buyable' : ''}"
-                  data-branch="${b.id}" ${maxed || !check.ok ? 'disabled' : ''}>
+                  data-branch="${b.id}" data-branch-slot="${slot}"
+                  ${maxed || !check.ok ? 'disabled' : ''}>
                   ${maxed ? 'MAXED' : `Upgrade · ${check.cost} FRAG`}
                 </button>
               </div>`;

@@ -277,7 +277,8 @@ export class Game {
     this.overlay = document.getElementById('overlay-root')!;
     this.toastRoot =
       document.getElementById('toast-root') ?? this.overlay;
-    this.tutorial = new TutorialDirector(document.getElementById('hud-root')!, {
+    // Mount on ui-root (not hud-root) so shop open (HUD hidden) still shows briefing
+    this.tutorial = new TutorialDirector(document.getElementById('ui-root')!, {
       stage1Done: false,
       loadoutDone: false,
     });
@@ -582,7 +583,8 @@ export class Game {
         step?.id === 'shop_hint' ||
         step?.advance === 'drone_owned'
       ) {
-        this.openTech('drones');
+        // Ally Protocol lives under DRONES → UPGRADES
+        this.openTech('drone_bays');
       } else {
         this.openTech();
       }
@@ -595,9 +597,20 @@ export class Game {
 
     this.levelUI.onClose = () => {
       this.levelUI.hide();
-      this.mode = this.cube.aliveBlocks > 0 && !this.menuDemoActive ? 'playing' : 'menu';
-      if (this.mode === 'playing') this.hud.setVisible(true);
-      else this.showMenu();
+      const toPlaying =
+        this.pendingReturnMode === 'playing' &&
+        !this.menuDemoActive &&
+        this.cube.aliveBlocks > 0;
+      if (toPlaying) {
+        this.resumeGameplayFromShop();
+      } else if (this.cube.aliveBlocks > 0 && !this.menuDemoActive) {
+        this.mode = 'playing';
+        this.hud.setVisible(true);
+        this.refreshShopPrompt();
+        this.syncMusicToMode();
+      } else {
+        this.showMenu();
+      }
     };
     this.levelUI.onSelect = (id) => {
       this.levelUI.hide();
@@ -1172,6 +1185,8 @@ export class Game {
     this.hud.setVisible(true);
     this.hud.setCrosshairVisible(true);
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+    // Re-evaluate shop/loadout HUD buttons (buy while in shop may have hidden them)
+    this.refreshShopPrompt();
     this.tutorial.showIfActive();
     this.syncMusicToMode();
   }
@@ -1558,7 +1573,7 @@ export class Game {
   }
 
   private openTech(
-    tab?: 'ship' | 'main_gun' | 'loadouts' | 'drone_bays' | 'drones' | 'economy' | 'global'
+    tab?: 'ship' | 'main_gun' | 'loadouts' | 'drone_bays' | 'other' | 'drones' | 'economy' | 'global'
   ): void {
     // Gate shop until first drone is affordable or already owned
     const ownsDrone =
@@ -1589,11 +1604,10 @@ export class Game {
     this.settingsUI.hide();
     this.researchUI.hide();
     this.overlay.innerHTML = '';
-    // Only resume combat if we opened shop from an active stage (not menu demo)
+    // Resume combat only from live stage — not level-clear (avoids empty-lattice limbo)
     const fromCombat =
       !this.menuDemoActive &&
       (this.mode === 'playing' ||
-        this.mode === 'levelclear' ||
         this.mode === 'intro' ||
         this.mode === 'cinematic' ||
         (this.mode === 'tech' && this.pendingReturnMode === 'playing'));
@@ -1604,7 +1618,6 @@ export class Game {
     this.hud.setIntro(false);
     this.hud.hideShopHint();
     this.shopHintShown = true;
-    this.tutorial.notifyShopOpened();
     // Keep orbit camera frozen on ship (no auto-spin that desyncs chase)
     this.cameraCtrl.endCinematic();
     this.restoreShipVisual();
@@ -1619,11 +1632,20 @@ export class Game {
       this.save.data.ascensionTier
     );
     this.shopUI.setDroneBay(this.droneBays);
-    // Default to drone tech until Ally Protocol; then prefer bays
+    // Default to DRONES until Ally Protocol / first bay; 'drones' deep-link opens UPGRADES
     const openTab =
       tab ??
-      (!ownsDrone ? 'drones' : this.droneBays.state.bays === 0 ? 'drone_bays' : undefined);
-    this.shopUI.show(this.tech, this.currency, openTab);
+      (!ownsDrone || this.droneBays.state.bays === 0 ? 'drone_bays' : undefined);
+    this.shopUI.show(
+      this.tech,
+      this.currency,
+      !ownsDrone && (!tab || tab === 'drones' || tab === 'drone_bays')
+        ? 'drones'
+        : openTab
+    );
+    // After shop DOM exists so tutorial can highlight .shop-reco / drone_unlock
+    this.tutorial.notifyShopOpened();
+    this.tutorial.showIfActive();
     this.syncMusicToMode();
   }
 
@@ -1638,6 +1660,14 @@ export class Game {
     this.menu.hide();
     this.shopUI.hide();
     this.loadoutUI.hide();
+    const fromCombat =
+      !this.menuDemoActive &&
+      (this.mode === 'playing' ||
+        this.mode === 'intro' ||
+        this.mode === 'levelclear' ||
+        (this.mode === 'tech' && this.pendingReturnMode === 'playing') ||
+        (this.mode === 'settings' && this.pendingReturnMode === 'playing'));
+    this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
     this.mode = 'levels';
     this.hud.setVisible(false);
     this.levelUI.show(this.save.data.highestLevel, this.currentLevelId);
@@ -1730,14 +1760,18 @@ export class Game {
   private startLevel(id: number): void {
     // Always supersede an in-flight cut — never stack two onBlack handlers
     // (double-tap Next / Play + early shop used to corrupt ship + HUD state).
+    const gen = ++this.levelLoadGen;
     this.levelLoadBusy = true;
     this.screenFx.play({
       fadeOut: 0.55,
       hold: 0.4,
       fadeIn: 0.8,
-      onBlack: () => this.startLevelImmediate(id),
+      onBlack: () => {
+        if (gen !== this.levelLoadGen) return;
+        this.startLevelImmediate(id);
+      },
       onComplete: () => {
-        this.levelLoadBusy = false;
+        if (gen === this.levelLoadGen) this.levelLoadBusy = false;
       },
     });
   }
@@ -1869,7 +1903,10 @@ export class Game {
   }
 
   private finishIntroImmediate(): void {
+    // Abort scripted cinematic if still running (shop/skip mid-cut)
+    this.cinematic?.skip();
     this.mode = 'playing';
+    this.levelLoadBusy = false;
     // Keep Final Protocol rolling if already active (no restart)
     this.syncMusicToMode();
     // Tear down cinematic instance; restore pristine gameplay cube

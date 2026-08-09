@@ -440,6 +440,13 @@ export class MissileWeapon implements WeaponBehavior {
         bus.emit('beam-hit', { ...h, style: 'splash' as const });
       }
     }
+    bus.emit('explosion', {
+      x: point.x,
+      y: point.y,
+      z: point.z,
+      radius: m.splash,
+      family: 'missile',
+    });
   }
 
   private spawnExplosion(at: THREE.Vector3, scale: number, crit: boolean): void {

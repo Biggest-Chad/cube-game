@@ -275,7 +275,13 @@ export class RailgunWeapon implements WeaponBehavior {
       bus.emit('beam-hit', { ...result, crit: s.crit });
     }
     if (this.stats.splashRadius > 0) {
-      for (const h of cube.applySplash(point, this.stats.splashRadius, s.damage * 0.2, now)) {
+      for (const h of cube.applySplash(
+        point,
+        this.stats.splashRadius,
+        s.damage * 0.2,
+        now,
+        instanceId
+      )) {
         bus.emit('beam-hit', h);
       }
     }

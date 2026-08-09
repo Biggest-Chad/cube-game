@@ -221,14 +221,7 @@ export class FlakWeapon implements WeaponBehavior {
         impactNz: point.z,
       });
     }
-    bus.emit('explosion', {
-      x: point.x,
-      y: point.y,
-      z: point.z,
-      radius: s.splash,
-      family: 'flak',
-    });
-    // Also direct hit attempt
+    // Also direct hit attempt when splash found nothing
     const near = cube.findNearest(point, s.splash);
     if (near && hits.length === 0) {
       const type = cube.getBlockType(near.instanceId);

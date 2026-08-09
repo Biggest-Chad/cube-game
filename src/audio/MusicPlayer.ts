@@ -104,12 +104,15 @@ export class MusicPlayer {
 
     if (ctx === 'ui') {
       this.setMuffled(true);
+      // Cancel in-flight crossfade so a prior skip cannot restart mid-shop
+      this.fadeToken++;
       this.ensurePlaying();
       return;
     }
 
     if (ctx === 'preserve') {
       this.setMuffled(false);
+      this.fadeToken++;
       this.ensurePlaying();
       return;
     }
@@ -124,9 +127,12 @@ export class MusicPlayer {
 
     // Something already loaded → keep it (levels, menu, shop return, etc.)
     if (this.hasActiveBed()) {
+      // Invalidate any pending fadeToTrack so continuity wins
+      this.fadeToken++;
       this.applyLoopForContext(ctx);
       void this.audio.play().catch(() => undefined);
       this.onTrackChange?.(this.current);
+      this.applyGains(0.12);
       return;
     }
 

@@ -20,9 +20,7 @@ export type ShopTabId =
   | 'main_gun'
   | 'loadouts'
   | 'drone_bays'
-  | 'drones'
-  | 'economy'
-  | 'global';
+  | 'other';
 
 export type CostCurrency = 'fragments' | 'coreEnergy';
 
@@ -104,14 +102,13 @@ export interface ShopTabDef {
   branches: UpgradeBranch[];
 }
 
+/** Compact header tabs — drone tech lives under DRONES upgrades; economy+global → OTHER. */
 export const SHOP_TABS: ShopTabDef[] = [
   { id: 'ship', label: 'SHIP', icon: '🚀', branches: ['ship'] },
-  { id: 'main_gun', label: 'MAIN GUN', icon: '⚡', branches: ['offense'] },
-  { id: 'loadouts', label: 'LOADOUTS', icon: '◎', branches: ['loadouts'] },
-  { id: 'drone_bays', label: 'DRONE BAYS', icon: '⬡', branches: [] },
-  { id: 'drones', label: 'DRONE TECH', icon: '◈', branches: ['drones'] },
-  { id: 'economy', label: 'ECONOMY', icon: '◈', branches: ['analysis', 'idle'] },
-  { id: 'global', label: 'GLOBAL', icon: '✶', branches: ['global'] },
+  { id: 'main_gun', label: 'GUN', icon: '⚡', branches: ['offense'] },
+  { id: 'loadouts', label: 'LOAD', icon: '◎', branches: ['loadouts'] },
+  { id: 'drone_bays', label: 'DRONES', icon: '⬡', branches: ['drones'] },
+  { id: 'other', label: 'OTHER', icon: '✶', branches: ['analysis', 'idle', 'global'] },
 ];
 
 export const BRANCH_LABELS: Record<UpgradeBranch, string> = {
@@ -128,13 +125,22 @@ export const BRANCH_TO_TAB: Record<UpgradeBranch, ShopTabId> = {
   ship: 'ship',
   offense: 'main_gun',
   loadouts: 'loadouts',
-  drones: 'drones',
-  analysis: 'economy',
-  idle: 'economy',
-  global: 'global',
+  drones: 'drone_bays',
+  analysis: 'other',
+  idle: 'other',
+  global: 'other',
 };
 
-// drone_bays is a custom DnD panel — no upgrade branches
+/** Map legacy / deep-link tab ids onto the compact header set. */
+export function normalizeShopTabId(tab: string | undefined | null): ShopTabId | undefined {
+  if (!tab) return undefined;
+  if (tab === 'drones') return 'drone_bays';
+  if (tab === 'economy' || tab === 'global') return 'other';
+  if (tab === 'main_gun' || tab === 'loadouts' || tab === 'drone_bays' || tab === 'ship' || tab === 'other') {
+    return tab;
+  }
+  return undefined;
+}
 
 /** Soft/hard caps referenced by TechTree recompute. */
 export const STAT_CAPS = {
@@ -302,7 +308,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
   // ═══════════════════════════════════════════
   // DRONES
   // ═══════════════════════════════════════════
-  // Drone bays / types are managed in the DRONE BAYS DnD panel.
+  // Drone bays / types: STOCK sub-tab; these chains appear under DRONES → UPGRADES.
   // Ally Protocol still gates "drones unlocked" for tutorials.
   ...chainNodes('drone_unlock', 'drones', [
     {
@@ -511,7 +517,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
       effects: { maxHullAdd: 35 },
     },
   ]),
-  // Extra bay slots are purchased in the DRONE BAYS panel (not sequential chains).
+  // Extra bay slots are purchased in the DRONES stock panel (not sequential chains).
 ];
 
 export function getUpgrade(id: string): UpgradeNodeDef | undefined {

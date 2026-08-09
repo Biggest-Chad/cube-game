@@ -360,8 +360,8 @@ export class TutorialDirector {
       step.advance === 'weapon_owned' ||
       step.advance === 'drone_owned'
     ) {
+      // openTech → notifyShopOpened advances shop_open once; do not double-advance here
       this.onRequestShop?.();
-      if (step.advance === 'shop_open') this.advance();
     }
   }
 

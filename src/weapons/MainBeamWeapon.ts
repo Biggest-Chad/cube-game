@@ -449,8 +449,10 @@ export class MainBeamWeapon implements WeaponBehavior {
     );
     const result = cube.applyDamage(instanceId, applied.finalDamage, now);
     b.lastHitId = instanceId;
-    // Penetration: continue through remaining blocks at reduced damage
-    if (b.penLeft > 0) {
+    // Penetration: stop on shared nucleus (multi-core voxels would re-hit the pool)
+    const hitNucleus =
+      !!result?.coreHit || type === BlockType.Core;
+    if (b.penLeft > 0 && !hitNucleus) {
       b.penLeft--;
       b.damage *= 0.78;
       b.pos.copy(point).addScaledVector(b.vel.clone().normalize(), 0.55);

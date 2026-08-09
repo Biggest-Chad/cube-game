@@ -323,7 +323,8 @@ export class Drone {
                 new THREE.Vector3(result.x, result.y, result.z),
                 def.splashRadius,
                 applied.finalDamage * 0.45,
-                now
+                now,
+                hit.instanceId
               );
             }
           }
