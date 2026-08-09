@@ -607,6 +607,39 @@ export class CubeManager {
   }
 
   /**
+   * Snapshot and clear every remaining lattice block (post-nucleus death).
+   * Returns world positions for shatter / float FX. Order is high→low id.
+   */
+  ejectAllRemainingBlocks(now: number): Array<{
+    x: number;
+    y: number;
+    z: number;
+    type: BlockType;
+  }> {
+    const out: Array<{ x: number; y: number; z: number; type: BlockType }> = [];
+    if (!this.mesh || this.mesh.count <= 0) return out;
+    this.group.updateWorldMatrix(true, false);
+    const mw = this.group.matrixWorld;
+    // High → low so swap-remove stays valid
+    for (let id = this.mesh.count - 1; id >= 0; id--) {
+      const t = this.getBlockType(id);
+      if (t === BlockType.Empty) continue;
+      this.mesh.getMatrixAt(id, _matrix);
+      _pos.setFromMatrixPosition(_matrix);
+      _pos.applyMatrix4(mw);
+      out.push({ x: _pos.x, y: _pos.y, z: _pos.z, type: t });
+      // Direct wipe (nucleus already dead — no shell accounting needed)
+      const ref = this.refs[id];
+      if (ref) {
+        ref.chunk.clearBlock(ref.localIndex);
+        this.removeInstance(id);
+      }
+    }
+    void now;
+    return out;
+  }
+
+  /**
    * Splash damage around world point.
    * Core voxels in radius route through the shared nucleus (once — first core only).
    * @param ignoreId Skip this instance (usually the primary impact already damaged).

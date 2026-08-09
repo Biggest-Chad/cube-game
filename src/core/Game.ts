@@ -70,6 +70,7 @@ type Mode =
   | 'intro'
   | 'cinematic'
   | 'playing'
+  | 'core_death'
   | 'levelclear'
   | 'tech'
   | 'research'
@@ -143,6 +144,9 @@ export class Game {
   /** Runtime quality after optional FPS demotion (never above user selection). */
   private effectiveQuality: GraphicsQuality = DEFAULT_GRAPHICS_QUALITY;
   private levelClearHandled = false;
+  /** Nucleus death FX before LEVEL CLEAR card (seconds elapsed). */
+  private coreDeathT = 0;
+  private readonly CORE_DEATH_SEC = 2.55;
   private unsubs: Array<() => void> = [];
   private introTimer = 0;
   private introDuration = ORBIT.introDuration;
@@ -371,8 +375,13 @@ export class Game {
       this.shopUI.hide();
       this.shopOpen = false;
       this.hud.hideShopHint();
-      // If purchase happened while shop was open, ensure tutorial advances
-      if (this.sessionPurchased) this.tutorial.notifyPurchase();
+      // Reveal next tutorial step only after shop is closed
+      this.tutorial.notifyShopClosed({
+        ownsDrone:
+          this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked,
+        ownsArcBeam: this.loadout.isOwned('rocket_pod'),
+        hasEquippedWeapon: this.loadout.allDerived().length > 0,
+      });
       if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
         this.resumeGameplayFromShop();
       } else {
@@ -391,6 +400,7 @@ export class Game {
       this.hardpoints.rebuildFromLoadout();
       this.syncLoadoutToSave();
       this.persist();
+      if (defId) this.tutorial.notifyWeaponEquipped();
     };
     this.shopUI.onUpgradeBranch = (slot, branchId) => {
       const check = this.loadout.canUpgradeBranch(slot, branchId, this.currency.dataFragments);
@@ -982,8 +992,8 @@ export class Game {
         }
       ),
       bus.on('core-destroyed', () => {
-        this.cameraCtrl.shake(0.1);
-        this.audio.playCrit();
+        // Full sequence owned by beginCoreDeathSequence (shake + lattice shatter)
+        if (this.mode === 'playing') this.beginCoreDeathSequence();
       }),
       bus.on('enemy-drone-destroyed', () => {
         this.currency.addFragments(3, this.tech.stats.fragmentMul);
@@ -1192,7 +1202,8 @@ export class Game {
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
     // Re-evaluate shop/loadout HUD buttons (buy while in shop may have hidden them)
     this.refreshShopPrompt();
-    this.tutorial.showIfActive();
+    // Tutorial card already refreshed in shop onClose → notifyShopClosed
+    if (!this.shopOpen) this.tutorial.showIfActive();
     this.syncMusicToMode();
   }
 
@@ -1648,9 +1659,8 @@ export class Game {
         ? 'drones'
         : openTab
     );
-    // After shop DOM exists so tutorial can highlight .shop-reco / drone_unlock
+    // Open shop = complete "open shop" tutorial stage; hide briefing until close
     this.tutorial.notifyShopOpened();
-    this.tutorial.showIfActive();
     this.syncMusicToMode();
   }
 
@@ -2058,6 +2068,93 @@ export class Game {
     this.hud.updateCrosshairScreen(x, y, firing, locked);
   }
 
+  /**
+   * Violent nucleus detonation + residual lattice float/fade (&lt; 3s),
+   * then normal LEVEL CLEAR UI.
+   */
+  private beginCoreDeathSequence(): void {
+    if (this.mode === 'core_death' || this.levelClearHandled) return;
+    this.mode = 'core_death';
+    this.coreDeathT = 0;
+    this.hud.setCrosshairVisible(false);
+    this.reticle.setVisible(false);
+    this.weapon.reset();
+    this.hardpoints.reset();
+    this.cubeDefense.reset();
+
+    // Center blast
+    this.cameraCtrl.shake(0.62);
+    try {
+      this.audio.playCrit();
+      this.audio.playExplosion(3.2, 'missile');
+    } catch {
+      /* audio optional */
+    }
+    this.particles.spawn(0, 0, 0, COLORS.magenta, 70, 26, 'ember');
+    this.particles.spawn(0, 0, 0, COLORS.cyan, 55, 22, 'spark');
+    this.particles.spawn(0, 0, 0, 0xffffff, 40, 18, 'glow');
+    this.particles.spawn(0, 0, 0, 0xff4488, 48, 24, 'debris');
+    this.rings.spawn(0, 0, 0, COLORS.magenta, 3.2);
+    this.rings.spawn(0, 0, 0, COLORS.cyan, 2.4);
+    this.rings.spawn(0, 0, 0, 0xffffff, 1.6);
+
+    // Disconnect remaining shell — shatter outward, float away
+    const remaining = this.cube.ejectAllRemainingBlocks(this.time.elapsed);
+    const budget = Math.max(12, Math.floor(48 * this.vfxScale));
+    const step = Math.max(1, Math.ceil(remaining.length / budget));
+    for (let i = 0; i < remaining.length; i += step) {
+      const b = remaining[i];
+      // Radial bias from origin so chunks disconnect and fly out
+      const len = Math.hypot(b.x, b.y, b.z) || 1;
+      this.shatter.shatter(
+        b.x,
+        b.y,
+        b.z,
+        b.type,
+        'explosive',
+        b.x / len,
+        b.y / len,
+        b.z / len,
+        Math.min(1, this.vfxScale * 0.95)
+      );
+    }
+    // Fill residual sample with lighter sparks (no mesh pool overflow)
+    for (let i = 1; i < remaining.length && i < budget * 2; i += step + 1) {
+      const b = remaining[i];
+      this.particles.spawn(b.x, b.y, b.z, COLORS.cyan, 4, 10, 'debris');
+    }
+
+    this.showPhaseChip('NUCLEUS DESTROYED', 'destroyed');
+  }
+
+  private updateCoreDeath(dt: number): void {
+    this.coreDeathT += dt;
+    // Secondary shockwaves
+    if (this.coreDeathT < 1.4 && Math.random() < dt * 10) {
+      const r = 0.4 + Math.random() * 2.8;
+      const a = Math.random() * Math.PI * 2;
+      const y = (Math.random() - 0.5) * 2.2;
+      this.particles.spawn(
+        Math.cos(a) * r,
+        y,
+        Math.sin(a) * r,
+        Math.random() > 0.5 ? COLORS.magenta : 0xff6622,
+        8,
+        14,
+        'ember'
+      );
+      if (Math.random() > 0.7) this.cameraCtrl.shake(0.08);
+    }
+    this.cameraCtrl.update(dt);
+    this.ship.update(this.cameraCtrl, dt, this.particles);
+    // Slow orbit drift for drama
+    this.cameraCtrl.yaw += dt * 0.12;
+
+    if (this.coreDeathT >= this.CORE_DEATH_SEC) {
+      this.onLevelClear();
+    }
+  }
+
   private onLevelClear(): void {
     if (this.levelClearHandled) return;
     this.levelClearHandled = true;
@@ -2439,9 +2536,11 @@ export class Game {
         this.hud.updateNucleus(this.cube.nucleus.snapshot());
         this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
 
-        // Level ends only when nucleus is destroyed (or no nucleus + no blocks)
-        if (this.cube.isLevelComplete()) this.onLevelClear();
+        // Nucleus dead → death FX, then clear UI (not instant card)
+        if (this.cube.isLevelComplete()) this.beginCoreDeathSequence();
       }
+    } else if (this.mode === 'core_death') {
+      this.updateCoreDeath(dt);
     } else if (this.mode === 'dying') {
       this.updateDying(dt);
     } else if (

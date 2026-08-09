@@ -158,6 +158,10 @@ export class TutorialDirector {
   private stage1Done: boolean;
   private loadoutDone: boolean;
   private pendingLoadout = false;
+  /** When true, card stays hidden (shop open) until notifyShopClosed. */
+  private suppressCard = false;
+  /** Purchase/equip completed while shop open — reveal next step on close. */
+  private pendingPostShopReveal = false;
 
   onRequestShop: (() => void) | null = null;
   onComplete: ((id: TutorialId) => void) | null = null;
@@ -257,20 +261,22 @@ export class TutorialDirector {
       }
       return;
     }
+    // shop_open is handled in notifyShopOpened (hide card immediately)
     if (step.advance === 'shop_open' && ctx.shopOpen) {
-      this.advance();
+      this.completeShopOpenStep();
       return;
     }
+    // Purchase/equip steps: advance silently while shopping; show next only after close
     if (step.advance === 'drone_owned' && ctx.ownsDrone) {
-      this.advance();
+      this.advanceAfterShopGate();
       return;
     }
     if (step.advance === 'weapon_owned' && ctx.ownsArcBeam) {
-      this.advance();
+      this.advanceAfterShopGate();
       return;
     }
     if (step.advance === 'weapon_equipped' && ctx.hasEquippedWeapon) {
-      this.advance();
+      this.advanceAfterShopGate();
       return;
     }
     // Gate shop_hint until drone is affordable
@@ -289,9 +295,22 @@ export class TutorialDirector {
     this.clearHighlight();
   }
 
+  /** Hide only the briefing card (tutorial still active). */
+  private hideCard(): void {
+    const card = this.root.querySelector('#tutorial-card') as HTMLElement | null;
+    if (card) card.classList.add('panel-hidden');
+    this.clearHighlight();
+    this.ensureFarmChip(false);
+  }
+
   showIfActive(): void {
     if (!this.active) return;
     this.visible = true;
+    // Don't pop a card over an open shop
+    if (this.suppressCard) {
+      this.hideCard();
+      return;
+    }
     this.renderStep();
   }
 
@@ -316,12 +335,46 @@ export class TutorialDirector {
     this.renderStep();
   }
 
+  /** Advance while shop may be open — keep card hidden until shop closes. */
+  private advanceAfterShopGate(): void {
+    this.index++;
+    if (this.index >= this.steps.length) {
+      this.finish();
+      return;
+    }
+    this.orbitAccum = 0;
+    this.aimAccum = 0;
+    if (this.suppressCard) {
+      this.pendingPostShopReveal = true;
+      this.hideCard();
+      return;
+    }
+    this.renderStep();
+  }
+
+  private completeShopOpenStep(): void {
+    if (this.currentStep?.advance !== 'shop_open') return;
+    this.suppressCard = true;
+    // Advance off shop_open; keep card hidden until shop closes
+    this.index++;
+    if (this.index >= this.steps.length) {
+      this.finish();
+      return;
+    }
+    this.orbitAccum = 0;
+    this.aimAccum = 0;
+    this.pendingPostShopReveal = true;
+    this.hideCard();
+  }
+
   private finish(): void {
     const id = this.active;
     if (id === 'stage1') this.stage1Done = true;
     if (id === 'loadout') this.loadoutDone = true;
     this.active = null;
     this.visible = false;
+    this.suppressCard = false;
+    this.pendingPostShopReveal = false;
     this.hide();
     if (id) this.onComplete?.(id);
   }
@@ -365,15 +418,55 @@ export class TutorialDirector {
     }
   }
 
-  /** Call when player opens the tech shop (any path). */
+  /**
+   * Call when player opens the tech shop (any path).
+   * Completes “open shop” steps and hides the briefing until the shop closes.
+   */
   notifyShopOpened(): void {
-    if (!this.active || !this.visible) return;
-    if (this.currentStep?.advance === 'shop_open') this.advance();
+    if (!this.active) return;
+    this.suppressCard = true;
+    this.hideCard();
+    if (this.currentStep?.advance === 'shop_open') {
+      this.completeShopOpenStep();
+    }
+  }
+
+  /**
+   * Call when the shop closes. Reveals the current (or next) briefing step.
+   * Purchase gates should already have advanced via notifyPurchase / update().
+   */
+  notifyShopClosed(ctx?: {
+    ownsDrone?: boolean;
+    ownsArcBeam?: boolean;
+    hasEquippedWeapon?: boolean;
+  }): void {
+    if (!this.active) return;
+    this.suppressCard = false;
+
+    // Catch up any purchase/equip that happened while shopping
+    const step = this.currentStep;
+    if (step) {
+      if (
+        (step.advance === 'drone_owned' || step.id === 'shop_drone') &&
+        ctx?.ownsDrone
+      ) {
+        this.advanceAfterShopGate();
+      } else if (step.advance === 'weapon_owned' && ctx?.ownsArcBeam) {
+        this.advanceAfterShopGate();
+      } else if (step.advance === 'weapon_equipped' && ctx?.hasEquippedWeapon) {
+        this.advanceAfterShopGate();
+      }
+    }
+
+    this.pendingPostShopReveal = false;
+    this.visible = true;
+    this.renderStep();
   }
 
   /**
    * Call on shop purchase. Stage-1 only advances on first drone (`drone_unlock`).
    * Pass `nodeId` when known so we can require Ally Protocol.
+   * Does not show the next popup while the shop is still open.
    */
   notifyPurchase(nodeId?: string): void {
     if (!this.active) return;
@@ -383,9 +476,12 @@ export class TutorialDirector {
     if (step.advance === 'drone_owned' || step.id === 'shop_drone') {
       // Only complete when the drone was actually bought
       if (nodeId && nodeId !== TUTORIAL_DRONE_ID) return;
-      // If no id, allow advance when caller verified ownsDrone after purchase
-      this.visible = true;
-      this.advance();
+      this.advanceAfterShopGate();
+      return;
+    }
+    if (step.advance === 'weapon_owned') {
+      // Weapon shop purchase (Game passes defId, e.g. rocket_pod)
+      if (nodeId) this.advanceAfterShopGate();
       return;
     }
   }
@@ -395,8 +491,16 @@ export class TutorialDirector {
     if (!this.active) return;
     const step = this.currentStep;
     if (step && (step.advance === 'drone_owned' || step.id === 'shop_drone')) {
-      this.visible = true;
-      this.advance();
+      this.advanceAfterShopGate();
+    }
+  }
+
+  /** Equip hardpoint during loadout tutorial. */
+  notifyWeaponEquipped(): void {
+    if (!this.active) return;
+    const step = this.currentStep;
+    if (step && step.advance === 'weapon_equipped') {
+      this.advanceAfterShopGate();
     }
   }
 
@@ -415,6 +519,12 @@ export class TutorialDirector {
     const step = this.currentStep;
     const card = this.root.querySelector('#tutorial-card') as HTMLElement | null;
     if (!card || !step) return;
+
+    // Never overlay briefing on the shop UI
+    if (this.suppressCard) {
+      this.hideCard();
+      return;
+    }
 
     // Farming for drone frags: no big popup — keep gameplay clear until purchase is ready
     if (step.advance === 'afford_drone' || step.advance === 'destroy') {
@@ -447,7 +557,12 @@ export class TutorialDirector {
       prog.classList.toggle('panel-hidden', !showProg);
     }
     this.clearHighlight();
-    if (step.highlight) this.applyHighlight(step.highlight);
+    // Only highlight in-world HUD targets when not shopping
+    if (step.highlight && !step.highlight.includes('shop') && !step.highlight.includes('data-id')) {
+      this.applyHighlight(step.highlight);
+    } else if (step.highlight && step.advance === 'shop_open') {
+      this.applyHighlight(step.highlight);
+    }
   }
 
   /** Compact non-blocking FRAG progress while farming for first drone. */

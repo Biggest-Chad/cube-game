@@ -93,11 +93,10 @@ export class MusicPlayer {
 
   /**
    * High-level bed selection.
-   * Continuity-first: never restart or swap mid-song when changing levels / menus / modes.
-   * Track only advances on natural end, user skip, or when nothing is loaded yet.
-   * - ui: duck/muffle only
+   * Continuity-first for most transitions — one exception:
+   * intro / stage 1 always force The Final Protocol (cinematic + first sector).
+   * - ui: duck/muffle only (60% bed + low-pass)
    * - preserve: unmuffle, keep bed
-   * - menu / stage / intro: keep current song if one is already loaded
    */
   setContext(ctx: MusicContext, _opts?: { levelId?: number }): void {
     this.context = ctx;
@@ -119,10 +118,27 @@ export class MusicPlayer {
 
     this.setMuffled(false);
 
-    // Level 1 maps to stage1 for onEnded routing only — never force a restart
+    // Level 1 maps to stage1
     if (ctx === 'stage' && (_opts?.levelId ?? 2) <= 1) {
       this.context = 'stage1';
       ctx = 'stage1';
+    }
+
+    // UNIQUE EXCEPTION: intro cinematic + first stage always start Final Protocol
+    if (ctx === 'intro' || ctx === 'stage1') {
+      if (this.current?.id === MUSIC_INTRO.id && this.hasActiveBed()) {
+        this.audio.loop = true;
+        void this.audio.play().catch(() => undefined);
+        this.onTrackChange?.(this.current);
+        this.applyGains(0.12);
+        return;
+      }
+      this.playTrack(MUSIC_INTRO, {
+        loop: true,
+        forceRestart: true,
+        fade: this.hasActiveBed(),
+      });
+      return;
     }
 
     // Something already loaded → keep it (levels, menu, shop return, etc.)
@@ -139,10 +155,6 @@ export class MusicPlayer {
     // Cold start only — pick a bed for this context
     if (ctx === 'menu') {
       this.playTrack(MUSIC_MENU, { loop: true, forceRestart: false, fade: false });
-      return;
-    }
-    if (ctx === 'intro' || ctx === 'stage1') {
-      this.playTrack(MUSIC_INTRO, { loop: true, forceRestart: false, fade: false });
       return;
     }
     if (ctx === 'stage') {
@@ -396,8 +408,8 @@ export class MusicPlayer {
 
   private targetGain(): number {
     const base = this.muted ? 0 : this.masterVol;
-    // Shop / UI: ~40% bed + low-pass “next room” filter
-    return base * (this.muffled ? 0.4 : 1);
+    // Shop / UI: 60% bed + low-pass “next room” filter
+    return base * (this.muffled ? 0.6 : 1);
   }
 
   private applyGains(rampSec = 0.18): void {
