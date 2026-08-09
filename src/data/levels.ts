@@ -67,13 +67,13 @@ function makeLevel(
     explosive: extras.explosive ?? Math.min(0.12, specialPercent * 0.14),
     dataNode: extras.dataNode ?? Math.min(0.08, specialPercent * 0.1),
     siege: extras.siege ?? Math.min(0.28, Math.max(0, (id - 10) * 0.012 + specialPercent * 0.08)),
-    // Nucleus is a major pillar from sector 3 onward
-    hasCore: extras.hasCore ?? id >= 3,
+    // Every sector has a shared nucleus (clear condition + combat pillar)
+    hasCore: extras.hasCore ?? true,
     coreHP: extras.coreHP ?? Math.round(avgHP * 55 + id * 180 + 400),
     rewardFragments: extras.rewardFragments ?? defaultFrags,
     rewardCoreEnergy:
       extras.rewardCoreEnergy ??
-      Math.round(8 + id * 3 + (extras.hasCore !== false && id >= 5 ? 12 : 0)),
+      Math.round(8 + id * 3 + (id >= 5 ? 12 : 0)),
   };
 }
 
@@ -83,14 +83,16 @@ export const LEVELS: LevelDefinition[] = [
   // Ramp: enough combat + clear frags for first drone (~150) over L1–L2;
   // modular weapons stay locked until highestLevel >= 3 (after L2 clear).
   makeLevel(1, 'AWAKENING', 6, 1.0, 12, 0, 0, 1.0, {
-    hasCore: false,
+    hasCore: true,
+    coreHP: 180,
     reinforced: 0,
     siege: 0,
     rewardFragments: 55,
     rewardCoreEnergy: 10,
   }),
   makeLevel(2, 'PULSE GRID', 7, 1.0, 16, 0.04, 0, 1.0, {
-    hasCore: false,
+    hasCore: true,
+    coreHP: 220,
     reinforced: 0.05,
     siege: 0,
     rewardFragments: 70,
@@ -106,7 +108,7 @@ export const LEVELS: LevelDefinition[] = [
 
   // —— Upgrades required ——
   makeLevel(4, 'FRACTURE', 8, 1.0, 38, 0.1, 0, 1.08, {
-    hasCore: false,
+    hasCore: true,
     reinforced: 0.14,
     explosive: 0.05,
     siege: 0,

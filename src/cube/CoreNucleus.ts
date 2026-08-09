@@ -106,22 +106,33 @@ export class CoreNucleus {
   }
 
   /**
-   * Solid collision radius for projectiles — larger than the rendered nucleus
-   * so beams/missiles register clean hits without needing pixel-perfect aim.
+   * Solid collision radius — full 3D sphere around the nucleus VFX.
+   * Radius = max visual extent (body + ring) × 1.125 (~12.5% padding), isotropic.
    */
   get hitRadius(): number {
     if (!this.active || this.hp <= 0) return 0;
-    // Mesh body ≈ baseScale (unit icosahedron); ring sits ~1.35× that.
-    // Hitbox extends past both for forgiveness (~45% beyond peak visual body).
-    const visualBody = this.baseScale * (1.08 + this.pulse * 0.15);
-    return Math.max(1.35, visualBody * 1.55);
+    // Peak render scale of core mesh / ring (matches updateVfx pulses)
+    const scaleMul = 1.12 + this.pulse * 0.2;
+    // Body: unit icosahedron radius 1; ring: major 1.35 + tube 0.06
+    const bodyR = this.baseScale * scaleMul;
+    const ringR = this.baseScale * 1.41 * scaleMul;
+    const visualMax = Math.max(bodyR, ringR);
+    // 10–15% padding (use 12.5%); floor scales with cube half-extent so small sectors stay hittable
+    const he = this.cube?.halfExtent ?? 4;
+    return Math.max(he * 0.22, visualMax * 1.125);
   }
 
   /** World-space center of the nucleus solid (cube group origin + local VFX). */
   getWorldCenter(out = new THREE.Vector3()): THREE.Vector3 {
     if (this.cube) {
-      // vfxGroup is parented under cube.group at local 0; use world matrix
-      this.vfxGroup.getWorldPosition(out);
+      // Prefer cube group origin (lattice center) — always sphere-symmetric
+      this.cube.group.getWorldPosition(out);
+      // VFX is local 0 under cube.group; if ever offset, blend to vfx world pos
+      this.vfxGroup.getWorldPosition(this._tmp2);
+      // Use cube center unless vfx drifted (should match)
+      if (out.distanceToSquared(this._tmp2) > 0.01) {
+        out.copy(this._tmp2);
+      }
     } else {
       out.set(0, 0, 0);
     }
@@ -129,7 +140,7 @@ export class CoreNucleus {
   }
 
   /**
-   * Ray / segment test vs solid nucleus sphere.
+   * Analytic ray–sphere intersection (isotropic 3D).
    * Returns distance along ray (0 if already overlapping) and fills outPoint, or null.
    */
   raycastSolid(
@@ -143,24 +154,43 @@ export class CoreNucleus {
     if (radius <= 0) return null;
 
     this.getWorldCenter(this._tmp);
-    const toOrigin = origin.distanceTo(this._tmp);
+    const cx = this._tmp.x;
+    const cy = this._tmp.y;
+    const cz = this._tmp.z;
+    const r2 = radius * radius;
 
-    // Already inside solid — instant contact (prevents tunneling when deep inside)
-    if (toOrigin <= radius) {
+    // oc = origin - center
+    const ox = origin.x - cx;
+    const oy = origin.y - cy;
+    const oz = origin.z - cz;
+    const distSq = ox * ox + oy * oy + oz * oz;
+
+    // Already inside solid
+    if (distSq <= r2) {
       outPoint.copy(origin);
       return 0;
     }
 
     if (direction.lengthSq() < 1e-12) return null;
     this._dirN.copy(direction).normalize();
-    this._sphere.center.copy(this._tmp);
-    this._sphere.radius = radius;
-    this._ray.set(origin, this._dirN);
-    const hit = this._ray.intersectSphere(this._sphere, outPoint);
-    if (!hit) return null;
-    const d = origin.distanceTo(outPoint);
-    if (d > maxDist || d < 0) return null;
-    return d;
+    const dx = this._dirN.x;
+    const dy = this._dirN.y;
+    const dz = this._dirN.z;
+
+    // Standard ray-sphere: |o + t*d - c|^2 = r^2
+    // t^2 + 2*b*t + c = 0 with b = dot(oc,d), c = |oc|^2 - r^2
+    const b = ox * dx + oy * dy + oz * dz;
+    const c = distSq - r2;
+    const disc = b * b - c;
+    if (disc < 0) return null;
+    const s = Math.sqrt(disc);
+    // Smallest positive t
+    let t = -b - s;
+    if (t < 0) t = -b + s;
+    if (t < 0 || t > maxDist) return null;
+
+    outPoint.set(origin.x + dx * t, origin.y + dy * t, origin.z + dz * t);
+    return t;
   }
 
   /** True if a world point is inside the solid nucleus hitbox. */

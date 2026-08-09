@@ -254,7 +254,9 @@ export class CubeManager {
     const box = new THREE.Box3();
     const hitPt = new THREE.Vector3();
 
-    // —— Solid nucleus sphere (priority when closer than shell voxels) ——
+    // —— Solid nucleus sphere (full isotropic 3D; wins when closer than shell) ——
+    // Test first so a clean sphere hit is the baseline; shell voxels may still
+    // win when they are strictly nearer (outer armor).
     if (this.nucleus.isActive) {
       const nucPt = new THREE.Vector3();
       const nucDist = this.nucleus.raycastSolid(origin, dir, maxDist, nucPt);
@@ -269,20 +271,27 @@ export class CubeManager {
       }
     }
 
-    // —— Block AABBs ——
+    // —— Block AABBs (local instance space ≈ world when cube.group is at origin) ——
+    // Transform instance positions by cube.group world matrix so group rotation
+    // never creates axis-biased misses relative to the nucleus sphere.
+    this.group.updateWorldMatrix(true, false);
+    const mw = this.group.matrixWorld;
     if (this.mesh && this.mesh.count > 0) {
       for (let id = 0; id < this.mesh.count; id++) {
         if (id === ignoreId) continue;
+        // Core voxels: skip AABB — shared pool is handled only via solid sphere
+        // so multi-voxel core clusters cannot create lopsided hit volumes.
+        if (this.getBlockType(id) === BlockType.Core) continue;
+
         this.mesh.getMatrixAt(id, _matrix);
         _pos.setFromMatrixPosition(_matrix);
+        _pos.applyMatrix4(mw);
         box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
         box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
         const hit = new THREE.Ray(origin, dir).intersectBox(box, hitPt);
         if (!hit) continue;
         const d = origin.distanceTo(hit);
-        // Allow d === 0 for overlap; still require strictly closer than current best
         if (d < bestDist && d >= 0) {
-          // Prefer surface hits over co-located; tiny epsilon for floating origin-in-box
           if (d < 1e-5 && bestId >= 0 && !nucleusSolid) continue;
           bestDist = d;
           bestId = id;
