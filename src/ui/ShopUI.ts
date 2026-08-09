@@ -26,6 +26,12 @@ import { armorEffectiveFromRating } from '../player/ShipVitals';
 import type { TechTree, PlayerStats } from '../progression/TechTree';
 import type { Currency } from '../progression/Currency';
 import type { LoadoutState } from '../loadout/LoadoutState';
+import type { DroneBayController } from '../loadout/DroneBayState';
+import {
+  DRONE_ROLES,
+  freeInventory,
+  type DroneRole,
+} from '../data/drones';
 
 export interface StatsSnapshot {
   dpsMain: number;
@@ -108,7 +114,8 @@ const TAB_ICONS: Record<ShopTabId, string> = {
   ship: '🚀',
   main_gun: '⚡',
   loadouts: '◎',
-  drones: '⬡',
+  drone_bays: '⬡',
+  drones: '◈',
   economy: '◈',
   global: '✶',
 };
@@ -128,10 +135,13 @@ export class ShopUI {
     armorRating: number;
   } | null = null;
   private loadout: LoadoutState | null = null;
+  private droneBay: DroneBayController | null = null;
   private highestLevel = 1;
   private ascensionTier = 0;
   private confirmEvolve = false;
   private evolveExpanded = false;
+  private dragPayload: { kind: 'drone' | 'weapon'; role?: DroneRole; weaponId?: string; fromSlot?: number } | null =
+    null;
 
   onClose: (() => void) | null = null;
   onPurchase: ((node: UpgradeNodeDef) => void) | null = null;
@@ -141,6 +151,11 @@ export class ShopUI {
   onUnlockHardpoint: ((slot: number) => boolean) | null = null;
   /** Returns true if evolve succeeded. */
   onEvolve: (() => boolean) | null = null;
+  onUnlockDroneBay: (() => boolean) | null = null;
+  onUnlockDroneType: ((role: DroneRole) => boolean) | null = null;
+  onBuyDroneUnit: ((role: DroneRole) => boolean) | null = null;
+  onAssignDroneSlot: ((slot: number, role: DroneRole | null) => boolean) | null = null;
+  onMoveDroneSlot: ((from: number, to: number) => boolean) | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -164,6 +179,10 @@ export class ShopUI {
     this.loadout = loadout;
     this.highestLevel = highestLevel;
     this.ascensionTier = ascensionTier;
+  }
+
+  setDroneBay(ctrl: DroneBayController | null): void {
+    this.droneBay = ctrl;
   }
 
   show(tree: TechTree, currency: Currency, tab?: ShopTabId): void {
@@ -330,9 +349,11 @@ export class ShopUI {
               ${
                 this.activeTab === 'loadouts'
                   ? this.renderLoadoutPanel(currency, tree)
-                  : `<div class="shop-cards">${visible
-                      .map((v) => this.renderCard(v, tree, currency))
-                      .join('')}</div>`
+                  : this.activeTab === 'drone_bays'
+                    ? this.renderDroneBayPanel(currency, tree)
+                    : `<div class="shop-cards">${visible
+                        .map((v) => this.renderCard(v, tree, currency))
+                        .join('')}</div>`
               }
             </div>
           </div>
@@ -445,6 +466,228 @@ export class ShopUI {
         if (this.onUpgradeBranch?.(slot, branchId)) this.render(tree, currency);
       });
     });
+
+    this.bindDroneBayDnD(tree, currency);
+    this.bindWeaponDnD(tree, currency);
+  }
+
+  private bindDroneBayDnD(tree: TechTree, currency: Currency): void {
+    this.root.querySelector('#drone-bay-unlock')?.addEventListener('click', () => {
+      if (this.onUnlockDroneBay?.()) this.render(tree, currency);
+    });
+    this.root.querySelectorAll('[data-unlock-type]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const role = (btn as HTMLElement).dataset.unlockType as DroneRole;
+        if (this.onUnlockDroneType?.(role)) this.render(tree, currency);
+      });
+    });
+    this.root.querySelectorAll('[data-buy-unit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const role = (btn as HTMLElement).dataset.buyUnit as DroneRole;
+        if (this.onBuyDroneUnit?.(role)) this.render(tree, currency);
+      });
+    });
+    // Touch-friendly assign: put free unit into first empty bay
+    this.root.querySelectorAll('[data-assign-drone]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const role = (btn as HTMLElement).dataset.assignDrone as DroneRole;
+        const B = this.droneBay;
+        if (!B || !role) return;
+        const empty = B.state.slots.findIndex((s) => s == null);
+        if (empty < 0) return;
+        if (this.onAssignDroneSlot?.(empty, role)) this.render(tree, currency);
+      });
+    });
+    // Tap empty bay then tap inventory chip also works via assign buttons above
+    this.root.querySelectorAll('[data-clear-bay]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const slot = Number((btn as HTMLElement).dataset.clearBay);
+        if (this.onAssignDroneSlot?.(slot, null)) this.render(tree, currency);
+      });
+    });
+
+    // Inventory chips — drag source
+    this.root.querySelectorAll('[data-drag-drone]').forEach((el) => {
+      el.addEventListener('dragstart', (e) => {
+        const role = (el as HTMLElement).dataset.dragDrone as DroneRole;
+        this.dragPayload = { kind: 'drone', role };
+        (e as DragEvent).dataTransfer?.setData('text/plain', `drone:${role}`);
+        (e as DragEvent).dataTransfer!.effectAllowed = 'copyMove';
+      });
+    });
+    // Bay slots as sources (move) and targets
+    this.root.querySelectorAll('[data-bay-slot]').forEach((el) => {
+      const slot = Number((el as HTMLElement).dataset.baySlot);
+      el.addEventListener('dragstart', (e) => {
+        const role = (el as HTMLElement).dataset.bayRole as DroneRole | undefined;
+        if (!role) {
+          e.preventDefault();
+          return;
+        }
+        this.dragPayload = { kind: 'drone', role, fromSlot: slot };
+        (e as DragEvent).dataTransfer?.setData('text/plain', `drone-slot:${slot}`);
+      });
+      el.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        (el as HTMLElement).classList.add('drop-hover');
+      });
+      el.addEventListener('dragleave', () => {
+        (el as HTMLElement).classList.remove('drop-hover');
+      });
+      el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        (el as HTMLElement).classList.remove('drop-hover');
+        const p = this.dragPayload;
+        this.dragPayload = null;
+        if (!p || p.kind !== 'drone') return;
+        if (p.fromSlot != null) {
+          if (this.onMoveDroneSlot?.(p.fromSlot, slot)) this.render(tree, currency);
+        } else if (p.role) {
+          if (this.onAssignDroneSlot?.(slot, p.role)) this.render(tree, currency);
+        }
+      });
+    });
+  }
+
+  private bindWeaponDnD(tree: TechTree, currency: Currency): void {
+    this.root.querySelectorAll('[data-drag-weapon]').forEach((el) => {
+      el.addEventListener('dragstart', (e) => {
+        const id = (el as HTMLElement).dataset.dragWeapon!;
+        this.dragPayload = { kind: 'weapon', weaponId: id };
+        (e as DragEvent).dataTransfer?.setData('text/plain', `weapon:${id}`);
+      });
+    });
+    this.root.querySelectorAll('[data-hp-drop]').forEach((el) => {
+      const slot = Number((el as HTMLElement).dataset.hpDrop);
+      el.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        (el as HTMLElement).classList.add('drop-hover');
+      });
+      el.addEventListener('dragleave', () => (el as HTMLElement).classList.remove('drop-hover'));
+      el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        (el as HTMLElement).classList.remove('drop-hover');
+        const p = this.dragPayload;
+        this.dragPayload = null;
+        if (!p || p.kind !== 'weapon' || !p.weaponId) return;
+        this.onEquipWeapon?.(slot, p.weaponId);
+        this.selectedSlot = slot;
+        this.render(tree, currency);
+      });
+    });
+  }
+
+  private renderDroneBayPanel(currency: Currency, tree: TechTree): string {
+    const B = this.droneBay;
+    if (!B) {
+      return `<div class="shop-empty">Drone bay systems offline.</div>`;
+    }
+    const st = B.state;
+    const dronesOn = tree.stats.dronesUnlocked || tree.owned.has('drone_unlock');
+    if (!dronesOn) {
+      return `<div class="dnd-panel">
+        <p class="research-blurb">Purchase <strong>Ally Protocol</strong> in DRONE TECH to authorize bays.</p>
+      </div>`;
+    }
+
+    const bayCost = B.nextBayCost();
+    const canBay =
+      B.canUnlockBay() && currency.dataFragments >= bayCost;
+
+    const baysHtml = Array.from({ length: Math.max(st.bays, 0) }, (_, i) => {
+      const role = st.slots[i] ?? null;
+      const def = role ? DRONE_ROLES[role] : null;
+      return `
+        <div class="dnd-slot bay-slot ${role ? 'filled' : 'empty'}"
+          data-bay-slot="${i}" data-bay-role="${role ?? ''}"
+          draggable="${role ? 'true' : 'false'}">
+          <div class="dnd-slot-idx">BAY ${i + 1}</div>
+          <div class="dnd-slot-body" style="${def ? `--accent:${def.colorCss}` : ''}">
+            ${
+              def
+                ? `<strong>${def.name}</strong><span class="dim">Drag to reorder</span>
+                   <button type="button" class="dnd-clear" data-clear-bay="${i}">Clear</button>`
+                : `<span class="dim">Empty — drop a drone</span>`
+            }
+          </div>
+        </div>`;
+    }).join('');
+
+    const types = (['fighter', 'bomber', 'defender'] as DroneRole[])
+      .map((role) => {
+        const def = DRONE_ROLES[role];
+        const unlocked = B.isTypeUnlocked(role);
+        const free = freeInventory(st, role);
+        const owned = st.owned[role] ?? 0;
+        const levelOk = this.highestLevel >= def.unlockLevel;
+        if (!unlocked) {
+          const can =
+            levelOk && currency.dataFragments >= def.unlockCost;
+          return `
+            <div class="dnd-inv-card locked" style="--accent:${def.colorCss}">
+              <strong>${def.name}</strong>
+              <p>${def.description}</p>
+              <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
+                data-unlock-type="${role}" ${can ? '' : 'disabled'}>
+                ${levelOk ? `UNLOCK · ${def.unlockCost} FRAG` : `LOCKED · STAGE ${def.unlockLevel}+`}
+              </button>
+            </div>`;
+        }
+        const canBuy = currency.dataFragments >= def.unitCost;
+        const emptyBay = st.slots.findIndex((s) => s == null);
+        const canAssign = free > 0 && emptyBay >= 0;
+        return `
+          <div class="dnd-inv-card" style="--accent:${def.colorCss}">
+            <strong>${def.name}</strong>
+            <p>${def.description}</p>
+            <div class="dnd-inv-meta">Owned ${owned} · Free ${free}</div>
+            <div class="dnd-inv-actions">
+              <div class="dnd-chip" draggable="${free > 0 ? 'true' : 'false'}"
+                data-drag-drone="${role}" title="Drag into a bay">
+                ☰ ${def.name}
+              </div>
+              <button type="button" class="loadout-equip-btn ${canAssign ? '' : 'equipped'}"
+                data-assign-drone="${role}" ${canAssign ? '' : 'disabled'}>
+                ${canAssign ? 'ASSIGN TO BAY' : free <= 0 ? 'NONE FREE' : 'BAYS FULL'}
+              </button>
+              <button type="button" class="shop-card-buy ${canBuy ? 'buyable' : ''}"
+                data-buy-unit="${role}" ${canBuy ? '' : 'disabled'}>
+                BUY · ${def.unitCost} FRAG
+              </button>
+            </div>
+          </div>`;
+      })
+      .join('');
+
+    return `
+      <div class="dnd-panel">
+        <p class="research-blurb">
+          Unlock <strong>bays</strong>, buy <strong>Fighter / Bomber / Defender</strong> units,
+          then <strong>drag</strong> them into bay slots. Mix freely (e.g. 6 fighters or 2/2/2).
+        </p>
+        <div class="dnd-toolbar">
+          <button type="button" class="menu-btn primary" id="drone-bay-unlock"
+            ${canBay ? '' : 'disabled'}>
+            ${B.canUnlockBay() ? `UNLOCK BAY · ${bayCost} FRAG` : 'MAX BAYS'}
+          </button>
+          <span class="dnd-toolbar-meta">${st.bays} bays · ${B.equippedCount()} active</span>
+        </div>
+        <div class="dnd-columns">
+          <section class="dnd-col">
+            <h3 class="dnd-col-title">BAY SLOTS</h3>
+            <div class="dnd-slots">${baysHtml || '<div class="dim">No bays yet — unlock one above.</div>'}</div>
+          </section>
+          <section class="dnd-col">
+            <h3 class="dnd-col-title">INVENTORY</h3>
+            <div class="dnd-inventory">${types}</div>
+          </section>
+        </div>
+        <div class="shop-cards" style="margin-top:12px">
+          ${getSequentialVisibleNodes(tree.owned, currency, 'drones')
+            .map((v) => this.renderCard(v, tree, currency))
+            .join('')}
+        </div>
+      </div>`;
   }
 
   private renderEvolveBanner(currency: Currency): string {
@@ -525,21 +768,24 @@ export class ShopUI {
       const def = inst ? getWeaponDef(inst.defId) : null;
       const rule = HARDPOINT_UNLOCK[i];
       slots += `
-        <button type="button" class="loadout-slot ${this.selectedSlot === i ? 'active' : ''} ${
+        <div class="loadout-slot dnd-slot ${this.selectedSlot === i ? 'active' : ''} ${
           unlocked ? '' : 'locked'
-        }" data-slot="${i}">
-          <div class="loadout-slot-idx">HP${i + 1}</div>
-          <div class="loadout-slot-name">${
-            !unlocked
-              ? `LOCKED · ASC ${rule.minAscension}+ · ${rule.costCore} CORE`
-              : def
-                ? def.name
-                : 'EMPTY'
-          }</div>
-          <div class="loadout-slot-sub">${
-            unlocked ? (def ? def.family : 'Select module') : 'Evolve to unlock'
-          }</div>
-        </button>`;
+        }" data-slot="${i}" data-hp-drop="${i}"
+          style="${def ? `--accent:${def.colorCss}` : ''}">
+          <button type="button" class="loadout-slot-hit" data-slot="${i}">
+            <div class="loadout-slot-idx">HP${i + 1}</div>
+            <div class="loadout-slot-name">${
+              !unlocked
+                ? `LOCKED · ASC ${rule.minAscension}+ · ${rule.costCore} CORE`
+                : def
+                  ? def.name
+                  : 'EMPTY · drop weapon'
+            }</div>
+            <div class="loadout-slot-sub">${
+              unlocked ? (def ? def.family + ' · drag weapon here' : 'Drop from inventory') : 'Evolve to unlock'
+            }</div>
+          </button>
+        </div>`;
     }
 
     // Hardpoint upgrade cards from tech tree
@@ -589,8 +835,11 @@ export class ShopUI {
                 : 'Empty'
             }</span>
           </div>
-          <div class="loadout-catalog">
-            <button type="button" class="loadout-weapon empty" data-equip="">Unequip</button>
+          <div class="loadout-catalog dnd-inventory">
+            <p class="research-blurb" style="grid-column:1/-1">
+              Drag weapons onto hardpoint bays, or use EQUIP. Unequip clears the selected bay.
+            </p>
+            <button type="button" class="loadout-weapon empty" data-equip="">Unequip selected bay</button>
             ${WEAPONS.map((w) => {
               const owned = L.isOwned(w.id);
               const cost = weaponUnlockCost(w);
@@ -606,7 +855,7 @@ export class ShopUI {
                     style="--wcolor:${w.colorCss}">
                     <span class="lw-name">${w.name}</span>
                     <span class="lw-fam">LOCKED · STAGE ${minLv}+</span>
-                    <span class="lw-desc">Clear earlier sectors first. Main gun &amp; drones first.</span>
+                    <span class="lw-desc">Clear earlier sectors first.</span>
                   </button>`;
                 }
                 const can = currency.dataFragments >= cost.fragments;
@@ -622,12 +871,12 @@ export class ShopUI {
               const selected = equipped?.def.id === w.id;
               return `
                 <div class="loadout-weapon-wrap ${selected ? 'selected' : ''}" style="--wcolor:${w.colorCss}">
-                  <button type="button" class="loadout-weapon ${selected ? 'selected' : ''}"
-                    data-equip="${w.id}" style="--wcolor:${w.colorCss}">
+                  <div class="loadout-weapon ${selected ? 'selected' : ''}"
+                    draggable="true" data-drag-weapon="${w.id}" style="--wcolor:${w.colorCss}">
                     <span class="lw-name">${w.name}</span>
-                    <span class="lw-fam">${w.family}${selected ? ' · EQUIPPED' : ''}</span>
+                    <span class="lw-fam">${w.family}${selected ? ' · ON BAY' : ''} · drag</span>
                     <span class="lw-desc">${w.description}</span>
-                  </button>
+                  </div>
                   <button type="button" class="loadout-equip-btn ${selected ? 'equipped' : ''}"
                     data-equip-btn="${w.id}" ${selected ? 'disabled' : ''}>
                     ${selected ? 'EQUIPPED' : 'EQUIP'}

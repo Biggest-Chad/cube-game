@@ -288,7 +288,8 @@ export class CoreNucleus {
 
   /**
    * Apply raw damage aimed at a Core block.
-   * DR = shellRatio (100% mitigation when full shell).
+   * Shell DR scales with remaining shell (high when shell full, none when empty),
+   * but never full immunity — min throughput always chips the nucleus.
    */
   applyDamage(raw: number, now: number): CoreDamageOutcome {
     if (!this.active || this.hp <= 0 || !this.cube) {
@@ -304,8 +305,17 @@ export class CoreNucleus {
 
     const shellRatio =
       this.shellTotal > 0 ? this.shellAlive / this.shellTotal : 0;
-    // 100% DR at full shell → 0% DR at empty shell
-    const actual = Math.max(0, raw * (1 - shellRatio));
+    // DR = shellRatio * maxShellDr (e.g. 88% at full shell → 0% when empty)
+    const dr = Math.min(CORE.maxShellDr, Math.max(0, shellRatio) * CORE.maxShellDr);
+    const throughput = Math.max(CORE.minDamageThroughput, 1 - dr);
+    // Optional CubeDefense bubble absorb (if Game wires absorb on cubeDefense)
+    let incoming = raw * throughput;
+    if (this.cube) {
+      // Hook: defense may reduce before nucleus HP (implemented via optional method)
+      const def = (this.cube as { defenseAbsorb?: (n: number) => number }).defenseAbsorb;
+      if (typeof def === 'function') incoming = def(incoming);
+    }
+    const actual = Math.max(0, incoming);
     const transfer = actual * CORE.damageTransferPct;
     const toCore = Math.max(0, actual - transfer);
 

@@ -350,14 +350,15 @@ export class CubeDefense {
     this.cube.getInstanceWorldPos(instanceId, this._pos);
     // Offset slightly outward so model sits on surface
     this._pos.multiplyScalar(1.08);
+    // Real HP — destructible like blocks; lattice block also cleared on kill
+    const hp = 55 + levelId * 14;
     const t = new Turret(`turret_${this._idSeq++}`, this._pos.clone(), {
-      hp: 99999, // HP is the lattice block; visual dies with block
+      hp,
       damage: 9 + levelId * 0.85,
       fireRate: this.schedule.elite ? 0.7 : 0.45,
       projectileSpeed: 16 + levelId * 0.35,
       color: this.schedule.elite ? 0xff66ff : 0xff3355,
     });
-    // Shrink model to block scale
     t.group.scale.setScalar(0.55);
     this.links.push({ turret: t, instanceId, floating });
     this.group.add(t.group);
@@ -366,7 +367,7 @@ export class CubeDefense {
 
   private spawnFloatingTurret(pos: THREE.Vector3, levelId: number): void {
     const t = new Turret(`turret_${this._idSeq++}`, pos, {
-      hp: 70 + levelId * 12,
+      hp: 70 + levelId * 16,
       damage: 10 + levelId * 0.8,
       fireRate: 0.4,
       projectileSpeed: 16,
@@ -382,35 +383,92 @@ export class CubeDefense {
   }
 
   getEnemyUnitRefs(): Array<{ id: string; position: { x: number; y: number; z: number }; hp: number }> {
-    return this.enemyDrones.filter((d) => d.alive).map((d) => d.toUnitRef());
-  }
-
-  getEnemyTargetsForWeapons(): Array<{ position: THREE.Vector3; radius: number; id: string }> {
-    const out: Array<{ position: THREE.Vector3; radius: number; id: string }> = [];
+    const out: Array<{ id: string; position: { x: number; y: number; z: number }; hp: number }> = [];
     for (const d of this.enemyDrones) {
-      if (d.alive) out.push({ position: d.position.clone(), radius: 0.6, id: d.id });
+      if (d.alive) out.push(d.toUnitRef());
     }
-    // Lattice turrets: target via blocks; floating still targetable as entities
+    // Fighters can also suppress turret guns
     for (const link of this.links) {
-      if (link.floating && link.turret.alive) {
-        out.push({
-          position: link.turret.group.position.clone(),
-          radius: 0.5,
-          id: link.turret.id,
-        });
-      }
+      if (!link.turret.alive) continue;
+      const p = link.turret.group.position;
+      out.push({
+        id: link.turret.id,
+        position: { x: p.x, y: p.y, z: p.z },
+        hp: link.turret.hp,
+      });
     }
     return out;
   }
 
-  damageEnemy(id: string, amount: number): boolean {
+  /**
+   * All hostile entities with hittable spheres for main gun / loadout weapons.
+   * Larger radii after long-range orbit so soft-lock + bolts connect reliably.
+   */
+  getEnemyTargetsForWeapons(): Array<{ position: THREE.Vector3; radius: number; id: string }> {
+    const out: Array<{ position: THREE.Vector3; radius: number; id: string }> = [];
     for (const d of this.enemyDrones) {
-      if (d.id === id && d.alive) return d.applyDamage(amount);
+      if (d.alive) {
+        out.push({
+          position: d.position.clone(),
+          radius: 1.15,
+          id: d.id,
+        });
+      }
     }
     for (const link of this.links) {
-      if (link.turret.id === id && link.turret.alive && link.floating) {
-        return link.turret.applyDamage(amount);
+      if (!link.turret.alive) continue;
+      // Prefer live world position of turret model
+      out.push({
+        position: link.turret.group.position.clone(),
+        radius: 1.05,
+        id: link.turret.id,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Apply damage to enemy drones / turrets. Lattice turrets also destroy their block.
+   * Returns true if the entity was killed.
+   */
+  damageEnemy(id: string, amount: number): boolean {
+    for (const d of this.enemyDrones) {
+      if (d.id === id && d.alive) {
+        const killed = d.applyDamage(amount);
+        if (killed) {
+          bus.emit('beam-hit', {
+            destroyed: true,
+            type: BlockType.Standard,
+            x: d.position.x,
+            y: d.position.y,
+            z: d.position.z,
+            fragments: 4,
+            style: 'bolt' as const,
+          });
+        }
+        return killed;
       }
+    }
+    for (const link of this.links) {
+      if (link.turret.id !== id || !link.turret.alive) continue;
+      const killed = link.turret.applyDamage(amount);
+      if (killed) {
+        const p = link.turret.group.position;
+        bus.emit('beam-hit', {
+          destroyed: true,
+          type: BlockType.Turret,
+          x: p.x,
+          y: p.y,
+          z: p.z,
+          fragments: 6,
+          style: 'explosive' as const,
+        });
+        // Clear lattice turret block if bound
+        if (!link.floating && link.instanceId >= 0 && this.cube?.hasInstance(link.instanceId)) {
+          this.cube.applyDamageDirect(link.instanceId, 1e9, performance.now() / 1000);
+        }
+      }
+      return killed;
     }
     return false;
   }

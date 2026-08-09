@@ -4,26 +4,24 @@ import type { PlayerStats } from '../progression/TechTree';
 import {
   DRONE_BASE_SHIELD_REGEN_DELAY,
   DRONE_BASE_SHIELD_REGEN_PER_SEC,
-  DRONE_HARD_CAP,
   DRONE_ROLES,
-  dronePurchaseCost,
-  expandFleetRoles,
-  fleetFromLegacyCount,
-  type DroneFleetSnapshot,
+  expandBaySlots,
+  type DroneBayState,
   type DroneRole,
 } from '../data/drones';
+import type { DroneBayController } from '../loadout/DroneBayState';
 import { Drone, type DroneCombatContext } from './Drone';
 import { COLORS } from '../data/constants';
 
 /**
- * Multi-role drone fleet + shared frontal defender shield.
+ * Multi-role drone fleet from bay assignments + per-defender shield bubbles.
  */
 export class DroneManager {
   readonly group = new THREE.Group();
   private drones: Drone[] = [];
-  private fleet: DroneFleetSnapshot = fleetFromLegacyCount(0, false);
   private combat: DroneCombatContext = {};
   private stats: PlayerStats | null = null;
+  private bayCtrl: DroneBayController | null = null;
 
   /** Shared escort shield (sum of defenders). */
   shieldHp = 0;
@@ -31,39 +29,53 @@ export class DroneManager {
   private shieldRegenDelay = 0;
   private shieldMesh: THREE.Mesh | null = null;
 
-  syncCount(stats: PlayerStats): void {
-    this.stats = stats;
-    const fleet = fleetFromLegacyCount(stats.droneCount, stats.dronesUnlocked);
-    this.syncFleet(fleet);
-    this.recomputeShield(stats);
-    for (const d of this.drones) d.syncVitals(stats);
+  bindBayController(ctrl: DroneBayController): void {
+    this.bayCtrl = ctrl;
   }
 
-  syncFleet(fleet: DroneFleetSnapshot): void {
-    this.fleet = {
-      count: Math.min(DRONE_HARD_CAP, Math.max(0, fleet.count)),
-      unlockedRoles: [...fleet.unlockedRoles],
-      roles: { ...fleet.roles },
-    };
-    const roles = expandFleetRoles(this.fleet);
-    this.fleet.count = roles.length;
+  /** Rebuild fleet from bay controller (preferred). */
+  syncFromBays(stats: PlayerStats): void {
+    this.stats = stats;
+    if (!this.bayCtrl) return;
+    const roles = this.bayCtrl.equippedRoles();
+    this.applyRoles(roles, stats);
+  }
 
+  /** Legacy tech.droneCount path — only if no bays controller state. */
+  syncCount(stats: PlayerStats): void {
+    this.stats = stats;
+    if (this.bayCtrl && this.bayCtrl.state.bays > 0) {
+      this.syncFromBays(stats);
+      return;
+    }
+    // Fallback: spawn fighters equal to droneCount
+    const n = stats.dronesUnlocked ? Math.max(0, stats.droneCount) : 0;
+    const roles: DroneRole[] = Array.from({ length: n }, () => 'fighter' as DroneRole);
+    this.applyRoles(roles, stats);
+  }
+
+  private applyRoles(roles: DroneRole[], stats: PlayerStats): void {
     const same =
       this.drones.length === roles.length &&
       this.drones.every((d, i) => d.role === roles[i]);
     if (same) {
-      if (this.stats) for (const d of this.drones) d.syncVitals(this.stats);
+      for (const d of this.drones) d.syncVitals(stats);
+      this.recomputeShield(stats);
       return;
     }
-
     this.clearDrones();
     for (let i = 0; i < roles.length; i++) {
       const d = new Drone(i, roles[i]);
-      if (this.stats) d.syncVitals(this.stats);
+      d.syncVitals(stats);
       this.drones.push(d);
       this.group.add(d.group);
     }
-    if (this.stats) this.recomputeShield(this.stats);
+    this.recomputeShield(stats);
+  }
+
+  syncFleet(fleet: DroneBayState): void {
+    if (!this.stats) return;
+    this.applyRoles(expandBaySlots(fleet), this.stats);
   }
 
   private recomputeShield(stats: PlayerStats): void {
@@ -81,54 +93,67 @@ export class DroneManager {
     this.ensureShieldMesh();
   }
 
+  /** Per-defender small bubbles (not one giant ship sphere). */
+  private shieldMeshes: THREE.Mesh[] = [];
+
   private ensureShieldMesh(): void {
-    if (this.shieldMax <= 0) {
-      if (this.shieldMesh) {
-        this.group.remove(this.shieldMesh);
-        this.shieldMesh.geometry.dispose();
-        (this.shieldMesh.material as THREE.Material).dispose();
-        this.shieldMesh = null;
-      }
-      return;
+    // Dispose shared ship mesh if any leftover
+    if (this.shieldMesh) {
+      this.group.remove(this.shieldMesh);
+      this.shieldMesh.geometry.dispose();
+      (this.shieldMesh.material as THREE.Material).dispose();
+      this.shieldMesh = null;
     }
-    if (!this.shieldMesh) {
-      this.shieldMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(1.4, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    // Rebuild small bubbles to match defender count
+    while (this.shieldMeshes.length > 0) {
+      const m = this.shieldMeshes.pop()!;
+      this.group.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    const defenders = this.drones.filter((d) => d.role === 'defender');
+    for (let i = 0; i < defenders.length; i++) {
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.55, 12, 10),
         new THREE.MeshBasicMaterial({
           color: COLORS.green,
           transparent: true,
-          opacity: 0.22,
+          opacity: 0.28,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
           side: THREE.DoubleSide,
         })
       );
-      this.group.add(this.shieldMesh);
+      mesh.visible = false;
+      this.shieldMeshes.push(mesh);
+      this.group.add(mesh);
     }
   }
 
   /**
-   * Absorb incoming player damage with frontal escort shield.
-   * Returns remaining damage after shield.
+   * Absorb incoming player damage via nearby defender bubble(s).
+   * Shield is localized on each defender — only absorbs if a living defender
+   * is near the ship (escort range). Returns remaining damage.
    */
-  absorbFrontalDamage(raw: number): number {
+  absorbFrontalDamage(raw: number, shipPos?: THREE.Vector3): number {
     if (this.shieldMax <= 0 || this.shieldHp <= 0 || raw <= 0) return raw;
+    // Require at least one living defender within escort range of the ship
+    if (shipPos) {
+      let near = false;
+      for (const d of this.drones) {
+        if (d.role !== 'defender' || !d.alive) continue;
+        if (d.group.position.distanceTo(shipPos) < 6.5) {
+          near = true;
+          break;
+        }
+      }
+      if (!near) return raw;
+    }
     const absorb = Math.min(this.shieldHp, raw);
     this.shieldHp -= absorb;
     this.shieldRegenDelay =
       DRONE_BASE_SHIELD_REGEN_DELAY * (1 - Math.min(0.5, this.stats?.droneShieldRegenAdd ?? 0));
-    if (this.shieldHp <= 0 && this.shieldMesh) {
-      this.shieldMesh.visible = false;
-    }
     return raw - absorb;
-  }
-
-  getFleet(): DroneFleetSnapshot {
-    return {
-      count: this.fleet.count,
-      unlockedRoles: [...this.fleet.unlockedRoles],
-      roles: { ...this.fleet.roles },
-    };
   }
 
   get count(): number {
@@ -137,41 +162,6 @@ export class DroneManager {
 
   getAliveCount(): number {
     return this.drones.filter((d) => d.alive).length;
-  }
-
-  nextPurchaseCost(): number {
-    return dronePurchaseCost(this.fleet.count);
-  }
-
-  canPurchase(): boolean {
-    return this.fleet.count < DRONE_HARD_CAP;
-  }
-
-  purchaseDrone(role: DroneRole = 'fighter'): boolean {
-    if (!this.canPurchase()) return false;
-    if (!this.fleet.unlockedRoles.includes(role)) {
-      if (role !== 'fighter') return false;
-    }
-    this.fleet.count += 1;
-    this.fleet.roles[role] = (this.fleet.roles[role] ?? 0) + 1;
-    this.syncFleet(this.fleet);
-    return true;
-  }
-
-  unlockRole(role: DroneRole): boolean {
-    if (this.fleet.unlockedRoles.includes(role)) return false;
-    this.fleet.unlockedRoles.push(role);
-    return true;
-  }
-
-  reassign(fromRole: DroneRole, toRole: DroneRole): boolean {
-    const from = this.fleet.roles[fromRole] ?? 0;
-    if (from <= 0) return false;
-    if (!this.fleet.unlockedRoles.includes(toRole)) return false;
-    this.fleet.roles[fromRole] = from - 1;
-    this.fleet.roles[toRole] = (this.fleet.roles[toRole] ?? 0) + 1;
-    this.syncFleet(this.fleet);
-    return true;
   }
 
   setCombatContext(ctx: DroneCombatContext): void {
@@ -186,8 +176,8 @@ export class DroneManager {
     hidden: boolean
   ): void {
     this.stats = stats;
-    if (this.drones.length === 0 && stats.dronesUnlocked && stats.droneCount > 0) {
-      this.syncCount(stats);
+    if (this.drones.length === 0) {
+      this.syncFromBays(stats);
     }
 
     // Shield regen
@@ -202,17 +192,21 @@ export class DroneManager {
       }
     }
 
-    // Position shield mesh near ship if combat provides ship pos
-    if (this.shieldMesh && this.combat.shipPos) {
-      const ship = this.combat.shipPos;
-      const toC = new THREE.Vector3(-ship.x, -ship.y, -ship.z).normalize();
-      if (toC.lengthSq() < 1e-6) toC.set(0, 0, -1);
-      this.shieldMesh.position.copy(ship).addScaledVector(toC, 1.8);
-      this.shieldMesh.lookAt(0, 0, 0);
-      const mat = this.shieldMesh.material as THREE.MeshBasicMaterial;
-      const r = this.shieldHp / Math.max(1, this.shieldMax);
-      mat.opacity = 0.1 + r * 0.28;
-      this.shieldMesh.visible = this.shieldHp > 0.5;
+    // Small shield bubbles ride each living defender
+    const defenders = this.drones.filter((d) => d.role === 'defender');
+    const r = this.shieldHp / Math.max(1, this.shieldMax);
+    for (let i = 0; i < this.shieldMeshes.length; i++) {
+      const mesh = this.shieldMeshes[i];
+      const def = defenders[i];
+      if (!def || !def.alive || this.shieldHp <= 0.5) {
+        mesh.visible = false;
+        continue;
+      }
+      mesh.position.copy(def.group.position);
+      mesh.scale.setScalar(1 + Math.sin(now * 3 + i) * 0.06);
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.18 + r * 0.28;
+      mesh.visible = true;
     }
 
     for (const d of this.drones) {
@@ -254,6 +248,12 @@ export class DroneManager {
       this.shieldMesh.geometry.dispose();
       (this.shieldMesh.material as THREE.Material).dispose();
       this.shieldMesh = null;
+    }
+    while (this.shieldMeshes.length) {
+      const m = this.shieldMeshes.pop()!;
+      this.group.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
     }
     this.group.clear();
   }

@@ -1,5 +1,7 @@
 /**
- * Drone fleet — Fighter / Bomber / Defender.
+ * Drone fleet — bay slots + Fighter / Bomber / Defender inventory.
+ *
+ * Loop: unlock bays → buy type units → drag into bay slots.
  */
 
 export type DroneRole = 'fighter' | 'bomber' | 'defender';
@@ -8,28 +10,21 @@ export interface DroneRoleDef {
   id: DroneRole;
   name: string;
   description: string;
-  /** Base damage multiplier vs blocks */
   blockDamageMul: number;
-  /** Splash radius for bomber plasma */
   splashRadius: number;
-  /** Armor pierce 0–1 */
   armorPierce: number;
-  /** Damage vs enemy drones / projectiles */
   antiDroneMul: number;
-  /** Point-defense DPS feel (defender) */
   pointDefenseMul: number;
-  /** Frontal shield contribution (defender) */
   frontalShield: number;
-  /** Fire rate multiplier */
   fireRateMul: number;
-  /** Orbit radius bias (higher = farther) */
   orbitRadiusBias: number;
-  /** Base max HP */
   baseHp: number;
   color: number;
   colorCss: string;
+  /** Frag cost to buy one unit of this type (after type unlock). */
+  unitCost: number;
+  unlockCost: number;
   unlockLevel: number;
-  unlockCoreCost: number;
 }
 
 export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
@@ -49,8 +44,9 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     baseHp: 40,
     color: 0xffd060,
     colorCss: '#ffd060',
+    unitCost: 120,
+    unlockCost: 0,
     unlockLevel: 1,
-    unlockCoreCost: 0,
   },
   bomber: {
     id: 'bomber',
@@ -68,98 +64,158 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     baseHp: 70,
     color: 0xff6622,
     colorCss: '#ff6622',
+    unitCost: 200,
+    unlockCost: 180,
     unlockLevel: 4,
-    unlockCoreCost: 0,
   },
   defender: {
     id: 'defender',
     name: 'Defender',
     description:
-      'Escort screen. Frontal shield for the ship + light point defense. Never mines the cube.',
+      'Escort with a tight personal shield bubble + point defense. Does not mine the cube.',
     blockDamageMul: 0,
     splashRadius: 0,
     armorPierce: 0,
     antiDroneMul: 0.9,
     pointDefenseMul: 1.5,
-    frontalShield: 28,
+    frontalShield: 22,
     fireRateMul: 1.1,
     orbitRadiusBias: -2.5,
     baseHp: 55,
     color: 0x00ffaa,
     colorCss: '#00ffaa',
+    unitCost: 220,
+    unlockCost: 240,
     unlockLevel: 6,
-    unlockCoreCost: 0,
   },
 };
 
-export const DRONE_HARD_CAP = 24;
+export const DRONE_BAY_MAX = 12;
+export const DRONE_BAY_START = 0;
+/** Frag cost for bay slot n (0-indexed next purchase). */
+export function droneBayUnlockCost(ownedBays: number): number {
+  return Math.round(150 * Math.pow(1.48, Math.max(0, ownedBays)));
+}
+
+export const DRONE_HARD_CAP = DRONE_BAY_MAX;
 
 export const DRONE_COST = {
   base: 45,
   growth: 1.42,
 } as const;
 
+/** @deprecated use droneBayUnlockCost / unit costs */
 export function dronePurchaseCost(ownedCount: number): number {
-  return Math.round(DRONE_COST.base * Math.pow(DRONE_COST.growth, ownedCount));
+  return droneBayUnlockCost(ownedCount);
 }
 
-export function droneRoleAssignCost(role: DroneRole, roleCount: number): number {
-  const base = role === 'fighter' ? 0 : role === 'bomber' ? 45 : 55;
-  return Math.round(base * Math.pow(1.25, roleCount));
+export function droneRoleAssignCost(_role: DroneRole, _roleCount: number): number {
+  return 0;
 }
 
-/** Base respawn seconds before shop upgrades. */
 export const DRONE_BASE_RESPAWN = 8;
 export const DRONE_BASE_SHIELD_REGEN_DELAY = 4;
 export const DRONE_BASE_SHIELD_REGEN_PER_SEC = 6;
 
-export interface DroneFleetSnapshot {
-  count: number;
-  unlockedRoles: DroneRole[];
-  roles: Partial<Record<DroneRole, number>>;
+/**
+ * Full drone meta state for save + shop.
+ * - bays: unlocked slot count
+ * - owned: inventory counts of each type (not necessarily equipped)
+ * - slots: assignment into bays (null = empty bay)
+ * - unlockedTypes: which types can be purchased
+ */
+export interface DroneBayState {
+  bays: number;
+  owned: Record<DroneRole, number>;
+  slots: Array<DroneRole | null>;
+  unlockedTypes: DroneRole[];
 }
 
-export function defaultFleet(): DroneFleetSnapshot {
+export function defaultDroneBayState(): DroneBayState {
   return {
-    count: 0,
-    unlockedRoles: ['fighter'],
-    roles: { fighter: 0 },
+    bays: 0,
+    owned: { fighter: 0, bomber: 0, defender: 0 },
+    slots: [],
+    unlockedTypes: ['fighter'],
   };
 }
 
-export function expandFleetRoles(fleet: DroneFleetSnapshot): DroneRole[] {
-  const list: DroneRole[] = [];
-  const order: DroneRole[] = ['fighter', 'bomber', 'defender'];
-  for (const r of order) {
-    const n = fleet.roles[r] ?? 0;
-    for (let i = 0; i < n; i++) list.push(r);
+/** Normalize slots length to bays; drop illegal types. */
+export function normalizeDroneBayState(raw: Partial<DroneBayState> | null | undefined): DroneBayState {
+  const base = defaultDroneBayState();
+  if (!raw) return base;
+  const bays = Math.min(
+    DRONE_BAY_MAX,
+    Math.max(0, Math.floor(raw.bays ?? 0))
+  );
+  const unlockedTypes: DroneRole[] = Array.isArray(raw.unlockedTypes)
+    ? (raw.unlockedTypes.filter((t) => t in DRONE_ROLES) as DroneRole[])
+    : ['fighter'];
+  if (!unlockedTypes.includes('fighter')) unlockedTypes.unshift('fighter');
+
+  const owned: Record<DroneRole, number> = {
+    fighter: Math.max(0, Math.floor(raw.owned?.fighter ?? 0)),
+    bomber: Math.max(0, Math.floor(raw.owned?.bomber ?? 0)),
+    defender: Math.max(0, Math.floor(raw.owned?.defender ?? 0)),
+  };
+
+  const slots: Array<DroneRole | null> = [];
+  const rawSlots = Array.isArray(raw.slots) ? raw.slots : [];
+  for (let i = 0; i < bays; i++) {
+    const s = rawSlots[i];
+    if (s === 'fighter' || s === 'bomber' || s === 'defender') slots.push(s);
+    else slots.push(null);
   }
-  while (list.length < fleet.count) list.push('fighter');
-  return list.slice(0, Math.min(DRONE_HARD_CAP, fleet.count));
+
+  // Ensure equipped counts never exceed owned
+  const used: Record<DroneRole, number> = { fighter: 0, bomber: 0, defender: 0 };
+  for (let i = 0; i < slots.length; i++) {
+    const r = slots[i];
+    if (!r) continue;
+    used[r]++;
+    if (used[r] > owned[r] || !unlockedTypes.includes(r)) {
+      slots[i] = null;
+      used[r]--;
+    }
+  }
+
+  return { bays, owned, slots, unlockedTypes };
+}
+
+/** Active roles from equipped bays (for spawning). */
+export function expandBaySlots(state: DroneBayState): DroneRole[] {
+  return state.slots.filter((s): s is DroneRole => s != null);
+}
+
+/** How many of a type are free in inventory (owned - equipped). */
+export function freeInventory(state: DroneBayState, role: DroneRole): number {
+  const equipped = state.slots.filter((s) => s === role).length;
+  return Math.max(0, (state.owned[role] ?? 0) - equipped);
 }
 
 /**
- * Build fleet from tech droneCount — default mix tilts fighter-heavy.
+ * Legacy bridge: tech droneCount → provisional bay state if save empty.
  */
-export function fleetFromLegacyCount(count: number, unlocked: boolean): DroneFleetSnapshot {
-  const n = unlocked ? Math.min(DRONE_HARD_CAP, Math.max(0, count)) : 0;
-  if (n <= 0) {
-    return { count: 0, unlockedRoles: ['fighter'], roles: { fighter: 0 } };
-  }
-  // Distribute: majority fighters, then bombers, then defenders
-  let fighters = Math.ceil(n * 0.5);
-  let bombers = Math.floor(n * 0.3);
-  let defenders = n - fighters - bombers;
-  if (defenders < 0) {
-    fighters += defenders;
-    defenders = 0;
-  }
-  const unlockedRoles: DroneRole[] = ['fighter'];
-  if (bombers > 0) unlockedRoles.push('bomber');
-  if (defenders > 0) unlockedRoles.push('defender');
+export function fleetFromLegacyCount(count: number, unlocked: boolean): DroneBayState {
+  const n = unlocked ? Math.min(DRONE_BAY_MAX, Math.max(0, count)) : 0;
+  if (n <= 0) return defaultDroneBayState();
+  const owned = { fighter: n, bomber: 0, defender: 0 };
+  const slots: Array<DroneRole | null> = Array.from({ length: n }, () => 'fighter' as DroneRole);
   return {
-    count: n,
-    unlockedRoles,
-    roles: { fighter: fighters, bomber: bombers, defender: defenders },
+    bays: n,
+    owned,
+    slots,
+    unlockedTypes: ['fighter'],
   };
+}
+
+/** @deprecated name kept for DroneManager imports */
+export type DroneFleetSnapshot = DroneBayState;
+
+export function defaultFleet(): DroneBayState {
+  return defaultDroneBayState();
+}
+
+export function expandFleetRoles(fleet: DroneBayState): DroneRole[] {
+  return expandBaySlots(fleet);
 }

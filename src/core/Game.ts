@@ -23,7 +23,12 @@ import { InputController } from '../player/InputController';
 import { Weapon } from '../player/Weapon';
 import { HardpointSystem } from '../combat/HardpointSystem';
 import { LoadoutState } from '../loadout/LoadoutState';
+import { DroneBayController } from '../loadout/DroneBayState';
 import { DroneManager } from '../drones/DroneManager';
+import {
+  DRONE_ROLES,
+  type DroneRole,
+} from '../data/drones';
 import { Currency } from '../progression/Currency';
 import { TechTree } from '../progression/TechTree';
 import { ResearchTree } from '../progression/ResearchTree';
@@ -91,6 +96,7 @@ export class Game {
   private weapon = new Weapon();
   private hardpoints = new HardpointSystem();
   private loadout = new LoadoutState();
+  private droneBays = new DroneBayController();
   private drones = new DroneManager();
   private input = new InputController();
   private currency = new Currency();
@@ -238,6 +244,9 @@ export class Game {
 
     this.cubeAnimator.bind(this.cube);
     this.cubeDefense.bind(this.cube);
+    // Nucleus damage passes through regenerating core shield bubble first
+    (this.cube as { defenseAbsorb?: (n: number) => number }).defenseAbsorb = (n) =>
+      this.cubeDefense.absorbCoreDamage(n);
     this.cubeDefense.setHooks({
       onPlayerDamage: (amount) => this.onPlayerDamaged(amount),
       getPlayerPosition: () => this.ship.position.clone(),
@@ -404,6 +413,80 @@ export class Game {
       return true;
     };
     this.shopUI.onEvolve = () => this.performEvolve();
+    this.shopUI.onUnlockDroneBay = () => {
+      if (!this.tech.stats.dronesUnlocked && !this.tech.owned.has('drone_unlock')) {
+        this.toast('BUY ALLY PROTOCOL FIRST');
+        return false;
+      }
+      const cost = this.droneBays.nextBayCost();
+      if (!this.droneBays.canUnlockBay()) return false;
+      if (!this.currency.spendFragments(cost)) return false;
+      if (!this.droneBays.unlockBay()) {
+        this.currency.addFragments(cost, 1);
+        return false;
+      }
+      // Auto-fill first empty bay from free inventory if possible
+      const empty = this.droneBays.state.slots.findIndex((s) => s == null);
+      if (empty >= 0) {
+        for (const role of ['fighter', 'bomber', 'defender'] as DroneRole[]) {
+          const free =
+            (this.droneBays.state.owned[role] ?? 0) -
+            this.droneBays.state.slots.filter((s) => s === role).length;
+          if (free > 0) {
+            this.droneBays.assignSlot(empty, role);
+            break;
+          }
+        }
+      }
+      this.syncDronesFromBays();
+      this.persist();
+      this.audio.playPurchase();
+      this.toast(`DRONE BAY ${this.droneBays.state.bays} ONLINE`);
+      return true;
+    };
+    this.shopUI.onUnlockDroneType = (role) => {
+      const def = DRONE_ROLES[role];
+      if (this.save.data.highestLevel < def.unlockLevel) {
+        this.toast(`REQUIRES SECTOR ${def.unlockLevel}+`);
+        return false;
+      }
+      if (this.droneBays.isTypeUnlocked(role)) return false;
+      if (!this.currency.spendFragments(def.unlockCost)) return false;
+      this.droneBays.unlockType(role);
+      this.persist();
+      this.audio.playPurchase();
+      this.toast(`${def.name.toUpperCase()} UNLOCKED`);
+      return true;
+    };
+    this.shopUI.onBuyDroneUnit = (role) => {
+      if (!this.droneBays.isTypeUnlocked(role)) return false;
+      const cost = this.droneBays.unitCost(role);
+      if (!this.currency.spendFragments(cost)) return false;
+      this.droneBays.buyUnit(role);
+      // Auto-assign into first empty bay
+      const empty = this.droneBays.state.slots.findIndex((s) => s == null);
+      if (empty >= 0) this.droneBays.assignSlot(empty, role);
+      this.syncDronesFromBays();
+      this.persist();
+      this.audio.playPurchase();
+      return true;
+    };
+    this.shopUI.onAssignDroneSlot = (slot, role) => {
+      const ok = this.droneBays.assignSlot(slot, role);
+      if (ok) {
+        this.syncDronesFromBays();
+        this.persist();
+      }
+      return ok;
+    };
+    this.shopUI.onMoveDroneSlot = (from, to) => {
+      const ok = this.droneBays.moveSlot(from, to);
+      if (ok) {
+        this.syncDronesFromBays();
+        this.persist();
+      }
+      return ok;
+    };
 
     this.researchUI.onClose = () => {
       this.researchUI.hide();
@@ -885,8 +968,8 @@ export class Game {
     if (this.mode !== 'playing') return;
     // Post-ad repair grace — ignore all combat damage
     if (this.reviveImmunity > 0) return;
-    // Defender frontal escort shield absorbs first
-    const afterShield = this.drones.absorbFrontalDamage(amount);
+    // Defender escort bubbles absorb only when a defender is near the ship
+    const afterShield = this.drones.absorbFrontalDamage(amount, this.ship.position);
     if (afterShield <= 0) {
       this.cameraCtrl.shake(0.04);
       return;
@@ -1074,8 +1157,18 @@ export class Game {
     this.cameraCtrl.extendMaxRadius(this.tech.stats.zoomRangeAdd);
     // Hardpoints are Ascension + Core unlocks only (not combat shop).
     this.hardpoints.bindLoadout(this.loadout);
-    this.drones.syncCount(this.tech.stats);
+    this.syncDronesFromBays();
     this.updateHudVitals();
+  }
+
+  private syncDronesFromBays(): void {
+    this.drones.bindBayController(this.droneBays);
+    // Reflect equipped count into tech-facing droneCount for idle/stats
+    this.tech.stats.droneCount = this.droneBays.equippedCount();
+    if (this.droneBays.equippedCount() > 0 || this.droneBays.state.bays > 0) {
+      this.tech.stats.dronesUnlocked = true;
+    }
+    this.drones.syncFromBays(this.tech.stats);
   }
 
   private updateHudVitals(): void {
@@ -1187,6 +1280,28 @@ export class Game {
     });
     this.loadout.syncLevelUnlocks(data.highestLevel);
     this.hardpoints.bindLoadout(this.loadout);
+
+    // Drone bays — migrate legacy droneCount if empty
+    this.droneBays.load({
+      bays: data.droneBays,
+      owned: data.droneOwned as never,
+      slots: data.droneSlots as never,
+      unlockedTypes: data.droneUnlockedTypes as never,
+    });
+    if (
+      this.droneBays.state.bays === 0 &&
+      this.tech.stats.dronesUnlocked &&
+      this.tech.stats.droneCount > 0
+    ) {
+      // Migrate old all-miner fleets → fighter bays
+      const n = Math.min(12, this.tech.stats.droneCount);
+      this.droneBays.state.bays = n;
+      this.droneBays.state.owned.fighter = n;
+      this.droneBays.state.slots = Array.from({ length: n }, () => 'fighter' as DroneRole);
+      this.droneBays.state.unlockedTypes = ['fighter'];
+    }
+    this.syncDronesFromBays();
+
     this.tutorial.setFlags(
       !!data.tutorialStage1Done,
       !!data.tutorialLoadoutDone
@@ -1207,7 +1322,7 @@ export class Game {
 
     this.shopHintShown = this.tech.owned.size > 0;
     this.hasSeenCinematic = data.highestLevel > 1;
-    this.drones.syncCount(this.tech.stats);
+    this.syncDronesFromBays();
 
     const offlineSec = this.idle.computeOffline(data.lastSaveTime, this.tech.stats);
     if (offlineSec > 30) {
@@ -1304,6 +1419,11 @@ export class Game {
     this.save.data.researchRanks = snapR.ranks;
     this.save.data.cosmeticTrail =
       !!this.save.data.cosmeticTrail || this.research.bonuses.cosmeticTrail;
+    const db = this.droneBays.toJSON();
+    this.save.data.droneBays = db.bays;
+    this.save.data.droneOwned = db.owned;
+    this.save.data.droneSlots = db.slots;
+    this.save.data.droneUnlockedTypes = db.unlockedTypes;
     this.syncLoadoutToSave();
     const adSnap = this.ads.toJSON();
     this.save.data.adsDayKey = adSnap.day;
@@ -1370,7 +1490,9 @@ export class Game {
     this.hardpoints.group.visible = true;
   }
 
-  private openTech(tab?: 'ship' | 'main_gun' | 'loadouts' | 'drones' | 'economy' | 'global'): void {
+  private openTech(
+    tab?: 'ship' | 'main_gun' | 'loadouts' | 'drone_bays' | 'drones' | 'economy' | 'global'
+  ): void {
     // Gate shop until first drone is affordable or already owned
     const ownsDrone =
       this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
@@ -1409,8 +1531,11 @@ export class Game {
       this.save.data.highestLevel,
       this.save.data.ascensionTier
     );
-    // Default to drones tab until first drone is owned
-    const openTab = tab ?? (!ownsDrone ? 'drones' : undefined);
+    this.shopUI.setDroneBay(this.droneBays);
+    // Default to drone tech until Ally Protocol; then prefer bays
+    const openTab =
+      tab ??
+      (!ownsDrone ? 'drones' : this.droneBays.state.bays === 0 ? 'drone_bays' : undefined);
     this.shopUI.show(this.tech, this.currency, openTab);
   }
 
@@ -1445,6 +1570,14 @@ export class Game {
       this.tutorial.notifyPurchase(node.id);
       if (node.id === 'drone_unlock' || node.effects.unlockDrones) {
         this.tutorial.notifyDroneOwned();
+        // First bay unlock path: ensure player can open bays
+        if (this.droneBays.state.bays === 0) {
+          // Grant free first bay + fighter so tutorial has a unit
+          this.droneBays.state.bays = 1;
+          this.droneBays.state.owned.fighter = Math.max(1, this.droneBays.state.owned.fighter);
+          this.droneBays.state.unlockedTypes = ['fighter'];
+          this.droneBays.state.slots = ['fighter'];
+        }
       }
       this.applyStatsToSystems();
       this.shopUI.setVitals(this.vitals.snapshot());
@@ -1453,6 +1586,7 @@ export class Game {
         this.save.data.highestLevel,
         this.save.data.ascensionTier
       );
+      this.shopUI.setDroneBay(this.droneBays);
       this.shopUI.render(this.tech, this.currency);
       this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
       this.audio.playPurchase();
@@ -1543,7 +1677,7 @@ export class Game {
 
     this.loadout.syncLevelUnlocks(this.save.data.highestLevel);
     this.hardpoints.rebuildFromLoadout();
-    this.drones.syncCount(this.tech.stats);
+    this.syncDronesFromBays();
     this.vitals.fullRestore();
     this.vitals.syncFromStats(this.tech.stats);
     this.vitals.fullRestore();

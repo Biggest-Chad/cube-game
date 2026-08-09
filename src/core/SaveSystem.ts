@@ -49,8 +49,12 @@ export interface SaveData {
   /** Weapon definition ids owned (unlock gallery). */
   ownedWeapons: string[];
 
-  // --- v2: drones ---
-  /** Role id → count assigned (e.g. miner, breaker, fighter, shield). */
+  // --- drones (bay system) ---
+  droneBays: number;
+  droneOwned: Record<string, number>;
+  droneSlots: Array<string | null>;
+  droneUnlockedTypes: string[];
+  /** Legacy */
   droneRoles: Record<string, number>;
 
   // --- v2: ads ---
@@ -103,6 +107,10 @@ export function defaultSave(): SaveData {
     loadout: [null, null, null],
     ownedWeapons: [],
 
+    droneBays: 0,
+    droneOwned: { fighter: 0, bomber: 0, defender: 0 },
+    droneSlots: [],
+    droneUnlockedTypes: ['fighter'],
     droneRoles: {},
 
     adsWatchedToday: {},
@@ -200,6 +208,22 @@ export class SaveSystem {
           parsed.droneRoles && typeof parsed.droneRoles === 'object'
             ? { ...parsed.droneRoles }
             : base.droneRoles,
+        droneBays:
+          typeof parsed.droneBays === 'number' ? Math.max(0, Math.floor(parsed.droneBays)) : base.droneBays,
+        droneOwned:
+          parsed.droneOwned && typeof parsed.droneOwned === 'object'
+            ? { fighter: 0, bomber: 0, defender: 0, ...parsed.droneOwned }
+            : base.droneOwned,
+        droneSlots: Array.isArray(parsed.droneSlots)
+          ? parsed.droneSlots.map((s) =>
+              s === 'fighter' || s === 'bomber' || s === 'defender' ? s : null
+            )
+          : base.droneSlots,
+        droneUnlockedTypes: Array.isArray(parsed.droneUnlockedTypes)
+          ? parsed.droneUnlockedTypes.filter(
+              (t): t is string => typeof t === 'string'
+            )
+          : base.droneUnlockedTypes,
         adsWatchedToday:
           parsed.adsWatchedToday && typeof parsed.adsWatchedToday === 'object'
             ? { ...parsed.adsWatchedToday }

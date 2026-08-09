@@ -3495,3 +3495,122 @@ body.orientation-portrait #rotate-overlay {
 .loadout-equip-btn:not(.equipped):hover {
   background: rgba(0, 80, 90, 0.85);
 }
+
+/* —— DnD bay / loadout panels —— */
+.dnd-panel { padding: 4px 2px 16px; }
+.dnd-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.dnd-toolbar .menu-btn { width: auto; min-width: 160px; }
+.dnd-toolbar-meta {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  opacity: 0.7;
+}
+.dnd-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .dnd-columns { grid-template-columns: 1fr; }
+}
+.dnd-col-title {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--cyan, #00f0ff);
+  margin: 0 0 8px;
+}
+.dnd-slots, .dnd-inventory {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dnd-slot, .bay-slot {
+  border: 1px dashed rgba(0, 240, 255, 0.35);
+  background: rgba(0, 16, 24, 0.55);
+  padding: 8px 10px;
+  min-height: 64px;
+}
+.dnd-slot.filled {
+  border-style: solid;
+  border-color: var(--accent, rgba(0, 240, 255, 0.55));
+}
+.dnd-slot.drop-hover, .loadout-slot.drop-hover {
+  outline: 2px solid #00f0ff;
+  background: rgba(0, 60, 80, 0.45);
+}
+.dnd-slot-idx {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  opacity: 0.65;
+  margin-bottom: 4px;
+}
+.dnd-slot-body strong {
+  display: block;
+  color: var(--accent, #fff);
+}
+.dnd-clear {
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.7);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.dnd-inv-card {
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-left: 3px solid var(--accent, #00f0ff);
+  padding: 10px;
+  background: rgba(0, 10, 16, 0.6);
+}
+.dnd-inv-card.locked { opacity: 0.75; }
+.dnd-inv-card p {
+  font-size: 11px;
+  opacity: 0.75;
+  margin: 6px 0;
+  line-height: 1.35;
+}
+.dnd-inv-meta {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  opacity: 0.65;
+  margin-bottom: 8px;
+}
+.dnd-inv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.dnd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--accent, #00f0ff);
+  color: var(--accent, #00f0ff);
+  background: rgba(0, 30, 40, 0.7);
+  cursor: grab;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  user-select: none;
+}
+.dnd-chip:active { cursor: grabbing; }
+.loadout-slot-hit {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.dim { opacity: 0.55; font-size: 11px; }

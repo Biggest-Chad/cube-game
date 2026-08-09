@@ -5,6 +5,13 @@
 export type CoreAttribute = 'none' | 'rage' | 'regeneration' | 'swarm';
 
 export const CORE = {
+  /**
+   * Max shell damage reduction (1 = full immunity when shell intact).
+   * Softened from 1.0 so direct nucleus shots always chip (min throughput below).
+   */
+  maxShellDr: 0.88,
+  /** Minimum fraction of raw damage that always reaches the DR stage (then transfer). */
+  minDamageThroughput: 0.12,
   /** Fraction of post-DR damage redirected to a random shell block. */
   damageTransferPct: 0.1,
   /** Shell remaining ratio below which core is EXPOSED. */

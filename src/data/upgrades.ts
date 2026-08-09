@@ -15,7 +15,14 @@ export type UpgradeBranch =
   | 'idle'
   | 'global';
 
-export type ShopTabId = 'ship' | 'main_gun' | 'loadouts' | 'drones' | 'economy' | 'global';
+export type ShopTabId =
+  | 'ship'
+  | 'main_gun'
+  | 'loadouts'
+  | 'drone_bays'
+  | 'drones'
+  | 'economy'
+  | 'global';
 
 export type CostCurrency = 'fragments' | 'coreEnergy';
 
@@ -101,7 +108,8 @@ export const SHOP_TABS: ShopTabDef[] = [
   { id: 'ship', label: 'SHIP', icon: '🚀', branches: ['ship'] },
   { id: 'main_gun', label: 'MAIN GUN', icon: '⚡', branches: ['offense'] },
   { id: 'loadouts', label: 'LOADOUTS', icon: '◎', branches: ['loadouts'] },
-  { id: 'drones', label: 'DRONES', icon: '⬡', branches: ['drones'] },
+  { id: 'drone_bays', label: 'DRONE BAYS', icon: '⬡', branches: [] },
+  { id: 'drones', label: 'DRONE TECH', icon: '◈', branches: ['drones'] },
   { id: 'economy', label: 'ECONOMY', icon: '◈', branches: ['analysis', 'idle'] },
   { id: 'global', label: 'GLOBAL', icon: '✶', branches: ['global'] },
 ];
@@ -125,6 +133,8 @@ export const BRANCH_TO_TAB: Record<UpgradeBranch, ShopTabId> = {
   idle: 'economy',
   global: 'global',
 };
+
+// drone_bays is a custom DnD panel — no upgrade branches
 
 /** Soft/hard caps referenced by TechTree recompute. */
 export const STAT_CAPS = {
@@ -292,25 +302,18 @@ export const UPGRADES: UpgradeNodeDef[] = [
   // ═══════════════════════════════════════════
   // DRONES
   // ═══════════════════════════════════════════
+  // Drone bays / types are managed in the DRONE BAYS DnD panel.
+  // Ally Protocol still gates "drones unlocked" for tutorials.
   ...chainNodes('drone_unlock', 'drones', [
     {
       id: 'drone_unlock',
       name: 'Ally Protocol',
-      description: 'Unlock first AI drone',
+      description: 'Authorize drone operations · opens first bay purchase',
       cost: 150,
-      effects: { unlockDrones: true, droneCountAdd: 1 },
+      effects: { unlockDrones: true, droneCountAdd: 0 },
     },
   ]),
-  ...chainNodes('drone_count', 'drones', [
-    { id: 'drone_count_1', name: 'Wingman Bay', description: '+1 drone', cost: 280, effects: { droneCountAdd: 1 }, extraPrereq: ['drone_unlock'] },
-    { id: 'drone_count_2', name: 'Wingman Bay', description: '+1 drone', cost: 420, effects: { droneCountAdd: 1 } },
-    { id: 'drone_count_3', name: 'Wingman Bay', description: '+1 drone', cost: 620, effects: { droneCountAdd: 1 } },
-    { id: 'drone_count_4', name: 'Wingman Bay', description: '+1 drone', cost: 900, effects: { droneCountAdd: 1 } },
-    { id: 'drone_count_5', name: 'Wingman Bay', description: '+1 drone', cost: 1300, effects: { droneCountAdd: 1 } },
-    { id: 'drone_count_6', name: 'Wingman Bay', description: '+1 drone', cost: 1850, effects: { droneCountAdd: 1 } },
-    { id: 'drone_count_7', name: 'Wingman Bay', description: '+1 drone', cost: 2600, effects: { droneCountAdd: 1 } },
-    { id: 'drone_count_8', name: 'Wingman Bay', description: '+1 drone', cost: 3600, effects: { droneCountAdd: 1 } },
-  ]),
+  // Hull / respawn / shield upgrades remain sequential chains
   ...chainNodes('drone_dmg', 'drones', [
     { id: 'drone_dmg_1', name: 'Drone Lens', description: '+20% drone damage', cost: 200, effects: { droneDamageAdd: 0.2 }, extraPrereq: ['drone_unlock'] },
     { id: 'drone_dmg_2', name: 'Drone Lens', description: '+22% drone damage', cost: 450, effects: { droneDamageAdd: 0.22 } },
@@ -508,30 +511,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
       effects: { maxHullAdd: 35 },
     },
   ]),
-  ...chainNodes('drone_count_late', 'drones', [
-    {
-      id: 'drone_count_late_1',
-      name: 'Deep Hangar',
-      description: '+1 drone (late bay)',
-      cost: 3500,
-      effects: { droneCountAdd: 1 },
-      extraPrereq: ['drone_unlock'],
-    },
-    {
-      id: 'drone_count_late_2',
-      name: 'Deep Hangar',
-      description: '+1 drone (late bay)',
-      cost: 9000,
-      effects: { droneCountAdd: 1 },
-    },
-    {
-      id: 'drone_count_late_3',
-      name: 'Deep Hangar',
-      description: '+1 drone (late bay)',
-      cost: 22000,
-      effects: { droneCountAdd: 1 },
-    },
-  ]),
+  // Extra bay slots are purchased in the DRONE BAYS panel (not sequential chains).
 ];
 
 export function getUpgrade(id: string): UpgradeNodeDef | undefined {
