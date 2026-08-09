@@ -64,6 +64,14 @@ export interface UpgradeEffect {
   shieldRegenAdd?: number;
   /** Hardpoint unlocks */
   hardpointAdd?: number;
+  /** Drone max HP fraction (0.15 = +15%) */
+  droneHpAdd?: number;
+  /** Respawn time reduction fraction (0.1 = 10% faster) */
+  droneRespawnReduce?: number;
+  /** Defender frontal shield capacity fraction */
+  droneShieldAdd?: number;
+  /** Defender shield regen rate fraction */
+  droneShieldRegenAdd?: number;
 }
 
 export interface UpgradeNodeDef {
@@ -316,7 +324,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     {
       id: 'drone_prio_core',
       name: 'Core Hunter',
-      description: 'Drones prioritize cores',
+      description: 'Bombers prioritize exposed nucleus',
       cost: 350,
       effects: { dronePriorityCore: true },
       extraPrereq: ['drone_unlock'],
@@ -326,10 +334,52 @@ export const UPGRADES: UpgradeNodeDef[] = [
     {
       id: 'drone_prio_data',
       name: 'Data Sniffer',
-      description: 'Drones prioritize data nodes',
+      description: 'Bombers prioritize data nodes',
       cost: 420,
       effects: { dronePriorityData: true },
       extraPrereq: ['drone_prio_core'],
+    },
+  ]),
+  ...chainNodes('drone_hp', 'drones', [
+    {
+      id: 'drone_hp_1',
+      name: 'Hull Plates',
+      description: '+20% drone max HP',
+      cost: 220,
+      effects: { droneHpAdd: 0.2 },
+      extraPrereq: ['drone_unlock'],
+    },
+    { id: 'drone_hp_2', name: 'Hull Plates', description: '+25% drone max HP', cost: 480, effects: { droneHpAdd: 0.25 } },
+    { id: 'drone_hp_3', name: 'Hull Plates', description: '+30% drone max HP', cost: 900, effects: { droneHpAdd: 0.3 } },
+  ]),
+  ...chainNodes('drone_respawn', 'drones', [
+    {
+      id: 'drone_respawn_1',
+      name: 'Rapid Reload Bay',
+      description: '−15% drone respawn time',
+      cost: 260,
+      effects: { droneRespawnReduce: 0.15 },
+      extraPrereq: ['drone_hp_1'],
+    },
+    { id: 'drone_respawn_2', name: 'Rapid Reload Bay', description: '−20% drone respawn time', cost: 560, effects: { droneRespawnReduce: 0.2 } },
+    { id: 'drone_respawn_3', name: 'Rapid Reload Bay', description: '−20% drone respawn time', cost: 1100, effects: { droneRespawnReduce: 0.2 } },
+  ]),
+  ...chainNodes('drone_shield', 'drones', [
+    {
+      id: 'drone_shield_1',
+      name: 'Escort Barrier',
+      description: '+30% defender frontal shield',
+      cost: 300,
+      effects: { droneShieldAdd: 0.3 },
+      extraPrereq: ['drone_unlock'],
+    },
+    { id: 'drone_shield_2', name: 'Escort Barrier', description: '+35% defender frontal shield', cost: 640, effects: { droneShieldAdd: 0.35 } },
+    {
+      id: 'drone_shield_3',
+      name: 'Barrier Regen',
+      description: '+40% defender shield regen',
+      cost: 880,
+      effects: { droneShieldRegenAdd: 0.4 },
     },
   ]),
 

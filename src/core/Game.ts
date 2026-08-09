@@ -56,7 +56,7 @@ import {
   evolveCoreGrant,
   evolveCost,
 } from '../data/evolve';
-import { getResearchNode } from '../data/research';
+import { EVOLVE_FRAG_PER_CORE, getResearchNode } from '../data/research';
 
 type Mode =
   | 'menu'
@@ -681,6 +681,14 @@ export class Game {
     const grant = evolveCoreGrant(newTier);
     this.currency.addCoreEnergy(grant, 1);
 
+    // Convert leftover FRAG → CORE at 1000:1 (remainder FRAG kept)
+    const leftover = this.currency.dataFragments;
+    const converted = Math.floor(leftover / EVOLVE_FRAG_PER_CORE);
+    if (converted > 0) {
+      this.currency.spendFragments(converted * EVOLVE_FRAG_PER_CORE);
+      this.currency.addCoreEnergy(converted, 1);
+    }
+
     this.applyStatsToSystems();
     this.vitals.fullRestore();
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
@@ -691,8 +699,13 @@ export class Game {
     );
     this.persist();
     this.audio.playPurchase();
-    this.toast(`ASCENSION ${newTier} · +${grant} CORE · RETRAIN SHOP`);
-    bus.emit('evolved', { tier: newTier, coreGrant: grant });
+    const convertMsg = converted > 0 ? ` · +${converted} CORE FROM FRAG` : '';
+    this.toast(`ASCENSION ${newTier} · +${grant} CORE${convertMsg} · RETRAIN`);
+    bus.emit('evolved', {
+      tier: newTier,
+      coreGrant: grant,
+      fragConverted: converted,
+    });
     return true;
   }
 
@@ -872,7 +885,13 @@ export class Game {
     if (this.mode !== 'playing') return;
     // Post-ad repair grace — ignore all combat damage
     if (this.reviveImmunity > 0) return;
-    const hit = this.vitals.takeDamage(amount);
+    // Defender frontal escort shield absorbs first
+    const afterShield = this.drones.absorbFrontalDamage(amount);
+    if (afterShield <= 0) {
+      this.cameraCtrl.shake(0.04);
+      return;
+    }
+    const hit = this.vitals.takeDamage(afterShield);
     this.cameraCtrl.shake(0.1);
     this.audio.playPlayerHit();
     this.updateHudVitals();
@@ -1143,7 +1162,11 @@ export class Game {
     this.save.data.lifetimeEvolves = data.lifetimeEvolves ?? tier;
     this.tech.setBaseline(baseline);
 
-    this.research.load(data.researchOwned ?? [], !!data.cosmeticTrail);
+    this.research.load(
+      data.researchOwned ?? [],
+      !!data.cosmeticTrail,
+      data.researchRanks
+    );
     this.tech.setResearch(this.research.bonuses);
     this.applyCosmeticTrail();
 
@@ -1188,17 +1211,21 @@ export class Game {
 
     const offlineSec = this.idle.computeOffline(data.lastSaveTime, this.tech.stats);
     if (offlineSec > 30) {
+      // Pure currency — never mutates the live stage cube
+      this.pendingIdle = offlineSec;
       if (this.research.bonuses.unlockAutoIdle) {
-        // Auto-Collect: flat FRAG drip on login (no cube required)
-        const rate = 0.15 * this.tech.stats.idleRateMul * 2.5;
-        const frags = Math.floor(offlineSec * rate);
-        if (frags > 0) {
-          const gained = this.currency.addFragments(frags, this.tech.stats.fragmentMul);
-          this.toast(`AUTO-COLLECT · +${gained} FRAG`);
-        }
+        const result = this.idle.claimOffline(
+          offlineSec,
+          this.tech.stats,
+          this.currency
+        );
         this.pendingIdle = 0;
-      } else {
-        this.pendingIdle = offlineSec;
+        if (result.fragments > 0 || result.coreEnergy > 0) {
+          this.toast(
+            `AUTO-COLLECT · +${result.fragments} FRAG` +
+              (result.coreEnergy > 0 ? ` · +${result.coreEnergy} CORE` : '')
+          );
+        }
       }
     }
   }
@@ -1272,7 +1299,9 @@ export class Game {
     this.save.data.ascensionTier = this.save.data.ascensionTier ?? 0;
     this.save.data.lifetimeEvolves = this.save.data.lifetimeEvolves ?? 0;
     this.save.data.baseline = baselineFromTier(this.save.data.ascensionTier);
-    this.save.data.researchOwned = Array.from(this.research.owned);
+    const snapR = this.research.toJSON();
+    this.save.data.researchOwned = snapR.owned;
+    this.save.data.researchRanks = snapR.ranks;
     this.save.data.cosmeticTrail =
       !!this.save.data.cosmeticTrail || this.research.bonuses.cosmeticTrail;
     this.syncLoadoutToSave();
@@ -1525,16 +1554,14 @@ export class Game {
       let seconds = this.pendingIdle;
       const boost = this.ads.consumeOfflineBoost();
       seconds *= boost;
-      const result = this.idle.apply(
-        seconds,
-        this.cube,
-        this.tech.stats,
-        this.currency,
-        performance.now() / 1000
-      );
+      // Numerical rewards only — does not damage / clear the stage
+      const result = this.idle.claimOffline(seconds, this.tech.stats, this.currency);
       this.pendingIdle = 0;
-      if (result.blocksDestroyed > 0) {
-        this.toast(`OFFLINE +${result.fragments} FRAG · ${result.blocksDestroyed} BLOCKS`);
+      if (result.fragments > 0 || result.coreEnergy > 0) {
+        this.toast(
+          `OFFLINE +${result.fragments} FRAG` +
+            (result.coreEnergy > 0 ? ` · +${result.coreEnergy} CORE` : '')
+        );
       }
     }
 
@@ -2098,8 +2125,11 @@ export class Game {
 
         this.drones.setCombatContext({
           enemies: this.cubeDefense.getEnemyUnitRefs(),
+          intercepts: this.cubeDefense.getInterceptTargets(),
           onEnemyHit: (id, dmg) => this.cubeDefense.damageEnemy(id, dmg),
-          onShieldRepair: (amt) => this.vitals.restoreShield(amt),
+          onInterceptHit: (id, dmg) => this.cubeDefense.damageIntercept(id, dmg),
+          shipPos: this.ship.position.clone(),
+          nucleusExposed: this.cube.nucleus.isExposed,
         });
         this.drones.update(dt, this.cube, this.tech.stats, now, this.hidden);
 

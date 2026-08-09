@@ -71,6 +71,8 @@ export interface SaveData {
   baseline: AscensionBaseline;
   /** Research Lattice node ids owned (Core Energy meta tree). */
   researchOwned: string[];
+  /** Stackable research ranks (id → rank). */
+  researchRanks: Record<string, number>;
   /** IAP / cosmetic: cyan trail unlocked outside research ids. */
   cosmeticTrail: boolean;
 }
@@ -113,6 +115,7 @@ export function defaultSave(): SaveData {
     lifetimeEvolves: 0,
     baseline: { ...BASELINE_IDENTITY },
     researchOwned: [],
+    researchRanks: {},
     cosmeticTrail: false,
   };
 }
@@ -216,6 +219,10 @@ export class SaveSystem {
         researchOwned: Array.isArray(parsed.researchOwned)
           ? parsed.researchOwned.filter((id): id is string => typeof id === 'string')
           : base.researchOwned,
+        researchRanks:
+          parsed.researchRanks && typeof parsed.researchRanks === 'object'
+            ? { ...(parsed.researchRanks as Record<string, number>) }
+            : base.researchRanks,
         cosmeticTrail: !!parsed.cosmeticTrail,
         dataFragments: sanitizeCurrency(parsed.dataFragments, base.dataFragments),
         coreEnergy: sanitizeCurrency(parsed.coreEnergy, base.coreEnergy),

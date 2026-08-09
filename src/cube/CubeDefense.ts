@@ -415,6 +415,43 @@ export class CubeDefense {
     return false;
   }
 
+  /** Large hostile projectiles (rage arcs) for fighter intercept. */
+  getInterceptTargets(): Array<{
+    id: string;
+    position: { x: number; y: number; z: number };
+    radius: number;
+  }> {
+    const out: Array<{
+      id: string;
+      position: { x: number; y: number; z: number };
+      radius: number;
+    }> = [];
+    for (let i = 0; i < this.arcs.length; i++) {
+      const a = this.arcs[i];
+      out.push({
+        id: `arc_${i}`,
+        position: { x: a.pos.x, y: a.pos.y, z: a.pos.z },
+        radius: 0.9,
+      });
+    }
+    return out;
+  }
+
+  /** Damage an intercept target (arc beam). Returns true if destroyed. */
+  damageIntercept(id: string, amount: number): boolean {
+    if (!id.startsWith('arc_')) return false;
+    const idx = Number(id.slice(4));
+    const a = this.arcs[idx];
+    if (!a) return false;
+    // Soft HP for arcs so fighters can shoot them down
+    (a as { hp?: number }).hp = ((a as { hp?: number }).hp ?? 28) - amount;
+    if (((a as { hp?: number }).hp ?? 0) <= 0) {
+      a.life = 0;
+      return true;
+    }
+    return false;
+  }
+
   absorbCoreDamage(raw: number): number {
     if (!this.coreShield.active || this.coreShield.current <= 0) return raw;
     const absorb = Math.min(this.coreShield.current, raw);

@@ -1,8 +1,8 @@
 /**
- * Drone fleet definitions — roles, costs, caps.
+ * Drone fleet — Fighter / Bomber / Defender.
  */
 
-export type DroneRole = 'miner' | 'breaker' | 'fighter' | 'guardian';
+export type DroneRole = 'fighter' | 'bomber' | 'defender';
 
 export interface DroneRoleDef {
   id: DroneRole;
@@ -10,83 +10,90 @@ export interface DroneRoleDef {
   description: string;
   /** Base damage multiplier vs blocks */
   blockDamageMul: number;
+  /** Splash radius for bomber plasma */
+  splashRadius: number;
   /** Armor pierce 0–1 */
   armorPierce: number;
-  /** Damage vs enemy drones */
+  /** Damage vs enemy drones / projectiles */
   antiDroneMul: number;
-  /** Shield repair per second to player (guardian) */
-  shieldRepairPerSec: number;
+  /** Point-defense DPS feel (defender) */
+  pointDefenseMul: number;
+  /** Frontal shield contribution (defender) */
+  frontalShield: number;
   /** Fire rate multiplier */
   fireRateMul: number;
+  /** Orbit radius bias (higher = farther) */
+  orbitRadiusBias: number;
+  /** Base max HP */
+  baseHp: number;
   color: number;
   colorCss: string;
-  /** Min level / unlock shop flag */
   unlockLevel: number;
   unlockCoreCost: number;
 }
 
 export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
-  miner: {
-    id: 'miner',
-    name: 'Miner',
-    description: 'Standard block clear. Weak vs siege armor.',
-    blockDamageMul: 1,
-    armorPierce: 0,
-    antiDroneMul: 0.15,
-    shieldRepairPerSec: 0,
-    fireRateMul: 1,
-    color: 0xff00aa,
-    colorCss: '#ff00aa',
-    unlockLevel: 1,
-    unlockCoreCost: 0,
-  },
-  breaker: {
-    id: 'breaker',
-    name: 'Breaker',
-    description: 'Partial armor pierce for heavy / siege blocks.',
-    blockDamageMul: 0.85,
-    armorPierce: 0.45,
-    antiDroneMul: 0.2,
-    shieldRepairPerSec: 0,
-    fireRateMul: 0.9,
-    color: 0x4488ff,
-    colorCss: '#4488ff',
-    unlockLevel: 8,
-    unlockCoreCost: 40,
-  },
   fighter: {
     id: 'fighter',
     name: 'Fighter',
-    description: 'Engages enemy drones. Ignores blocks mostly.',
-    blockDamageMul: 0.12,
+    description:
+      'Agile interceptor. Hunts enemy drones & large projectiles. Light block damage.',
+    blockDamageMul: 0.35,
+    splashRadius: 0,
     armorPierce: 0,
-    antiDroneMul: 1.4,
-    shieldRepairPerSec: 0,
-    fireRateMul: 1.35,
+    antiDroneMul: 1.5,
+    pointDefenseMul: 1.2,
+    frontalShield: 0,
+    fireRateMul: 1.4,
+    orbitRadiusBias: 0,
+    baseHp: 40,
     color: 0xffd060,
     colorCss: '#ffd060',
-    unlockLevel: 12,
-    unlockCoreCost: 80,
+    unlockLevel: 1,
+    unlockCoreCost: 0,
   },
-  guardian: {
-    id: 'guardian',
-    name: 'Guardian',
-    description: 'Repairs player shield slowly; light block fire.',
-    blockDamageMul: 0.35,
+  bomber: {
+    id: 'bomber',
+    name: 'Bomber',
+    description:
+      'Heavy stand-off craft. Slow plasma bombs with splash. Prefers exposed nucleus.',
+    blockDamageMul: 1.65,
+    splashRadius: 1.6,
+    armorPierce: 0.2,
+    antiDroneMul: 0.15,
+    pointDefenseMul: 0,
+    frontalShield: 0,
+    fireRateMul: 0.38,
+    orbitRadiusBias: 4.5,
+    baseHp: 70,
+    color: 0xff6622,
+    colorCss: '#ff6622',
+    unlockLevel: 4,
+    unlockCoreCost: 0,
+  },
+  defender: {
+    id: 'defender',
+    name: 'Defender',
+    description:
+      'Escort screen. Frontal shield for the ship + light point defense. Never mines the cube.',
+    blockDamageMul: 0,
+    splashRadius: 0,
     armorPierce: 0,
-    antiDroneMul: 0.4,
-    shieldRepairPerSec: 2.5,
-    fireRateMul: 0.7,
+    antiDroneMul: 0.9,
+    pointDefenseMul: 1.5,
+    frontalShield: 28,
+    fireRateMul: 1.1,
+    orbitRadiusBias: -2.5,
+    baseHp: 55,
     color: 0x00ffaa,
     colorCss: '#00ffaa',
-    unlockLevel: 10,
-    unlockCoreCost: 60,
+    unlockLevel: 6,
+    unlockCoreCost: 0,
   },
 };
 
 export const DRONE_HARD_CAP = 24;
 
-/** cost(n) = base * growth^n  for the n-th drone (0-indexed purchase). */
 export const DRONE_COST = {
   base: 45,
   growth: 1.42,
@@ -96,51 +103,63 @@ export function dronePurchaseCost(ownedCount: number): number {
   return Math.round(DRONE_COST.base * Math.pow(DRONE_COST.growth, ownedCount));
 }
 
-/** Cost to convert / assign a drone to a role (fragments). */
 export function droneRoleAssignCost(role: DroneRole, roleCount: number): number {
-  const base = role === 'miner' ? 0 : role === 'breaker' ? 30 : role === 'guardian' ? 40 : 50;
+  const base = role === 'fighter' ? 0 : role === 'bomber' ? 45 : 55;
   return Math.round(base * Math.pow(1.25, roleCount));
 }
 
+/** Base respawn seconds before shop upgrades. */
+export const DRONE_BASE_RESPAWN = 8;
+export const DRONE_BASE_SHIELD_REGEN_DELAY = 4;
+export const DRONE_BASE_SHIELD_REGEN_PER_SEC = 6;
+
 export interface DroneFleetSnapshot {
-  /** Total drones owned (capped at 24) */
   count: number;
-  /** Role unlocked flags */
   unlockedRoles: DroneRole[];
-  /** Assignment counts per role; sum should equal count */
   roles: Partial<Record<DroneRole, number>>;
 }
 
 export function defaultFleet(): DroneFleetSnapshot {
   return {
     count: 0,
-    unlockedRoles: ['miner'],
-    roles: { miner: 0 },
+    unlockedRoles: ['fighter'],
+    roles: { fighter: 0 },
   };
 }
 
-/** Expand role counts into an ordered list of roles for spawn. */
 export function expandFleetRoles(fleet: DroneFleetSnapshot): DroneRole[] {
   const list: DroneRole[] = [];
-  const order: DroneRole[] = ['miner', 'breaker', 'fighter', 'guardian'];
+  const order: DroneRole[] = ['fighter', 'bomber', 'defender'];
   for (const r of order) {
     const n = fleet.roles[r] ?? 0;
     for (let i = 0; i < n; i++) list.push(r);
   }
-  // Pad / trim to count
-  while (list.length < fleet.count) list.push('miner');
+  while (list.length < fleet.count) list.push('fighter');
   return list.slice(0, Math.min(DRONE_HARD_CAP, fleet.count));
 }
 
 /**
- * Build fleet from legacy PlayerStats.droneCount (all miners).
- * Used until shop wires full role UI.
+ * Build fleet from tech droneCount — default mix tilts fighter-heavy.
  */
 export function fleetFromLegacyCount(count: number, unlocked: boolean): DroneFleetSnapshot {
   const n = unlocked ? Math.min(DRONE_HARD_CAP, Math.max(0, count)) : 0;
+  if (n <= 0) {
+    return { count: 0, unlockedRoles: ['fighter'], roles: { fighter: 0 } };
+  }
+  // Distribute: majority fighters, then bombers, then defenders
+  let fighters = Math.ceil(n * 0.5);
+  let bombers = Math.floor(n * 0.3);
+  let defenders = n - fighters - bombers;
+  if (defenders < 0) {
+    fighters += defenders;
+    defenders = 0;
+  }
+  const unlockedRoles: DroneRole[] = ['fighter'];
+  if (bombers > 0) unlockedRoles.push('bomber');
+  if (defenders > 0) unlockedRoles.push('defender');
   return {
     count: n,
-    unlockedRoles: ['miner'],
-    roles: { miner: n },
+    unlockedRoles,
+    roles: { fighter: fighters, bomber: bombers, defender: defenders },
   };
 }

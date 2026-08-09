@@ -9,58 +9,54 @@ export interface EnemyUnitRef {
   hp: number;
 }
 
-/**
- * Block priority scoring for mining / breaking drones.
- */
-export function targetPriority(type: BlockType, stats: PlayerStats, role: DroneRole = 'miner'): number {
-  if (role === 'fighter') {
-    // Fighters prefer nucleus / turrets after enemies are clear
-    if (type === BlockType.Core) return 28;
-    if (type === BlockType.Turret) return 16;
-    return 0.4;
-  }
+export interface InterceptTarget {
+  id: string;
+  position: { x: number; y: number; z: number };
+  /** Larger = easier to shoot (missiles/arcs). */
+  radius: number;
+}
 
+/**
+ * Block priority for bombers (and light fighter mining).
+ */
+export function targetPriority(
+  type: BlockType,
+  stats: PlayerStats,
+  role: DroneRole = 'fighter'
+): number {
+  if (role === 'defender') return 0;
+  if (role === 'fighter') {
+    if (type === BlockType.Core) return stats.dronePriorityCore ? 8 : 3;
+    if (type === BlockType.Turret) return 6;
+    return 1;
+  }
+  // Bomber
   let p = 1;
   switch (type) {
     case BlockType.Core:
-      // Shell first — core is heavily DR'd until exposed
-      p = stats.dronePriorityCore ? 14 : 6;
+      p = stats.dronePriorityCore ? 40 : 22;
       break;
     case BlockType.Turret:
-      p = 11;
+      p = 14;
       break;
     case BlockType.DataNode:
       p = stats.dronePriorityData ? 16 : 6;
       break;
     case BlockType.Explosive:
-      p = 5;
+      p = 8;
       break;
     case BlockType.Reinforced:
-      p = role === 'breaker' ? 14 : 3;
-      break;
-    case BlockType.Regenerating:
-      p = 4;
+    case BlockType.Siege:
+      p = 10;
       break;
     default:
-      p = 2;
+      p = 4;
   }
-
-  // Breakers prefer high armor; miners slightly avoid siege
-  if (role === 'breaker') {
-    const ac = armorClassForBlock(type);
-    if (ac === 'siege') p += 12;
-    if (ac === 'heavy') p += 8;
-  } else if (role === 'miner') {
-    const ac = armorClassForBlock(type);
-    if (ac === 'siege') p *= 0.25;
-  }
-
+  const ac = armorClassForBlock(type);
+  if (ac === 'siege') p += 4;
   return p;
 }
 
-/**
- * Score enemy drones for fighter targeting (higher = better).
- */
 export function enemyPriority(
   enemy: EnemyUnitRef,
   selfPos: { x: number; y: number; z: number }
@@ -89,6 +85,28 @@ export function pickBestEnemy(
     if (s > bestScore) {
       bestScore = s;
       best = e;
+    }
+  }
+  return best;
+}
+
+export function pickBestIntercept(
+  targets: InterceptTarget[],
+  selfPos: { x: number; y: number; z: number },
+  maxDist: number
+): InterceptTarget | null {
+  let best: InterceptTarget | null = null;
+  let bestScore = -Infinity;
+  for (const t of targets) {
+    const dx = t.position.x - selfPos.x;
+    const dy = t.position.y - selfPos.y;
+    const dz = t.position.z - selfPos.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d > maxDist) continue;
+    const s = 120 / (d + 0.01) + t.radius * 8;
+    if (s > bestScore) {
+      bestScore = s;
+      best = t;
     }
   }
   return best;

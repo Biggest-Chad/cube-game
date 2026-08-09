@@ -131,6 +131,7 @@ export class ShopUI {
   private highestLevel = 1;
   private ascensionTier = 0;
   private confirmEvolve = false;
+  private evolveExpanded = false;
 
   onClose: (() => void) | null = null;
   onPurchase: ((node: UpgradeNodeDef) => void) | null = null;
@@ -214,6 +215,35 @@ export class ShopUI {
     }
     // Prefer weapon buy hint on loadouts tab (respect stage gates)
     let weaponReco: WeaponDef | null = null;
+    /** Equipped weapon branch upgrade recommendation */
+    let branchReco: {
+      slot: number;
+      branchId: string;
+      name: string;
+      cost: number;
+      weaponName: string;
+    } | null = null;
+    if (L) {
+      for (let s = 0; s < L.hardpointUnlocks; s++) {
+        const der = L.getDerived(s);
+        if (!der) continue;
+        for (const b of der.def.branches) {
+          const check = L.canUpgradeBranch(s, b.id, currency.dataFragments);
+          if (!check.ok || check.nextRank <= 0) continue;
+          if (check.nextRank > b.maxRank) continue;
+          if (currency.dataFragments < check.cost) continue;
+          if (!branchReco || check.cost < branchReco.cost) {
+            branchReco = {
+              slot: s,
+              branchId: b.id,
+              name: b.name,
+              cost: check.cost,
+              weaponName: der.def.name,
+            };
+          }
+        }
+      }
+    }
     if (L && this.activeTab === 'loadouts') {
       for (const w of WEAPONS) {
         if (L.isOwned(w.id)) continue;
@@ -274,6 +304,16 @@ export class ShopUI {
                       BUY · ${weaponUnlockCost(weaponReco).fragments} FRAG
                     </button>
                   </div>`
+                : branchReco
+                  ? `<div class="shop-reco">
+                      <span class="shop-reco-tag">WEAPON</span>
+                      <span class="shop-reco-name">${branchReco.weaponName} · ${branchReco.name}</span>
+                      <span class="shop-reco-desc">Upgrade equipped hardpoint HP${branchReco.slot + 1}</span>
+                      <button class="shop-reco-buy" type="button"
+                        data-reco-branch="${branchReco.branchId}" data-reco-slot="${branchReco.slot}">
+                        UPGRADE · ${branchReco.cost} FRAG
+                      </button>
+                    </div>`
                 : recommended
                   ? `<div class="shop-reco">
                       <span class="shop-reco-tag">RECOMMENDED</span>
@@ -354,6 +394,15 @@ export class ShopUI {
         this.render(tree, currency);
       });
     });
+    this.root.querySelectorAll('[data-equip-btn]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = (el as HTMLElement).dataset.equipBtn ?? '';
+        if (!id) return;
+        this.onEquipWeapon?.(this.selectedSlot, id);
+        this.render(tree, currency);
+      });
+    });
 
     this.root.querySelectorAll('[data-branch]').forEach((el) => {
       el.addEventListener('click', () => {
@@ -368,8 +417,14 @@ export class ShopUI {
       if (this.onUnlockHardpoint?.(this.selectedSlot)) this.render(tree, currency);
     });
 
+    this.root.querySelector('#evolve-toggle')?.addEventListener('click', () => {
+      this.evolveExpanded = !this.evolveExpanded;
+      this.confirmEvolve = false;
+      this.render(tree, currency);
+    });
     this.root.querySelector('#evolve-open')?.addEventListener('click', () => {
       this.confirmEvolve = true;
+      this.evolveExpanded = true;
       this.render(tree, currency);
     });
     this.root.querySelector('#evolve-cancel')?.addEventListener('click', () => {
@@ -379,8 +434,16 @@ export class ShopUI {
     this.root.querySelector('#evolve-confirm')?.addEventListener('click', () => {
       if (this.onEvolve?.()) {
         this.confirmEvolve = false;
+        this.evolveExpanded = false;
         this.render(tree, currency);
       }
+    });
+    this.root.querySelectorAll('[data-reco-branch]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const branchId = (el as HTMLElement).dataset.recoBranch!;
+        const slot = Number((el as HTMLElement).dataset.recoSlot ?? 0);
+        if (this.onUpgradeBranch?.(slot, branchId)) this.render(tree, currency);
+      });
     });
   }
 
@@ -392,24 +455,32 @@ export class ShopUI {
       this.ascensionTier
     );
     const ratio = currency.dataFragments / Math.max(1, cost);
-    if (ratio < EVOLVE_UI_PREVIEW_RATIO && !check.ok && !this.confirmEvolve) {
-      // Still show compact ascension chip
+    const grant = evolveCoreGrant(this.ascensionTier + 1);
+    const leftover = Math.max(0, currency.dataFragments - cost);
+    const convertCores = Math.floor(leftover / 1000);
+
+    // Compact chip always — expand on demand
+    if (!this.evolveExpanded && !this.confirmEvolve) {
       return `
-        <div class="evolve-chip">
-          Ascension ${this.ascensionTier} · Next Evolve ${cost.toLocaleString()} FRAG
-          · Core grant ${evolveCoreGrant(this.ascensionTier + 1)}
-        </div>`;
+        <button type="button" class="evolve-chip collapsible ${check.ok ? 'ready' : ''}" id="evolve-toggle">
+          <span>ASC ${this.ascensionTier} · Evolve ${cost.toLocaleString()} FRAG · +${grant} CORE</span>
+          <span class="evolve-chip-caret">${ratio >= EVOLVE_UI_PREVIEW_RATIO ? '▸ expand' : `${Math.floor(ratio * 100)}%`}</span>
+        </button>`;
     }
 
     if (this.confirmEvolve) {
-      const grant = evolveCoreGrant(this.ascensionTier + 1);
       return `
         <div class="evolve-panel confirm">
           <div class="evolve-title">EVOLVE HULL?</div>
           <p class="evolve-desc">
-            Spend <strong>${cost.toLocaleString()} FRAG</strong>. Retrain all combat shop upgrades.
-            Permanent <strong>Ascension ${this.ascensionTier + 1}</strong>.
-            Grant <strong>${grant} Core Energy</strong>. Weapons &amp; Research kept.
+            Spend <strong>${cost.toLocaleString()} FRAG</strong>. Retrain combat shop.
+            Ascension <strong>${this.ascensionTier + 1}</strong> · grant <strong>${grant} CORE</strong>.
+            ${
+              convertCores > 0
+                ? `Leftover converts ≈ <strong>${convertCores} CORE</strong> (1000 FRAG → 1).`
+                : 'Leftover FRAG convert at 1000 → 1 CORE.'
+            }
+            Weapons &amp; Research kept.
           </p>
           <div class="evolve-actions">
             <button type="button" class="menu-btn" id="evolve-cancel">Cancel</button>
@@ -424,11 +495,15 @@ export class ShopUI {
 
     return `
       <div class="evolve-panel ${check.ok ? 'ready' : ''}">
-        <div class="evolve-title">EVOLVE · ASCENSION ${this.ascensionTier}</div>
+        <div class="evolve-title-row">
+          <div class="evolve-title">EVOLVE · ASCENSION ${this.ascensionTier}</div>
+          <button type="button" class="evolve-collapse" id="evolve-toggle">Collapse</button>
+        </div>
         <p class="evolve-desc">
-          Soft wall reached? Evolve raises permanent baselines and grants Core for the Research Lattice.
-          Cost <strong>${cost.toLocaleString()} FRAG</strong>
-          ${check.minLevel ? ` · Sector ${check.minLevel}+` : ''}
+          Permanent baselines + Core for Research. Cost
+          <strong>${cost.toLocaleString()} FRAG</strong>
+          ${check.minLevel ? ` · Sector ${check.minLevel}+` : ''}.
+          Surplus FRAG → CORE at 1000:1 after evolve.
         </p>
         <button type="button" class="menu-btn primary evolve-btn" id="evolve-open"
           ${ratio >= EVOLVE_UI_PREVIEW_RATIO ? '' : 'disabled'}>
@@ -544,14 +619,20 @@ export class ShopUI {
                   </button>`;
               }
               if (!owned) return '';
+              const selected = equipped?.def.id === w.id;
               return `
-                <button type="button" class="loadout-weapon ${
-                  equipped?.def.id === w.id ? 'selected' : ''
-                }" data-equip="${w.id}" style="--wcolor:${w.colorCss}">
-                  <span class="lw-name">${w.name}</span>
-                  <span class="lw-fam">${w.family}</span>
-                  <span class="lw-desc">${w.description}</span>
-                </button>`;
+                <div class="loadout-weapon-wrap ${selected ? 'selected' : ''}" style="--wcolor:${w.colorCss}">
+                  <button type="button" class="loadout-weapon ${selected ? 'selected' : ''}"
+                    data-equip="${w.id}" style="--wcolor:${w.colorCss}">
+                    <span class="lw-name">${w.name}</span>
+                    <span class="lw-fam">${w.family}${selected ? ' · EQUIPPED' : ''}</span>
+                    <span class="lw-desc">${w.description}</span>
+                  </button>
+                  <button type="button" class="loadout-equip-btn ${selected ? 'equipped' : ''}"
+                    data-equip-btn="${w.id}" ${selected ? 'disabled' : ''}>
+                    ${selected ? 'EQUIPPED' : 'EQUIP'}
+                  </button>
+                </div>`;
             }).join('')}
           </div>
           ${equipped ? this.renderBranches(equipped.def, slot, L, currency) : ''}

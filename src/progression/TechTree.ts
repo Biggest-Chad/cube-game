@@ -50,6 +50,14 @@ export interface PlayerStats {
   shieldRegenAdd: number;
   /** Unlocked hardpoints (1 base + adds). */
   hardpoints: number;
+  /** Drone hull bonus as fraction of base HP (0.2 = +20%). */
+  droneHpAdd: number;
+  /** Reduces respawn time (0.3 = 30% faster). */
+  droneRespawnReduce: number;
+  /** Defender frontal shield bonus fraction. */
+  droneShieldAdd: number;
+  /** Shield regen rate bonus fraction. */
+  droneShieldRegenAdd: number;
 }
 
 export function defaultStats(): PlayerStats {
@@ -81,6 +89,10 @@ export function defaultStats(): PlayerStats {
     armorRatingAdd: 0,
     shieldRegenAdd: 0,
     hardpoints: 1,
+    droneHpAdd: 0,
+    droneRespawnReduce: 0,
+    droneShieldAdd: 0,
+    droneShieldRegenAdd: 0,
   };
 }
 
@@ -167,6 +179,10 @@ function applyEffect(stats: PlayerStats, acc: Accumulators, e: UpgradeEffect): v
   if (e.armorRatingAdd) stats.armorRatingAdd += e.armorRatingAdd;
   if (e.shieldRegenAdd) stats.shieldRegenAdd += e.shieldRegenAdd;
   if (e.hardpointAdd) stats.hardpoints += e.hardpointAdd;
+  if (e.droneHpAdd) stats.droneHpAdd += e.droneHpAdd;
+  if (e.droneRespawnReduce) stats.droneRespawnReduce += e.droneRespawnReduce;
+  if (e.droneShieldAdd) stats.droneShieldAdd += e.droneShieldAdd;
+  if (e.droneShieldRegenAdd) stats.droneShieldRegenAdd += e.droneShieldRegenAdd;
 }
 
 function fold(stats: PlayerStats, acc: Accumulators): void {
@@ -198,6 +214,10 @@ function fold(stats: PlayerStats, acc: Accumulators): void {
   stats.critChance = Math.min(STAT_CAPS.critChance, stats.critChance);
   stats.droneCount = Math.min(STAT_CAPS.droneCount, stats.droneCount);
   stats.hardpoints = Math.min(3, Math.max(1, stats.hardpoints));
+  stats.droneHpAdd = Math.min(2, Math.max(0, stats.droneHpAdd));
+  stats.droneRespawnReduce = Math.min(0.7, Math.max(0, stats.droneRespawnReduce));
+  stats.droneShieldAdd = Math.min(2, Math.max(0, stats.droneShieldAdd));
+  stats.droneShieldRegenAdd = Math.min(1.5, Math.max(0, stats.droneShieldRegenAdd));
 }
 
 export class TechTree {

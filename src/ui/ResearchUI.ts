@@ -121,25 +121,35 @@ export class ResearchUI {
     currency: Currency,
     rowLocked: boolean
   ): string {
-    const owned = research.isOwned(node.id);
+    const rank = research.getRank(node.id);
+    const max = node.maxRank ?? 1;
+    const maxed = rank >= max;
+    const next = research.nextRank(node);
+    const cost = next > 0 ? research.nextCost(node) : 0;
     const can = !rowLocked && research.canPurchase(node, this.ascensionTier);
-    const afford = currency.coreEnergy >= node.cost;
-    const prereqOk = node.prerequisites.every((p) => research.isOwned(p));
+    const afford = can && currency.coreEnergy >= cost;
+    const prereqOk = node.prerequisites.every((p) => research.getRank(p) >= 1);
     let state = 'locked';
-    if (owned) state = 'owned';
+    if (maxed) state = 'owned';
     else if (rowLocked) state = 'row-gate';
     else if (!prereqOk) state = 'prereq';
     else if (can && afford) state = 'buyable';
     else if (can) state = 'cant-afford';
 
+    const rankLabel =
+      max > 1 ? ` · ${rank}/${max}` : rank > 0 && maxed ? ' · OWNED' : '';
+    const costLabel = maxed
+      ? 'MAXED'
+      : rowLocked
+        ? `ASC ${node.row}+`
+        : `◆ ${cost} CORE`;
+
     return `
       <button type="button" class="research-node ${state}" data-rid="${node.id}"
-        ${owned || !can || !afford ? 'disabled' : ''}>
-        <div class="rn-name">${node.name}</div>
+        ${maxed || !can || !afford ? 'disabled' : ''}>
+        <div class="rn-name">${node.name}${rankLabel}</div>
         <div class="rn-desc">${node.description}</div>
-        <div class="rn-cost">${
-          owned ? 'OWNED' : rowLocked ? `ASC ${node.row}+` : `◆ ${node.cost} CORE`
-        }</div>
+        <div class="rn-cost">${costLabel}</div>
       </button>`;
   }
 
