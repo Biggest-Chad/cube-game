@@ -35,8 +35,12 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,ico,png,woff2,ogg}'],
+        // Music streams from disk; do not precache multi‑MB OGGs in the SW.
+        globPatterns: ['**/*.{js,css,html,svg,ico,png,woff2}'],
+        globIgnores: ['**/audio/**', '**/music/**'],
         navigateFallback: 'index.html',
+        // Allow large non-music assets if needed without failing the build
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
       },
     }),
   ],
