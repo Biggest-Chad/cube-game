@@ -13,6 +13,14 @@ const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _scale = new THREE.Vector3(1, 1, 1);
 const _zero = new THREE.Vector3(0, 0, 0);
+const _dirN = new THREE.Vector3();
+const _box = new THREE.Box3();
+const _hitPt = new THREE.Vector3();
+const _nucPt = new THREE.Vector3();
+const _ray = new THREE.Ray();
+const _bestPoint = new THREE.Vector3();
+const _hitNormal = new THREE.Vector3();
+const _white = new THREE.Color(0xffffff);
 
 /** Sentinel instance id for the living nucleus (not a lattice voxel). */
 export const NUCLEUS_HIT_ID = -2;
@@ -41,6 +49,18 @@ interface InstanceRef {
   instanceId: number;
 }
 
+/** Destroyed shell voxel that a regen nucleus can grow back. */
+interface DeadShell {
+  chunk: Chunk;
+  localIndex: number;
+  type: BlockType;
+  maxHealth: number;
+  x: number;
+  y: number;
+  z: number;
+  radial: number;
+}
+
 export class CubeManager {
   readonly group = new THREE.Group();
   readonly nucleus = new CoreNucleus();
@@ -59,6 +79,8 @@ export class CubeManager {
   private flashMap = new Map<number, number>();
   /** When true, core block hits route through shared nucleus (prevent re-entry). */
   private coreRouting = true;
+  private deadShells: DeadShell[] = [];
+  private reviveAccum = 0;
 
   constructor() {
     // Low global emissive — per-instance color carries hue; keeps bloom from washing out the cube
@@ -101,6 +123,8 @@ export class CubeManager {
     this.refs = [];
     this.lookup.clear();
     this.flashMap.clear();
+    this.deadShells = [];
+    this.reviveAccum = 0;
     this.nucleus.reset();
 
     this.maxInstances = Math.max(this.totalBlocks + 256, 512);
@@ -192,7 +216,7 @@ export class CubeManager {
     this.mesh.setMatrixAt(instanceId, _matrix);
     _color.setHex(colorForType(t));
     if (flash > 0) {
-      _color.lerp(new THREE.Color(0xffffff), flash * 0.55);
+      _color.lerp(_white, flash * 0.55);
     } else {
       _color.multiplyScalar(0.42 + 0.28 * Math.min(1, hpRatio));
     }
@@ -260,89 +284,80 @@ export class CubeManager {
     if (!this.generated) return null;
     const dirLen = direction.lengthSq();
     if (dirLen < 1e-12) return null;
-    const dir = direction.clone().normalize();
+    _dirN.copy(direction);
+    if (Math.abs(_dirN.lengthSq() - 1) > 1e-6) _dirN.normalize();
     let bestDist = maxDist;
     let bestId = -1;
-    let bestPoint: THREE.Vector3 | null = null;
+    let hasHit = false;
     let nucleusSolid = false;
     const half = halfExtent;
-    const box = new THREE.Box3();
-    const hitPt = new THREE.Vector3();
 
     // —— Solid nucleus sphere (full isotropic 3D; wins when closer than shell) ——
-    // Test first so a clean sphere hit is the baseline; shell voxels may still
-    // win when they are strictly nearer (outer armor).
     if (this.nucleus.isActive && ignoreId !== NUCLEUS_HIT_ID) {
-      const nucPt = new THREE.Vector3();
-      const nucDist = this.nucleus.raycastSolid(origin, dir, maxDist, nucPt);
+      const nucDist = this.nucleus.raycastSolid(origin, _dirN, maxDist, _nucPt);
       if (nucDist != null && nucDist <= bestDist) {
         bestDist = nucDist;
         bestId = NUCLEUS_HIT_ID;
-        bestPoint = nucPt.clone();
+        _bestPoint.copy(_nucPt);
+        hasHit = true;
         nucleusSolid = true;
       }
     }
 
-    // —— Block AABBs (local instance space ≈ world when cube.group is at origin) ——
-    // Transform instance positions by cube.group world matrix so group rotation
-    // never creates axis-biased misses relative to the nucleus sphere.
     this.group.updateWorldMatrix(true, false);
     const mw = this.group.matrixWorld;
     if (this.mesh && this.mesh.count > 0) {
+      _ray.origin.copy(origin);
+      _ray.direction.copy(_dirN);
       for (let id = 0; id < this.mesh.count; id++) {
         if (id === ignoreId) continue;
-        // Core voxels: skip AABB — shared pool is handled only via solid sphere
-        // so multi-voxel core clusters cannot create lopsided hit volumes.
         if (this.getBlockType(id) === BlockType.Core) continue;
 
         this.mesh.getMatrixAt(id, _matrix);
         _pos.setFromMatrixPosition(_matrix);
         _pos.applyMatrix4(mw);
-        box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
-        box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
-        const hit = new THREE.Ray(origin, dir).intersectBox(box, hitPt);
+        _box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
+        _box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
+        const hit = _ray.intersectBox(_box, _hitPt);
         if (!hit) continue;
         const d = origin.distanceTo(hit);
         if (d < bestDist && d >= 0) {
           if (d < 1e-5 && bestId >= 0 && !nucleusSolid) continue;
           bestDist = d;
           bestId = id;
-          bestPoint = hit.clone();
+          _bestPoint.copy(hit);
+          hasHit = true;
           nucleusSolid = false;
         }
       }
     }
 
-    // NUCLEUS_HIT_ID is -2 — do not treat the solid core as "no hit"
-    if (!bestPoint || !isLiveTargetId(bestId)) return null;
+    if (!hasHit || !isLiveTargetId(bestId)) return null;
 
-    const normal = new THREE.Vector3();
     if (nucleusSolid) {
-      // Outward from nucleus center
       this.nucleus.getWorldCenter(_pos);
-      normal.copy(bestPoint).sub(_pos);
-      if (normal.lengthSq() < 1e-8) normal.copy(dir).multiplyScalar(-1);
-      else normal.normalize();
+      _hitNormal.copy(_bestPoint).sub(_pos);
+      if (_hitNormal.lengthSq() < 1e-8) _hitNormal.copy(_dirN).multiplyScalar(-1);
+      else _hitNormal.normalize();
     } else {
-      // Face normal from nearest axis of hit relative to block center
       this.mesh!.getMatrixAt(bestId, _matrix);
       _pos.setFromMatrixPosition(_matrix);
-      const lx = bestPoint.x - _pos.x;
-      const ly = bestPoint.y - _pos.y;
-      const lz = bestPoint.z - _pos.z;
+      const lx = _bestPoint.x - _pos.x;
+      const ly = _bestPoint.y - _pos.y;
+      const lz = _bestPoint.z - _pos.z;
       const ax = Math.abs(lx);
       const ay = Math.abs(ly);
       const az = Math.abs(lz);
-      if (ax >= ay && ax >= az) normal.set(Math.sign(lx) || 1, 0, 0);
-      else if (ay >= ax && ay >= az) normal.set(0, Math.sign(ly) || 1, 0);
-      else normal.set(0, 0, Math.sign(lz) || 1);
+      if (ax >= ay && ax >= az) _hitNormal.set(Math.sign(lx) || 1, 0, 0);
+      else if (ay >= ax && ay >= az) _hitNormal.set(0, Math.sign(ly) || 1, 0);
+      else _hitNormal.set(0, 0, Math.sign(lz) || 1);
     }
 
     return {
       instanceId: bestId,
-      point: bestPoint,
+      point: _bestPoint.clone(),
       distance: bestDist,
-      normal,
+      normal: _hitNormal.clone(),
       nucleusSolid,
     };
   }
@@ -591,6 +606,18 @@ export class CubeManager {
     );
     const explosive = t === BlockType.Explosive;
     const wasShell = t !== BlockType.Core;
+    if (wasShell) {
+      this.deadShells.push({
+        chunk,
+        localIndex: i,
+        type: t,
+        maxHealth: Math.max(1, chunk.maxHealth[i]),
+        x: _pos.x,
+        y: _pos.y,
+        z: _pos.z,
+        radial: Math.hypot(_pos.x, _pos.y, _pos.z),
+      });
+    }
     chunk.clearBlock(i);
     this.removeInstance(instanceId);
     if (wasShell && this.nucleus.isActive) {
@@ -665,44 +692,111 @@ export class CubeManager {
   }
 
   /**
-   * Resurrect destroyed shell density by re-adding blocks near surface.
-   * Simplified: heal all remaining shell to full + spawn fake HP bump via new random fills.
+   * Instantly grow back destroyed shell voxels.
+   * Prefers the innermost dead cells (nearest the nucleus).
+   * `fraction` is of the *dead* count (typically 0.05–0.10 on overload).
    */
   resurrectShellFraction(fraction: number, now: number): number {
     if (!this.mesh || !this.generated || !this.level) return 0;
-    // Heal all living shell fully
-    for (let id = 0; id < this.mesh.count; id++) {
-      const t = this.getBlockType(id);
-      if (t === BlockType.Empty || t === BlockType.Core) continue;
-      const ref = this.refs[id];
-      if (!ref) continue;
-      ref.chunk.health[ref.localIndex] = ref.chunk.maxHealth[ref.localIndex];
-      this.updateInstanceVisual(id);
+    const dead = this.deadShells.length;
+    if (dead <= 0) {
+      // Still top off living shell so the burst feels like a pulse
+      this.regenShellBlocks(1, now);
+      return 0;
     }
-    // Add HP to damaged shell count as "resurrect" feel — refill weak blocks
-    const targetAdds = Math.max(
-      1,
-      Math.floor(this.nucleus.snapshot().shellTotal * Math.max(0.02, fraction))
-    );
-    // Strengthen remaining shell
-    let buffed = 0;
-    for (let id = 0; id < this.mesh.count && buffed < targetAdds; id++) {
-      const t = this.getBlockType(id);
-      if (t === BlockType.Empty || t === BlockType.Core) continue;
-      const ref = this.refs[id];
-      if (!ref) continue;
-      const i = ref.localIndex;
-      const add = Math.floor(ref.chunk.maxHealth[i] * 0.5);
-      ref.chunk.maxHealth[i] = Math.min(65000, ref.chunk.maxHealth[i] + add);
-      ref.chunk.health[i] = ref.chunk.maxHealth[i];
-      this.updateInstanceVisual(id);
-      buffed++;
+    const frac = Math.max(0, fraction);
+    const n = Math.min(dead, Math.max(1, Math.round(dead * frac)));
+    const revived = this.reviveInnermostDead(n);
+    if (this.mesh) {
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     this.nucleus.recountShell();
-    bus.emit('core-resurrect-done', { buffed, now });
-    return buffed;
+    bus.emit('core-resurrect-done', { buffed: revived, now });
+    return revived;
+  }
+
+  /**
+   * Passive trickle: revive innermost dead blocks over time.
+   * Accumulates fractional revives from `regenRevivePerSecOfDead`.
+   */
+  tickInnerRevive(dt: number, now: number, perSecOfDead: number): number {
+    const dead = this.deadShells.length;
+    if (dead <= 0 || perSecOfDead <= 0) {
+      this.reviveAccum = 0;
+      return 0;
+    }
+    this.reviveAccum += dead * perSecOfDead * dt;
+    let n = 0;
+    while (this.reviveAccum >= 1 && this.deadShells.length > 0) {
+      this.reviveAccum -= 1;
+      if (this.reviveInnermostDead(1) > 0) n++;
+    }
+    if (n > 0) {
+      if (this.mesh) {
+        this.mesh.instanceMatrix.needsUpdate = true;
+        if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+      }
+      this.nucleus.recountShell();
+    }
+    void now;
+    return n;
+  }
+
+  /** Revive up to `count` dead voxels, closest to the nucleus first. */
+  reviveInnermostDead(count: number): number {
+    if (!this.mesh || count <= 0 || this.deadShells.length === 0) return 0;
+    const ranked = this.deadShells
+      .map((g, i) => i)
+      .sort((a, b) => this.deadShells[a].radial - this.deadShells[b].radial);
+    const take = ranked.slice(0, count).sort((a, b) => b - a);
+    let revived = 0;
+    for (const idx of take) {
+      const grave = this.deadShells[idx];
+      if (!grave) continue;
+      if (this.restoreDeadShell(grave)) {
+        this.deadShells.splice(idx, 1);
+        revived++;
+      }
+    }
+    return revived;
+  }
+
+  private restoreDeadShell(grave: DeadShell): boolean {
+    if (!this.mesh || !this.generated) return false;
+    if (this.mesh.count >= this.maxInstances) return false;
+    const key = this.key(grave.chunk, grave.localIndex);
+    if (this.lookup.has(key)) return false;
+    if (grave.chunk.types[grave.localIndex] !== BlockType.Empty) return false;
+
+    const hp = Math.max(1, grave.maxHealth);
+    grave.chunk.types[grave.localIndex] = grave.type;
+    grave.chunk.health[grave.localIndex] = hp;
+    grave.chunk.maxHealth[grave.localIndex] = hp;
+    grave.chunk.aliveCount++;
+    grave.chunk.dirty = true;
+
+    const id = this.mesh.count;
+    _pos.set(grave.x, grave.y, grave.z);
+    _scale.set(1, 1, 1);
+    _quat.identity();
+    _matrix.compose(_pos, _quat, _scale);
+    this.mesh.setMatrixAt(id, _matrix);
+    _color.setHex(colorForType(grave.type));
+    _color.multiplyScalar(0.85);
+    this.mesh.setColorAt(id, _color);
+    this.refs.push({ chunk: grave.chunk, localIndex: grave.localIndex, instanceId: id });
+    this.lookup.set(key, id);
+    this.mesh.count = id + 1;
+    this.aliveBlocks = this.mesh.count;
+    this.flashMap.set(id, 1);
+    bus.emit('block-resurrected', {
+      type: grave.type,
+      x: grave.x,
+      y: grave.y,
+      z: grave.z,
+    });
+    return true;
   }
 
   isLevelComplete(): boolean {

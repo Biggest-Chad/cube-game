@@ -63,7 +63,7 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
   });
 
   const fade = new THREE.Mesh(
-    new THREE.CircleGeometry(320, 64),
+    new THREE.CircleGeometry(320, 24),
     new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -97,7 +97,7 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
   life.name = 'CityLife';
 
   const trains: { obj: THREE.Group; r: number; y: number; speed: number; phase: number }[] = [];
-  const consistN = quality === 0 ? 1 : 2;
+  const consistN = quality === 0 ? 0 : 1;
   for (const line of METRO) {
     for (let c = 0; c < consistN; c++) {
       const train = makeTrain(line.cars, line.color);
@@ -112,7 +112,7 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
     }
   }
 
-  const flyerN = quality === 0 ? 0 : quality === 1 ? 14 : 28;
+  const flyerN = quality === 0 ? 0 : quality === 1 ? 8 : 18;
   const flyers =
     flyerN > 0
       ? new THREE.InstancedMesh(new THREE.BoxGeometry(0.95, 0.16, 0.32), emitMat(0x88f0ff, 0.9), flyerN)
@@ -127,7 +127,7 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
   }));
   if (flyers) life.add(flyers);
 
-  const carN = quality === 0 ? 0 : quality === 1 ? 22 : 42;
+  const carN = quality === 0 ? 0 : quality === 1 ? 12 : 28;
   const cars =
     carN > 0
       ? new THREE.InstancedMesh(new THREE.BoxGeometry(0.7, 0.18, 0.32), emitMat(0xffc878, 0.7), carN)
@@ -141,58 +141,53 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
   }));
   if (cars) life.add(cars);
 
-  const glitterN = quality === 0 ? 60 : quality === 1 ? 140 : 220;
-  const gPos = new Float32Array(glitterN * 3);
-  const gCol = new Float32Array(glitterN * 3);
-  const gPhase = new Float32Array(glitterN);
-  const cTmp = new THREE.Color();
-  for (let i = 0; i < glitterN; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = 62 + Math.random() * 58;
-    gPos[i * 3] = Math.cos(a) * r;
-    gPos[i * 3 + 1] = 1.2 + Math.random() * 14;
-    gPos[i * 3 + 2] = Math.sin(a) * r;
-    cTmp.setHSL(0.48 + Math.random() * 0.22, 0.7, 0.62);
-    gCol[i * 3] = cTmp.r;
-    gCol[i * 3 + 1] = cTmp.g;
-    gCol[i * 3 + 2] = cTmp.b;
-    gPhase[i] = Math.random() * Math.PI * 2;
-  }
-  const gGeo = new THREE.BufferGeometry();
-  gGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3));
-  gGeo.setAttribute('color', new THREE.BufferAttribute(gCol, 3));
-  const glitter = new THREE.Points(
-    gGeo,
-    new THREE.PointsMaterial({
-      size: 0.38,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-      toneMapped: false,
-    })
-  );
-  glitter.name = 'CityGlitter';
-  life.add(glitter);
-
-  const windowMats: THREE.MeshStandardMaterial[] = [];
-  const wireMats: THREE.MeshStandardMaterial[] = [];
-  root.traverse((o) => {
-    if (!(o instanceof THREE.Mesh)) return;
-    const mats = Array.isArray(o.material) ? o.material : [o.material];
-    for (const m of mats) {
-      if (!m || !('emissive' in m)) continue;
-      const em = m as THREE.MeshStandardMaterial;
-      if (o.name.startsWith('Bld_') && o.name.includes('wire') && !wireMats.includes(em)) wireMats.push(em);
-      if (o.name.startsWith('Bld_') && !o.name.includes('wire') && !windowMats.includes(em)) windowMats.push(em);
+  const glitterN = quality === 0 ? 0 : quality === 1 ? 80 : 160;
+  if (glitterN > 0) {
+    const gPos = new Float32Array(glitterN * 3);
+    const gCol = new Float32Array(glitterN * 3);
+    const cTmp = new THREE.Color();
+    for (let i = 0; i < glitterN; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 62 + Math.random() * 58;
+      gPos[i * 3] = Math.cos(a) * r;
+      gPos[i * 3 + 1] = 1.2 + Math.random() * 14;
+      gPos[i * 3 + 2] = Math.sin(a) * r;
+      cTmp.setHSL(0.48 + Math.random() * 0.22, 0.7, 0.62);
+      gCol[i * 3] = cTmp.r;
+      gCol[i * 3 + 1] = cTmp.g;
+      gCol[i * 3 + 2] = cTmp.b;
     }
-  });
-  const winBase = windowMats.map((m) => m.emissiveIntensity);
-  const wireBase = wireMats.map((m) => m.emissiveIntensity);
+    const gGeo = new THREE.BufferGeometry();
+    gGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3));
+    gGeo.setAttribute('color', new THREE.BufferAttribute(gCol, 3));
+    const glitter = new THREE.Points(
+      gGeo,
+      new THREE.PointsMaterial({
+        size: 0.38,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        toneMapped: false,
+      })
+    );
+    glitter.name = 'CityGlitter';
+    glitter.matrixAutoUpdate = false;
+    glitter.updateMatrix();
+    life.add(glitter);
+  }
 
+  root.userData.lifeQuality = quality;
   const prev = root.userData.tick as ((t: number, dt: number) => void) | undefined;
+  let lifeClock = 0;
   root.userData.tick = (t: number, dt: number) => {
     prev?.(t, dt);
+    const q = (root.userData.lifeQuality as 0 | 1 | 2) ?? 1;
+    if (q === 0) return;
+    lifeClock += dt;
+    // Traffic can step at ~20 Hz — motion still reads, GPU uploads drop.
+    if (lifeClock < 0.048) return;
+    lifeClock = 0;
     for (const tr of trains) {
       const a = t * tr.speed + tr.phase;
       tr.obj.position.set(Math.cos(a) * tr.r, tr.y, Math.sin(a) * tr.r);
@@ -203,7 +198,7 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
         const f = flyerMeta[i];
         const a = t * f.speed * f.bank + f.phase;
         flyerDummy.position.set(Math.cos(a) * f.r, f.y + Math.sin(t * 0.7 + f.phase) * 0.35, Math.sin(a) * f.r);
-        flyerDummy.rotation.set(0, -a + Math.PI / 2, Math.sin(t + f.phase) * 0.12);
+        flyerDummy.rotation.set(0, -a + Math.PI / 2, 0);
         flyerDummy.updateMatrix();
         flyers.setMatrixAt(i, flyerDummy.matrix);
       }
@@ -219,22 +214,6 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
         cars.setMatrixAt(i, carDummy.matrix);
       }
       cars.instanceMatrix.needsUpdate = true;
-    }
-    const col = glitter.geometry.getAttribute('color') as THREE.BufferAttribute;
-    for (let i = 0; i < glitterN; i++) {
-      const tw = 0.35 + 0.65 * Math.abs(Math.sin(t * 3.1 + gPhase[i]));
-      const flicker = Math.sin(t * 17 + gPhase[i] * 4) > 0.72 ? 0.15 : 1;
-      const k = tw * flicker;
-      col.setXYZ(i, gCol[i * 3] * k, gCol[i * 3 + 1] * k, gCol[i * 3 + 2] * k);
-    }
-    col.needsUpdate = true;
-    for (let i = 0; i < windowMats.length; i++) {
-      const pulse = 0.72 + 0.38 * Math.sin(t * 1.7 + i * 1.3);
-      const blink = Math.sin(t * 8.5 + i * 4.2) > 0.93 ? 0.35 : 1;
-      windowMats[i].emissiveIntensity = winBase[i] * pulse * blink;
-    }
-    for (let i = 0; i < wireMats.length; i++) {
-      wireMats[i].emissiveIntensity = wireBase[i] * (0.88 + 0.18 * Math.sin(t * 0.9 + i));
     }
   };
 

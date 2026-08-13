@@ -9,19 +9,25 @@ import {
 } from '../data/graphics';
 
 /**
- * Quality-tiered bloom. Low disables bloom (composer still used for consistency).
+ * Quality-tiered bloom. Low skips the composer and draws the scene directly.
  */
 export class PostProcessing {
   composer: EffectComposer;
   bloom: UnrealBloomPass;
   private quality: GraphicsQuality = 'medium';
   private presentationBoost = false;
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene: THREE.Scene;
+  private readonly camera: THREE.Camera;
 
   constructor(
     renderer: THREE.WebGLRenderer,
     scene: THREE.Scene,
     camera: THREE.Camera
   ) {
+    this.renderer = renderer;
+    this.scene = scene;
+    this.camera = camera;
     this.composer = new EffectComposer(renderer);
     this.composer.addPass(new RenderPass(scene, camera));
     const size = renderer.getSize(new THREE.Vector2());
@@ -81,6 +87,11 @@ export class PostProcessing {
   }
 
   render(): void {
+    // Low / bloom-off: skip the composer (extra full-screen targets = stutter).
+    if (!this.bloom.enabled) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     this.composer.render();
   }
 

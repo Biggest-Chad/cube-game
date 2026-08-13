@@ -8,6 +8,41 @@ import { addCityLife } from './cityLife';
 const FLOOR_Y = -22;
 const HEX_CENTER_Z = 14;
 
+/** Combat + arena share this extra camera layer so city is not point-lit. */
+export const ARENA_LAYER = 1;
+
+function isArenaRing(name: string): boolean {
+  return (
+    name.startsWith('Ring_') ||
+    name === 'RingSparkles' ||
+    name.startsWith('RingSpark')
+  );
+}
+
+function stampArenaLayer(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    o.layers.set(ARENA_LAYER);
+  });
+}
+
+function freezeStaticArena(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    let p: THREE.Object3D | null = o;
+    let underLife = false;
+    while (p) {
+      if (p.name === 'CityLife') {
+        underLife = true;
+        break;
+      }
+      p = p.parent;
+    }
+    if (underLife) return;
+    o.matrixAutoUpdate = false;
+    o.updateMatrix();
+  });
+  root.updateMatrixWorld(true);
+}
+
 export class GridVoidArena implements ArenaInstance {
   readonly id: ArenaId = 'grid-void';
   private readonly root = new THREE.Group();
@@ -31,12 +66,27 @@ export class GridVoidArena implements ArenaInstance {
     const loader = new GLTFLoader();
     const gltf = await loader.loadAsync('./arenas/grid-void/city.glb');
     gltf.scene.traverse((o) => {
+      // Drop the sky rings + sparkles (large additive tori). Leave the city alone.
+      if (isArenaRing(o.name)) {
+        o.visible = false;
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          o.geometry = new THREE.BufferGeometry();
+        }
+        return;
+      }
       if (!(o instanceof THREE.Mesh)) return;
+      o.frustumCulled = true;
+      o.castShadow = false;
+      o.receiveShadow = false;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats) {
         if (!m || !('emissive' in m)) continue;
         const em = m as THREE.MeshStandardMaterial;
         em.toneMapped = false;
+        em.envMap = null;
+        em.envMapIntensity = 0;
+        em.fog = true;
         const floorish = /^(Square|Hex|Ground|Horizon|CityStreet|CityLot|Debris|MetroBed)/.test(o.name);
         if (!floorish && em.emissiveIntensity < 1.4) em.emissiveIntensity = 1.6;
       }
@@ -47,34 +97,17 @@ export class GridVoidArena implements ArenaInstance {
       const sky = await new THREE.TextureLoader().loadAsync('./arenas/grid-void/sky.png');
       sky.mapping = THREE.EquirectangularReflectionMapping;
       sky.colorSpace = THREE.SRGBColorSpace;
-      sky.anisotropy = 4;
+      sky.anisotropy = 1;
+      sky.generateMipmaps = true;
       arena.envMap = sky;
-      const dome = new THREE.Mesh(
-        new THREE.SphereGeometry(380, 48, 32),
-        new THREE.MeshBasicMaterial({ map: sky, side: THREE.BackSide, depthWrite: false, fog: false })
-      );
-      dome.name = 'SkyDome';
-      // Counter the floor offset so the sky stays world-centered
-      dome.position.set(0, -FLOOR_Y, -HEX_CENTER_Z);
-      arena.root.add(dome);
+      // Background only — a second full-screen sky dome was drawing the same texture twice.
     } catch (err) {
       console.warn('[arena] grid-void sky missing', err);
     }
 
-    const rings: THREE.Object3D[] = [];
-    gltf.scene.traverse((o) => {
-      if (o.name.startsWith('Ring_') && !o.name.includes('mesh') && !o.name.includes('glow')) {
-        rings.push(o);
-      }
-    });
-    arena.root.userData.tick = (t: number) => {
-      for (const r of rings) {
-        const spin = typeof r.userData.spin === 'number' ? r.userData.spin : 0.12;
-        r.rotation.z = t * spin;
-      }
-    };
-
     addCityLife(arena.root, arena.quality);
+    freezeStaticArena(arena.root);
+    stampArenaLayer(arena.root);
     return arena;
   }
 
@@ -85,7 +118,8 @@ export class GridVoidArena implements ArenaInstance {
     scene.fog = this.fog;
     if (this.envMap) {
       scene.background = this.envMap;
-      scene.environment = this.envMap;
+      // No scene.environment — IBL on every city MeshStandardMaterial is a mobile killer.
+      scene.environment = null;
     } else {
       scene.background = new THREE.Color(0x02060a);
     }
@@ -104,10 +138,11 @@ export class GridVoidArena implements ArenaInstance {
 
   setQuality(tier: 0 | 1 | 2): void {
     this.quality = tier;
+    this.root.userData.lifeQuality = tier;
     const life = this.root.getObjectByName('CityLife');
     if (life) life.visible = tier > 0;
-    this.fog.near = tier === 0 ? 70 : 90;
-    this.fog.far = tier === 0 ? 200 : 260;
+    this.fog.near = tier === 0 ? 55 : 90;
+    this.fog.far = tier === 0 ? 170 : 260;
   }
 
   update(dt: number): void {

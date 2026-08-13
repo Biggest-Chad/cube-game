@@ -10,6 +10,7 @@ import { EnemyDrone, type EnemyDroneRole } from './EnemyDrone';
 import { bus } from '../core/EventBus';
 import { COLORS } from '../data/constants';
 import { CORE } from '../data/core';
+import { RageLaser, type RageLaserPhase } from './RageLaser';
 
 export interface DefenseSchedule {
   coreShield: boolean;
@@ -143,9 +144,16 @@ export class CubeDefense {
     life: number;
     damage: number;
   }> = [];
+  private readonly rageLaser = new RageLaser();
+  private readonly _laserOrigin = new THREE.Vector3();
 
   constructor() {
     this.group.add(this.projectileRoot);
+    this.group.add(this.rageLaser.group);
+  }
+
+  get rageLaserPhase(): RageLaserPhase {
+    return this.rageLaser.phaseId;
   }
 
   setHooks(hooks: CubeDefenseHooks): void {
@@ -574,8 +582,26 @@ export class CubeDefense {
       );
     }
 
-    // Arc beams
+    // Legacy rage bolts (overload spray)
     if (allowFire) this.updateArcs(dt, playerPos);
+
+    // Rage sweep laser — charge + slow-tracking continuous beam
+    const nuc = this.cube.nucleus;
+    const laserOn = nuc.isActive && nuc.attr === 'rage' && nuc.isExposed;
+    if (laserOn) {
+      nuc.getWorldCenter(this._laserOrigin);
+    }
+    this.rageLaser.update(dt, {
+      active: laserOn,
+      origin: this._laserOrigin,
+      player: playerPos,
+      overloading: nuc.isOverloading && nuc.attr === 'rage',
+      allowFire,
+      onPlayerDamage: (dmg) => this.hooks?.onPlayerDamage(dmg, 'core-arc'),
+    });
+    if (laserOn && this.rageLaser.glow > 0) {
+      nuc.flareFromLaser(this.rageLaser.glow);
+    }
 
     if (this.coreShieldMesh && this.coreShield.active) {
       const mat = this.coreShieldMesh.material as THREE.MeshBasicMaterial;
@@ -697,6 +723,7 @@ export class CubeDefense {
       (a.mesh.material as THREE.Material).dispose();
     }
     this.arcs = [];
+    this.rageLaser.reset();
     if (this.coreShieldMesh) {
       this.group.remove(this.coreShieldMesh);
       this.coreShieldMesh.geometry.dispose();
@@ -719,6 +746,7 @@ export class CubeDefense {
 
   dispose(): void {
     this.reset();
+    this.rageLaser.dispose();
     this.group.clear();
   }
 }

@@ -23,8 +23,11 @@ export class ArenaDirector {
   bind(scene: Scene, camera?: PerspectiveCamera): void {
     this.scene = scene;
     this.camera = camera ?? null;
-    if (this.camera) this.camera.far = CAMERA_FAR;
-    this.camera?.updateProjectionMatrix();
+    if (this.camera) {
+      this.camera.far = CAMERA_FAR;
+      this.camera.layers.enable(1);
+      this.camera.updateProjectionMatrix();
+    }
     void this.ensure(DEFAULT_ARENA);
   }
 

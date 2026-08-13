@@ -290,11 +290,12 @@ export class HUD {
     decaying: boolean;
     overloadActive: boolean;
     attributeLabel: string;
+    laserPhase?: 'idle' | 'warmup' | 'charge' | 'fire' | 'cooldown';
   } | null): void {
     if (!this.nucleusWrap) return;
     if (!snap?.active) {
       this.nucleusWrap.classList.add('panel-hidden');
-      this.nucleusWrap.classList.remove('exposed', 'overload', 'decaying');
+      this.nucleusWrap.classList.remove('exposed', 'overload', 'decaying', 'laser');
       return;
     }
     this.nucleusWrap.classList.remove('panel-hidden');
@@ -303,14 +304,18 @@ export class HUD {
     if (this.nucleusVal) {
       this.nucleusVal.textContent = `${Math.ceil(snap.hp)} / ${Math.ceil(snap.maxHp)}`;
     }
+    const laserHot = snap.laserPhase === 'charge' || snap.laserPhase === 'fire';
     let status = snap.attributeLabel;
-    if (snap.overloadActive) status = 'OVERLOAD';
+    if (snap.laserPhase === 'fire') status = 'SWEEP LASER';
+    else if (snap.laserPhase === 'charge') status = 'LASER CHARGING';
+    else if (snap.overloadActive) status = 'OVERLOAD';
     else if (snap.decaying) status = 'DESTABILIZING';
     else if (snap.exposed) status = 'EXPOSED';
     if (this.nucleusStatus) this.nucleusStatus.textContent = status;
-    this.nucleusWrap.classList.toggle('exposed', snap.exposed && !snap.overloadActive);
+    this.nucleusWrap.classList.toggle('exposed', snap.exposed && !snap.overloadActive && !laserHot);
     this.nucleusWrap.classList.toggle('overload', snap.overloadActive);
     this.nucleusWrap.classList.toggle('decaying', snap.decaying);
+    this.nucleusWrap.classList.toggle('laser', laserHot);
   }
 
   setMuted(m: boolean): void {

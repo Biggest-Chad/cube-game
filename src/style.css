@@ -4310,6 +4310,14 @@ body.orientation-portrait #rotate-overlay {
 .hud-nucleus.overload .hud-nucleus-bar > i {
   background: linear-gradient(90deg, #ff2200, #ffee00);
 }
+.hud-nucleus.laser {
+  border-color: #ff5510;
+  box-shadow: 0 0 20px rgba(255, 60, 0, 0.55);
+  animation: nucleus-pulse 0.45s linear infinite;
+}
+.hud-nucleus.laser .hud-nucleus-bar > i {
+  background: linear-gradient(90deg, #ff6610, #ffe0a0);
+}
 @keyframes nucleus-pulse {
   0%, 100% { filter: brightness(1); }
   50% { filter: brightness(1.35); }

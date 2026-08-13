@@ -116,6 +116,11 @@ export class CoreNucleus {
     return this.attribute === 'rage' ? CORE.rageFireRateMul : 1;
   }
 
+  /** Visual flare while the sweep laser charges / fires. */
+  flareFromLaser(intensity: number): void {
+    this.pulse = Math.max(this.pulse, THREE.MathUtils.clamp(intensity, 0, 1));
+  }
+
   /**
    * Solid collision radius — full 3D sphere around the nucleus VFX.
    * Radius = max visual extent (body + ring) × 1.125 (~12.5% padding), isotropic.
@@ -276,9 +281,9 @@ export class CoreNucleus {
   private attributeIntro(): string {
     switch (this.attribute) {
       case 'rage':
-        return 'Weapons accelerated. Exposed: arc beams. Overload: multi-arc storm.';
+        return 'Weapons accelerated. Exposed: charging sweep laser. Overload: faster, hotter beam.';
       case 'regeneration':
-        return 'Shell regenerates. Exposed: repair drones. Overload: mass resurrection.';
+        return 'Shell heals. Exposed: repair drones. Overload: inner lattice revives. Ignore it and the cube grows back.';
       case 'swarm':
         return 'Drone factory online. Exposed / overload: enraged swarms.';
       default:
@@ -478,9 +483,9 @@ export class CoreNucleus {
   private exposedBody(): string {
     switch (this.attribute) {
       case 'rage':
-        return 'Core arc weapons online — dodge the beams!';
+        return 'Sweep laser charging — keep moving off the line!';
       case 'regeneration':
-        return 'Repair swarm deploying!';
+        return 'Repair swarm deploying — inner layers will grow back if you stall!';
       case 'swarm':
         return 'Factory dumping a full drone swarm!';
       default:
@@ -612,7 +617,11 @@ export class CoreNucleus {
       case 'regeneration':
         this.overloadTimer = 2.5;
         this.overloadKind = 'regen';
-        bus.emit('core-resurrect', { fraction: CORE.regenResurrectFrac });
+        {
+          const span = CORE.regenResurrectFracMax - CORE.regenResurrectFracMin;
+          const fraction = CORE.regenResurrectFracMin + Math.random() * span;
+          bus.emit('core-resurrect', { fraction });
+        }
         break;
       case 'swarm':
         this.overloadTimer = CORE.swarmEnrageDuration;
@@ -634,9 +643,9 @@ export class CoreNucleus {
   private overloadBody(): string {
     switch (this.attribute) {
       case 'rage':
-        return 'Multi-vector arc storm! Keep moving!';
+        return 'Laser overcharged — slew is faster. Stay off the line!';
       case 'regeneration':
-        return 'Mass lattice resurrection!';
+        return 'Inner lattice reconstructed — cut it down again!';
       case 'swarm':
         return 'Enraged drone wave inbound!';
       default:
@@ -718,9 +727,12 @@ export class CoreNucleus {
       }
     }
 
-    // Regeneration attribute — heal shell blocks slowly
-    if (this.attribute === 'regeneration' && this.cube && this.shellAlive > 0) {
-      this.cube.regenShellBlocks(CORE.regenShellPerSec * dt, now);
+    // Regeneration: heal living shell + slowly grow back innermost dead voxels
+    if (this.attribute === 'regeneration' && this.cube) {
+      if (this.shellAlive > 0) {
+        this.cube.regenShellBlocks(CORE.regenShellPerSec * dt, now);
+      }
+      this.cube.tickInnerRevive(dt, now, CORE.regenRevivePerSecOfDead);
     }
 
     // Swarm factory
@@ -738,23 +750,20 @@ export class CoreNucleus {
       }
     }
 
-    // Rage exposed arc beams
-    if (this.attribute === 'rage' && this.exposed && hooks?.onArcBeam) {
-      this.arcTimer -= dt;
-      if (this.arcTimer <= 0) {
-        this.arcTimer = CORE.rageArcCooldown;
-        const dir = this.randomOutwardDir();
-        hooks.onArcBeam(dir, CORE.arcBeamSpeed, CORE.arcBeamDamage);
-      }
-      // During overload storm — continuous random arcs
-      if (this.overloadKind === 'rage' && this.overloadTimer > 0) {
-        if (Math.random() < dt * 4) {
-          hooks.onArcBeam(
-            this.randomOutwardDir(),
-            CORE.arcBeamSpeed * 1.1,
-            CORE.arcBeamDamage * 0.85
-          );
-        }
+    // Rage overload: a few extra dodgeable bolts under the sweep laser
+    if (
+      this.attribute === 'rage' &&
+      this.exposed &&
+      hooks?.onArcBeam &&
+      this.overloadKind === 'rage' &&
+      this.overloadTimer > 0
+    ) {
+      if (Math.random() < dt * 1.4) {
+        hooks.onArcBeam(
+          this.randomOutwardDir(),
+          CORE.arcBeamSpeed * 1.05,
+          CORE.arcBeamDamage * 0.75
+        );
       }
     }
 

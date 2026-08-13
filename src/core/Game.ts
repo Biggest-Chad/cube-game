@@ -280,10 +280,18 @@ export class Game {
     this.scene.add(rim);
     const fillCyan = new THREE.PointLight(COLORS.cyan, 18, 90, 2);
     fillCyan.position.set(0, 14, 0);
+    fillCyan.layers.set(0);
     this.scene.add(fillCyan);
     const fillMag = new THREE.PointLight(COLORS.magenta, 12, 70, 2);
     fillMag.position.set(-12, -6, 10);
+    fillMag.layers.set(0);
     this.scene.add(fillMag);
+    // Arena sits on layer 1 so city StandardMaterials are not point-lit.
+    amb.layers.enable(1);
+    hemi.layers.enable(1);
+    key.layers.enable(1);
+    rim.layers.enable(1);
+    this.cameraCtrl.camera.layers.enable(1);
 
     this.cubeAnimator.bind(this.cube);
     this.cubeDefense.bind(this.cube);
@@ -1101,6 +1109,8 @@ export class Game {
       bus.on('cube-rotation-start', () => this.audio.playCubeShift()),
       bus.on('turret-fire', () => this.audio.playFire('flak')),
       bus.on('enemy-drone-fire', () => this.audio.playFire('pulse')),
+      bus.on('core-rage-laser-charge', () => this.audio.playFire('rail')),
+      bus.on('core-rage-laser-fire', () => this.audio.playFire('beam')),
       // Single shake path only (animator emits camera-shake-request on complete)
       bus.on('camera-shake-request', (p: { amount?: number }) => {
         if (this.mode === 'playing' || this.mode === 'cinematic') {
@@ -2961,7 +2971,10 @@ export class Game {
           this.cube.aliveBlocks,
           this.cube.totalBlocks
         );
-        this.hud.updateNucleus(this.cube.nucleus.snapshot());
+        this.hud.updateNucleus({
+          ...this.cube.nucleus.snapshot(),
+          laserPhase: this.cubeDefense.rageLaserPhase,
+        });
         this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
 
         // Nucleus dead → death FX, then clear UI (not instant card)

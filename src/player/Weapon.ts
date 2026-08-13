@@ -132,10 +132,10 @@ export class Weapon {
     let hit = cube.raycast(this._origin, this._dir, COMBAT.beamRange, -1, 0.62);
     // Soft assist: if miss, search a small cone for nearest surface hit
     if (!hit) {
-      hit = this.coneAssist(cube, 0.12, 7);
+      hit = this.coneAssist(cube, 0.12, 4);
     }
     if (!hit) {
-      hit = this.coneAssist(cube, 0.22, 11);
+      hit = this.coneAssist(cube, 0.22, 6);
     }
 
     if (hit) {

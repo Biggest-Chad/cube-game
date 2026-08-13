@@ -16,8 +16,8 @@ export class ImpactRings {
   private pool: Ring[] = [];
 
   constructor(count = 28) {
-    const geo = new THREE.RingGeometry(0.12, 0.32, 32);
-    const geoOuter = new THREE.RingGeometry(0.3, 0.42, 32);
+    const geo = new THREE.RingGeometry(0.12, 0.32, 16);
+    const geoOuter = new THREE.RingGeometry(0.3, 0.42, 16);
     for (let i = 0; i < count; i++) {
       const mat = new THREE.MeshBasicMaterial({
         color: COLORS.cyan,

@@ -17,32 +17,52 @@ export const CORE = {
   /** Shell remaining ratio below which core is EXPOSED. */
   exposedShellRatio: 0.1,
   /** HP/sec lost when no shell remains (scales with max HP). */
-  decayPerSecOfMax: 0.012,
+  decayPerSecOfMax: 0.018,
   /** Minimum absolute decay HP/sec when alone. */
-  decayMinPerSec: 4,
+  decayMinPerSec: 6,
   /** Overload health thresholds (core HP ratio). */
   overloadThresholds: [0.75, 0.5, 0.25] as const,
   /** Base transfer / DR are pure shell-ratio. */
 
   /** Rage: turret/drone fire rate mult while attribute active. */
   rageFireRateMul: 1.35,
-  /** Rage exposed: arc beam cooldown seconds. */
+  /** Rage exposed: leftover bolt cooldown (overload spray only). */
   rageArcCooldown: 4.2,
   /** Rage overload duration. */
   rageOverloadDuration: 3.2,
-  /** Rage arc beams during overload. */
+  /** Rage arc bolts during overload (secondary to the sweep laser). */
   rageOverloadBeamCount: 8,
-  /** Arc beam world speed ≈ base orbital linear feel (pre-upgrade). */
+  /** Arc bolt world speed ≈ base orbital linear feel (pre-upgrade). */
   arcBeamSpeed: 12,
-  /** Arc beam damage. */
+  /** Arc bolt impact damage. */
   arcBeamDamage: 22,
+
+  /** Rage sweep laser — charge, then a slow-tracking continuous beam. */
+  rageLaserChargeSec: 2.4,
+  rageLaserDuration: 5.0,
+  rageLaserCooldown: 3.8,
+  rageLaserWarmup: 0.7,
+  /** Aim slew (rad/s). Slower than base orbit yaw (0.55) so circling dodges it. */
+  rageLaserSlewCharge: 0.2,
+  rageLaserSlewFire: 0.3,
+  rageLaserSlewOverload: 0.42,
+  rageLaserRange: 78,
+  rageLaserHitRadius: 1.18,
+  rageLaserDps: 16,
+  rageLaserOverloadDps: 20,
 
   /** Regen: shell heal rate as fraction of maxHP / sec while attribute. */
   regenShellPerSec: 0.008,
   /** Regen exposed: repair drone count. */
   regenRepairDroneCount: 4,
-  /** Regen overload: fraction of total shell blocks to resurrect. */
-  regenResurrectFrac: 0.12,
+  /** Regen overload: instantly revive this fraction of *dead* blocks (inner first). */
+  regenResurrectFracMin: 0.05,
+  regenResurrectFracMax: 0.1,
+  /**
+   * Passive: also revive this fraction of current dead / sec (innermost first).
+   * Heal-living still uses regenShellPerSec. Ignore the cube and it grows back.
+   */
+  regenRevivePerSecOfDead: 0.012,
 
   /** Swarm: production interval seconds. */
   swarmSpawnInterval: 5.5,
