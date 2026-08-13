@@ -237,7 +237,15 @@ export class Game {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = bootPreset.exposure;
-    this.renderer.setClearColor(COLORS.black, 1);
+    this.renderer.setClearColor(0x050b12, 1);
+    canvas.addEventListener(
+      'webglcontextlost',
+      (e) => {
+        e.preventDefault();
+        console.error('[webgl] context lost');
+      },
+      false
+    );
 
     this.cameraCtrl = new OrbitalCamera(window.innerWidth / window.innerHeight);
     this.post = new PostProcessing(this.renderer, this.scene, this.cameraCtrl.camera);
@@ -359,7 +367,7 @@ export class Game {
   private lockLandscape(): void {
     try {
       const o = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
-      void o.lock?.('landscape');
+      void o.lock?.('landscape')?.catch(() => undefined);
     } catch {
       /* browser may ignore */
     }
@@ -2729,6 +2737,7 @@ export class Game {
 
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
+    try {
     const dt = this.time.tick();
     const now = this.time.elapsed;
 
@@ -3018,6 +3027,10 @@ export class Game {
     this.rings.update(dt);
     this.post.render();
     this.maybeSave(dt);
+    } catch (err) {
+      // One bad frame must not freeze the WebView on a still cube.
+      console.error('[game-loop]', err);
+    }
   };
 
   dispose(): void {

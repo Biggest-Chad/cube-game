@@ -1,94 +1,109 @@
 /**
- * Cheap unlit cyber floor — one plane, one shader.
- * Replaces the stripped hex/square grid meshes without their triangle cost.
+ * Cheap unlit cyber floor — one plane + a canvas texture.
+ * Avoids custom ShaderMaterial fog includes (those crash some Android WebViews
+ * and leave a frozen cube on black).
  */
 import * as THREE from 'three';
 
+function paintCircuitTexture(size = 1024): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#07141c';
+  ctx.fillRect(0, 0, size, size);
+
+  // Soft radial pit so the cube isn't sitting in a hole
+  const glow = ctx.createRadialGradient(size / 2, size / 2, 20, size / 2, size / 2, size * 0.48);
+  glow.addColorStop(0, 'rgba(0, 70, 90, 0.55)');
+  glow.addColorStop(0.45, 'rgba(8, 24, 36, 0.15)');
+  glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, size, size);
+
+  const major = size / 16;
+  ctx.strokeStyle = 'rgba(0, 210, 230, 0.42)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i <= 16; i++) {
+    const x = i * major + 0.5;
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, size);
+    ctx.moveTo(0, x);
+    ctx.lineTo(size, x);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(0, 120, 150, 0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i <= 64; i++) {
+    const x = i * (size / 64) + 0.5;
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, size);
+    ctx.moveTo(0, x);
+    ctx.lineTo(size, x);
+  }
+  ctx.stroke();
+
+  // Concentric hex-ish rings
+  ctx.strokeStyle = 'rgba(180, 40, 200, 0.22)';
+  ctx.lineWidth = 2;
+  for (let r = size * 0.08; r < size * 0.48; r += size * 0.07) {
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Circuit pads / stubs
+  for (let gy = 0; gy < 16; gy++) {
+    for (let gx = 0; gx < 16; gx++) {
+      const n = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
+      const h = n - Math.floor(n);
+      const cx = (gx + 0.5) * major;
+      const cy = (gy + 0.5) * major;
+      if (h > 0.84) {
+        ctx.fillStyle = 'rgba(80, 230, 255, 0.45)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(80, 230, 255, 0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else if (h > 0.72) {
+        ctx.strokeStyle = 'rgba(255, 70, 190, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 14, cy);
+        ctx.lineTo(cx + 14, cy);
+        ctx.moveTo(cx, cy - 14);
+        ctx.lineTo(cx, cy + 14);
+        ctx.stroke();
+      }
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(8, 8);
+  tex.anisotropy = 2;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export function addCircuitFloor(root: THREE.Group): void {
-  const mat = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    fog: true,
+  const mat = new THREE.MeshBasicMaterial({
+    map: paintCircuitTexture(1024),
     toneMapped: false,
-    uniforms: {
-      uFogNear: { value: 38 },
-      uFogFar: { value: 130 },
-    },
-    vertexShader: `
-      varying vec3 vW;
-      #include <common>
-      #include <fog_pars_vertex>
-      void main() {
-        vec4 w = modelMatrix * vec4(position, 1.0);
-        vW = w.xyz;
-        gl_Position = projectionMatrix * viewMatrix * w;
-        #include <fog_vertex>
-      }
-    `,
-    fragmentShader: `
-      varying vec3 vW;
-      #include <common>
-      #include <fog_pars_fragment>
-
-      float hash(vec2 p) {
-        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-      }
-
-      float line(float x, float w) {
-        return smoothstep(w, 0.0, abs(x));
-      }
-
-      void main() {
-        vec2 p = vW.xz;
-        float dist = length(p);
-
-        // Navy void, not crushed black
-        vec3 col = vec3(0.012, 0.03, 0.045);
-
-        // Major circuit grid
-        vec2 g1 = abs(fract(p / 4.0) - 0.5);
-        float major = line(min(g1.x, g1.y) * 4.0, 0.045);
-        col += vec3(0.0, 0.55, 0.62) * major * 0.55;
-
-        // Fine traces
-        vec2 g2 = abs(fract(p / 1.0) - 0.5);
-        float fine = line(min(g2.x, g2.y) * 1.0, 0.028);
-        col += vec3(0.0, 0.28, 0.38) * fine * 0.22;
-
-        // Hex-ish concentric rings around the combat pit
-        float rings = abs(fract(dist / 6.5) - 0.5);
-        col += vec3(0.35, 0.08, 0.42) * line(rings * 6.5, 0.07) * 0.18;
-
-        // Sparse "pad" nodes
-        vec2 cell = floor(p / 4.0);
-        float n = hash(cell);
-        if (n > 0.82) {
-          vec2 lp = fract(p / 4.0) - 0.5;
-          float pad = smoothstep(0.18, 0.08, length(lp));
-          col += vec3(0.15, 0.85, 0.95) * pad * 0.35;
-        } else if (n > 0.7) {
-          vec2 lp = fract(p / 4.0) - 0.5;
-          float stub = line(lp.x, 0.03) * step(abs(lp.y), 0.28)
-                     + line(lp.y, 0.03) * step(abs(lp.x), 0.28);
-          col += vec3(0.9, 0.25, 0.7) * clamp(stub, 0.0, 1.0) * 0.22;
-        }
-
-        // Soft pit glow so the cube doesn't sit in a hole
-        float pit = exp(-dist * dist / 220.0);
-        col += vec3(0.02, 0.08, 0.1) * pit;
-
-        float a = 0.92 * smoothstep(95.0, 28.0, dist);
-        gl_FragColor = vec4(col, a);
-        #include <fog_fragment>
-      }
-    `,
+    fog: true,
+    transparent: false,
+    depthWrite: true,
   });
-
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(110, 48), mat);
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(90, 40), mat);
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = 0.12;
   floor.name = 'CircuitFloor';
-  floor.renderOrder = 1;
   floor.frustumCulled = true;
   floor.matrixAutoUpdate = false;
   floor.updateMatrix();

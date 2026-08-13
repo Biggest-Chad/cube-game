@@ -119,7 +119,18 @@ export class GridVoidArena implements ArenaInstance {
     arena.root.add(gltf.scene);
 
     try {
-      const sky = await new THREE.TextureLoader().loadAsync('./arenas/grid-void/sky.png');
+      const skyFull = await new THREE.TextureLoader().loadAsync('./arenas/grid-void/sky.png');
+      // Downscale 4K equirect — full-res background has lost WebGL on phones.
+      const img = skyFull.image as HTMLImageElement | ImageBitmap;
+      const w = 1024;
+      const h = 512;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d');
+      if (ctx && img) ctx.drawImage(img as CanvasImageSource, 0, 0, w, h);
+      skyFull.dispose();
+      const sky = new THREE.CanvasTexture(c);
       sky.mapping = THREE.EquirectangularReflectionMapping;
       sky.colorSpace = THREE.SRGBColorSpace;
       sky.anisotropy = 1;

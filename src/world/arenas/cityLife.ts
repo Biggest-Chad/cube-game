@@ -21,34 +21,32 @@ export function addCityAmbience(root: THREE.Group): void {
     }
   });
 
+  const fadeCanvas = document.createElement('canvas');
+  fadeCanvas.width = fadeCanvas.height = 256;
+  const fctx = fadeCanvas.getContext('2d')!;
+  const grd = fctx.createRadialGradient(128, 128, 70, 128, 128, 128);
+  grd.addColorStop(0, 'rgba(0,0,0,0)');
+  grd.addColorStop(0.62, 'rgba(0,0,0,0.15)');
+  grd.addColorStop(1, 'rgba(0,0,0,0.92)');
+  fctx.fillStyle = grd;
+  fctx.fillRect(0, 0, 256, 256);
+  const fadeTex = new THREE.CanvasTexture(fadeCanvas);
+  fadeTex.colorSpace = THREE.NoColorSpace;
   const fade = new THREE.Mesh(
-    new THREE.CircleGeometry(180, 16),
-    new THREE.ShaderMaterial({
+    new THREE.CircleGeometry(160, 24),
+    new THREE.MeshBasicMaterial({
+      map: fadeTex,
       transparent: true,
       depthWrite: false,
       fog: false,
-      uniforms: { uInner: { value: 72 }, uOuter: { value: 145 } },
-      vertexShader: `
-        varying vec3 vW;
-        void main(){
-          vec4 w = modelMatrix * vec4(position,1.0);
-          vW = w.xyz;
-          gl_Position = projectionMatrix * viewMatrix * w;
-        }`,
-      fragmentShader: `
-        varying vec3 vW;
-        uniform float uInner;
-        uniform float uOuter;
-        void main(){
-          float d = length(vW.xz);
-          float a = smoothstep(uInner, uOuter, d);
-          gl_FragColor = vec4(0.0, 0.0, 0.0, a * 0.96);
-        }`,
+      toneMapped: false,
     })
   );
   fade.rotation.x = -Math.PI / 2;
-  fade.position.y = 0.09;
+  fade.position.y = 0.08;
   fade.name = 'DistanceFade';
   fade.renderOrder = 2;
+  fade.matrixAutoUpdate = false;
+  fade.updateMatrix();
   root.add(fade);
 }
