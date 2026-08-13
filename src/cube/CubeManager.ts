@@ -66,7 +66,7 @@ export class CubeManager {
   readonly group = new THREE.Group();
   readonly nucleus = new CoreNucleus();
   private mesh: THREE.InstancedMesh | null = null;
-  private material: THREE.MeshBasicMaterial;
+  private material: THREE.MeshStandardMaterial;
   private generated: GeneratedCube | null = null;
   private level: LevelDefinition | null = null;
   /** Maps instanceId -> ref; dense 0..count-1 */
@@ -84,12 +84,15 @@ export class CubeManager {
   private reviveAccum = 0;
 
   constructor() {
-    // Unlit instance colors — Standard + 6 scene lights was shading every voxel
-    this.material = new THREE.MeshBasicMaterial({
+    // Per-instance color carries hue; Standard keeps cube lighting/readability
+    this.material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      vertexColors: true,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
+      metalness: 0.25,
+      roughness: 0.42,
       toneMapped: true,
-      fog: true,
+      envMapIntensity: 0,
     });
   }
 

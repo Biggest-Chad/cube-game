@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ArenaId } from '../../data/arenas';
 import type { ArenaInstance } from '../ArenaInstance';
 import { addCityAmbience } from './cityLife';
@@ -32,44 +31,10 @@ function isHeavyDecor(name: string): boolean {
   );
 }
 
-function isBuildingBody(name: string): boolean {
-  return name.startsWith('Proto_') && !name.includes('wire');
-}
-
 function stampArenaLayer(root: THREE.Object3D): void {
   root.traverse((o) => {
     o.layers.set(ARENA_LAYER);
   });
-}
-
-function emissiveToBasic(src: THREE.Material, dim = 0.45): THREE.MeshBasicMaterial {
-  const em = src as THREE.MeshStandardMaterial;
-  const color = new THREE.Color(em.emissive?.r ?? 0.08, em.emissive?.g ?? 0.09, em.emissive?.b ?? 0.1);
-  const intensity = Math.max(0.2, (em.emissiveIntensity || 1) * dim);
-  color.multiplyScalar(Math.min(1.4, intensity));
-  if (em.color) color.lerp(em.color, 0.18);
-  return new THREE.MeshBasicMaterial({
-    color,
-    map: em.map ?? null,
-    transparent: true,
-    opacity: 0.78,
-    toneMapped: false,
-    fog: true,
-    side: em.side ?? THREE.FrontSide,
-    depthWrite: true,
-  });
-}
-
-function downgradeCityMaterial(mesh: THREE.Mesh): void {
-  const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  const next = list.map((m) => {
-    if (!m) return m;
-    if ((m as THREE.MeshBasicMaterial).isMeshBasicMaterial) return m;
-    const baked = emissiveToBasic(m);
-    m.dispose();
-    return baked;
-  });
-  mesh.material = Array.isArray(mesh.material) ? next : next[0];
 }
 
 function stripMesh(o: THREE.Mesh): void {
@@ -78,44 +43,16 @@ function stripMesh(o: THREE.Mesh): void {
   o.geometry = new THREE.BufferGeometry();
 }
 
-/** Drop wire cages (~98k tris) and merge leftover building bodies into one draw. */
-function simplifyCity(city: THREE.Object3D): void {
-  city.updateMatrixWorld(true);
-  const inv = new THREE.Matrix4().copy(city.matrixWorld).invert();
-  const baked: THREE.BufferGeometry[] = [];
-  const remove: THREE.Mesh[] = [];
-  city.traverse((o) => {
-    if (!(o instanceof THREE.Mesh)) return;
-    if (isHeavyDecor(o.name)) {
-      stripMesh(o);
-      remove.push(o);
-      return;
-    }
-    if (!isBuildingBody(o.name)) return;
-    const g = o.geometry.clone();
-    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
-    baked.push(g);
-    stripMesh(o);
-    remove.push(o);
-  });
-  for (const m of remove) m.removeFromParent();
-  if (!baked.length) return;
-  const merged = mergeGeometries(baked, false);
-  baked.forEach((g) => g.dispose());
-  if (!merged) return;
-  const skyline = new THREE.Mesh(
-    merged,
-    new THREE.MeshBasicMaterial({
-      color: 0x1c3a48,
-      toneMapped: false,
-      fog: true,
-      transparent: true,
-      opacity: 0.7,
-    })
-  );
-  skyline.name = 'CitySkyline';
-  skyline.frustumCulled = true;
-  city.add(skyline);
+function keepAuthoredMaterial(mesh: THREE.Mesh): void {
+  const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const m of list) {
+    if (!m || !('emissive' in m)) continue;
+    const std = m as THREE.MeshStandardMaterial;
+    std.toneMapped = false;
+    std.envMap = null;
+    std.envMapIntensity = 0;
+    std.fog = true;
+  }
 }
 
 function freezeStaticArena(root: THREE.Object3D): void {
@@ -166,10 +103,9 @@ export class GridVoidArena implements ArenaInstance {
         stripMesh(o);
         return;
       }
-      downgradeCityMaterial(o);
+      keepAuthoredMaterial(o);
     });
     arena.root.add(gltf.scene);
-    simplifyCity(gltf.scene);
 
     try {
       const sky = await new THREE.TextureLoader().loadAsync('./arenas/grid-void/sky.png');

@@ -12,10 +12,11 @@ export function addCityAmbience(root: THREE.Group): void {
     }
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of mats) {
-      if (!m || !('opacity' in m)) continue;
-      const mat = m as THREE.MeshBasicMaterial;
-      mat.transparent = true;
-      mat.opacity = Math.min(mat.opacity ?? 1, 0.55);
+      if (!m) continue;
+      if ('emissiveIntensity' in m) {
+        const std = m as THREE.MeshStandardMaterial;
+        std.emissiveIntensity *= 0.7;
+      }
     }
   });
 
