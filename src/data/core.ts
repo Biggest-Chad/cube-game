@@ -22,6 +22,19 @@ export const CORE = {
   decayMinPerSec: 6,
   /** Overload health thresholds (core HP ratio). */
   overloadThresholds: [0.75, 0.5, 0.25] as const,
+
+  /** Standard nucleus: telegraphed omni spike burst on overload (from stage 1). */
+  spikeTelegraphSec: 1.45,
+  /** Omni directions (plus one extra locked on the ship). */
+  spikeOmniCount: 10,
+  spikeSpeed: 10.5,
+  spikeDamage: 16,
+  spikeHitRadius: 0.92,
+  spikeLife: 5.2,
+  /** Close-range shockwave — default orbit (18) is outside this. */
+  spikeShockRadius: 11,
+  spikeShockDamage: 14,
+  spikeShockDuration: 0.4,
   /** Base transfer / DR are pure shell-ratio. */
 
   /** Rage: turret/drone fire rate mult while attribute active. */

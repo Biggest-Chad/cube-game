@@ -11,6 +11,7 @@ import { bus } from '../core/EventBus';
 import { COLORS } from '../data/constants';
 import { CORE } from '../data/core';
 import { RageLaser, type RageLaserPhase } from './RageLaser';
+import { NucleusSpikeBurst, type SpikeBurstPhase } from './NucleusSpikeBurst';
 
 export interface DefenseSchedule {
   coreShield: boolean;
@@ -145,15 +146,21 @@ export class CubeDefense {
     damage: number;
   }> = [];
   private readonly rageLaser = new RageLaser();
+  private readonly spikes = new NucleusSpikeBurst();
   private readonly _laserOrigin = new THREE.Vector3();
 
   constructor() {
     this.group.add(this.projectileRoot);
     this.group.add(this.rageLaser.group);
+    this.group.add(this.spikes.group);
   }
 
   get rageLaserPhase(): RageLaserPhase {
     return this.rageLaser.phaseId;
+  }
+
+  get spikePhase(): SpikeBurstPhase {
+    return this.spikes.phaseId;
   }
 
   setHooks(hooks: CubeDefenseHooks): void {
@@ -293,6 +300,16 @@ export class CubeDefense {
       bus.on('core-started', (p: { attribute?: string }) => {
         if (p.attribute === 'rage') this.fireRateMul = CORE.rageFireRateMul;
         else this.fireRateMul = 1;
+      }),
+      bus.on('core-spike-burst', () => {
+        if (!this.cube || !this.hooks) return;
+        this.cube.nucleus.getWorldCenter(this._laserOrigin);
+        const extra = Math.min(6, Math.max(0, Math.floor((this.levelId - 1) / 3)));
+        this.spikes.arm(
+          this._laserOrigin,
+          this.hooks.getPlayerPosition(),
+          CORE.spikeOmniCount + extra
+        );
       })
     );
   }
@@ -500,11 +517,13 @@ export class CubeDefense {
         radius: 0.9,
       });
     }
+    for (const s of this.spikes.getInterceptTargets()) out.push(s);
     return out;
   }
 
-  /** Damage an intercept target (arc beam). Returns true if destroyed. */
+  /** Damage an intercept target (arc beam / spike). Returns true if destroyed. */
   damageIntercept(id: string, amount: number): boolean {
+    if (id.startsWith('spike_')) return this.spikes.damageIntercept(id, amount);
     if (!id.startsWith('arc_')) return false;
     const idx = Number(id.slice(4));
     const a = this.arcs[idx];
@@ -602,6 +621,19 @@ export class CubeDefense {
     if (laserOn && this.rageLaser.glow > 0) {
       nuc.flareFromLaser(this.rageLaser.glow);
     }
+
+    if (nuc.isActive && nuc.attr === 'none') {
+      nuc.getWorldCenter(this._laserOrigin);
+    } else if (!nuc.isActive) {
+      this.spikes.reset();
+    }
+    this.spikes.update(
+      dt,
+      playerPos,
+      (dmg) => this.hooks?.onPlayerDamage(dmg, 'core-spike'),
+      allowFire && nuc.isActive && nuc.attr === 'none'
+    );
+    if (this.spikes.glow > 0) nuc.flareFromLaser(this.spikes.glow);
 
     if (this.coreShieldMesh && this.coreShield.active) {
       const mat = this.coreShieldMesh.material as THREE.MeshBasicMaterial;
@@ -724,6 +756,7 @@ export class CubeDefense {
     }
     this.arcs = [];
     this.rageLaser.reset();
+    this.spikes.reset();
     if (this.coreShieldMesh) {
       this.group.remove(this.coreShieldMesh);
       this.coreShieldMesh.geometry.dispose();
@@ -747,6 +780,7 @@ export class CubeDefense {
   dispose(): void {
     this.reset();
     this.rageLaser.dispose();
+    this.spikes.dispose();
     this.group.clear();
   }
 }

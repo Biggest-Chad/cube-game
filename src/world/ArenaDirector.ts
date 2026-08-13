@@ -9,7 +9,7 @@ import type { ArenaInstance } from './ArenaInstance';
 import { GridVoidArena } from './arenas/GridVoidArena';
 import { LegacyAmbientArena } from './arenas/LegacyAmbientArena';
 
-const CAMERA_FAR = 900;
+const CAMERA_FAR = 180;
 
 export class ArenaDirector {
   private scene: Scene | null = null;

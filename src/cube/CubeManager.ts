@@ -21,6 +21,7 @@ const _ray = new THREE.Ray();
 const _bestPoint = new THREE.Vector3();
 const _hitNormal = new THREE.Vector3();
 const _white = new THREE.Color(0xffffff);
+const _sphere = new THREE.Sphere();
 
 /** Sentinel instance id for the living nucleus (not a lattice voxel). */
 export const NUCLEUS_HIT_ID = -2;
@@ -65,7 +66,7 @@ export class CubeManager {
   readonly group = new THREE.Group();
   readonly nucleus = new CoreNucleus();
   private mesh: THREE.InstancedMesh | null = null;
-  private material: THREE.MeshStandardMaterial;
+  private material: THREE.MeshBasicMaterial;
   private generated: GeneratedCube | null = null;
   private level: LevelDefinition | null = null;
   /** Maps instanceId -> ref; dense 0..count-1 */
@@ -83,14 +84,12 @@ export class CubeManager {
   private reviveAccum = 0;
 
   constructor() {
-    // Low global emissive — per-instance color carries hue; keeps bloom from washing out the cube
-    this.material = new THREE.MeshStandardMaterial({
+    // Unlit instance colors — Standard + 6 scene lights was shading every voxel
+    this.material = new THREE.MeshBasicMaterial({
       color: 0xffffff,
-      emissive: 0x000000,
-      emissiveIntensity: 0,
-      metalness: 0.25,
-      roughness: 0.42,
+      vertexColors: true,
       toneMapped: true,
+      fog: true,
     });
   }
 
@@ -307,11 +306,14 @@ export class CubeManager {
     this.group.updateWorldMatrix(true, false);
     const mw = this.group.matrixWorld;
     if (this.mesh && this.mesh.count > 0) {
+      this.group.getWorldPosition(_pos);
+      _sphere.center.copy(_pos);
+      _sphere.radius = this.halfExtent * 1.78 + 1.4;
       _ray.origin.copy(origin);
       _ray.direction.copy(_dirN);
+      if (_ray.intersectsSphere(_sphere)) {
       for (let id = 0; id < this.mesh.count; id++) {
         if (id === ignoreId) continue;
-        if (this.getBlockType(id) === BlockType.Core) continue;
 
         this.mesh.getMatrixAt(id, _matrix);
         _pos.setFromMatrixPosition(_matrix);
@@ -329,6 +331,7 @@ export class CubeManager {
           hasHit = true;
           nucleusSolid = false;
         }
+      }
       }
     }
 

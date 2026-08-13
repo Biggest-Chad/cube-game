@@ -287,7 +287,7 @@ export class CoreNucleus {
       case 'swarm':
         return 'Drone factory online. Exposed / overload: enraged swarms.';
       default:
-        return 'Destroy the shell, then the nucleus.';
+        return 'Destroy the shell, then the nucleus. Overload hurls a spike burst — keep moving.';
     }
   }
 
@@ -634,8 +634,9 @@ export class CoreNucleus {
         });
         break;
       default:
-        this.overloadTimer = 1.8;
+        this.overloadTimer = CORE.spikeTelegraphSec + 0.35;
         this.overloadKind = 'none';
+        bus.emit('core-spike-burst', { levelId: this.levelId, pct });
         break;
     }
   }
@@ -649,7 +650,7 @@ export class CoreNucleus {
       case 'swarm':
         return 'Enraged drone wave inbound!';
       default:
-        return 'Nucleus destabilizing!';
+        return 'Spike burst charging — leave the bright line!';
     }
   }
 

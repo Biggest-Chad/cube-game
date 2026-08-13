@@ -1111,6 +1111,8 @@ export class Game {
       bus.on('enemy-drone-fire', () => this.audio.playFire('pulse')),
       bus.on('core-rage-laser-charge', () => this.audio.playFire('rail')),
       bus.on('core-rage-laser-fire', () => this.audio.playFire('beam')),
+      bus.on('core-spike-telegraph', () => this.audio.playFire('rail')),
+      bus.on('core-spike-fire', () => this.audio.playFire('flak')),
       // Single shake path only (animator emits camera-shake-request on complete)
       bus.on('camera-shake-request', (p: { amount?: number }) => {
         if (this.mode === 'playing' || this.mode === 'cinematic') {
@@ -2974,6 +2976,7 @@ export class Game {
         this.hud.updateNucleus({
           ...this.cube.nucleus.snapshot(),
           laserPhase: this.cubeDefense.rageLaserPhase,
+          spikePhase: this.cubeDefense.spikePhase,
         });
         this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
 

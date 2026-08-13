@@ -1,8 +1,84 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { COLORS, ORBIT } from '../data/constants';
 import type { OrbitalCamera } from './OrbitalCamera';
 import { SHIP_HEADLIGHTS, SHIP_MUZZLE, SHIP_THRUSTERS } from './ShipMounts';
+
+/** Collapse 170+ PBR meshes into one unlit mesh per material. */
+function batchShipMeshes(src: THREE.Object3D): THREE.Group {
+  src.updateMatrixWorld(true);
+  const buckets = new Map<string, { mat: THREE.Material; geos: THREE.BufferGeometry[] }>();
+  const animated: THREE.Mesh[] = [];
+  src.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const live =
+      o.name.startsWith('EngineGlow') ||
+      o.name.startsWith('Plume') ||
+      o.name.includes('Nozzle');
+    if (live) {
+      animated.push(o);
+      return;
+    }
+    const raw = Array.isArray(o.material) ? o.material[0] : o.material;
+    if (!raw) return;
+    const geo = o.geometry.clone();
+    geo.applyMatrix4(o.matrixWorld);
+    const key = raw.uuid;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { mat: raw.clone(), geos: [] };
+      buckets.set(key, b);
+    }
+    b.geos.push(geo);
+  });
+
+  const out = new THREE.Group();
+  out.name = 'InterceptorV2Batched';
+  for (const b of buckets.values()) {
+    const merged = mergeGeometries(b.geos, false);
+    b.geos.forEach((g) => g.dispose());
+    if (!merged) continue;
+    const std = b.mat as THREE.MeshStandardMaterial;
+    const color = new THREE.Color();
+    if (std.emissive && std.emissiveIntensity > 0.05) {
+      color.copy(std.emissive).multiplyScalar(Math.min(2, std.emissiveIntensity));
+      if (std.color) color.lerp(std.color, 0.2);
+    } else if (std.color) {
+      color.copy(std.color);
+    } else {
+      color.setHex(0x8899aa);
+    }
+    const mesh = new THREE.Mesh(
+      merged,
+      new THREE.MeshBasicMaterial({
+        color,
+        map: std.map ?? null,
+        toneMapped: false,
+        fog: true,
+      })
+    );
+    mesh.frustumCulled = true;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    out.add(mesh);
+  }
+
+  for (const m of animated) {
+    const clone = m.clone(false) as THREE.Mesh;
+    clone.geometry = m.geometry.clone();
+    clone.geometry.applyMatrix4(m.matrixWorld);
+    if (clone.material && 'emissive' in (clone.material as THREE.Material)) {
+      (clone.material as THREE.MeshStandardMaterial).toneMapped = false;
+    }
+    clone.position.set(0, 0, 0);
+    clone.rotation.set(0, 0, 0);
+    clone.scale.set(1, 1, 1);
+    clone.updateMatrix();
+    out.add(clone);
+  }
+  return out;
+}
 
 /**
  * Aggressive cinematic interceptor — dagger silhouette, forward-swept wings,
@@ -53,11 +129,9 @@ export class Ship {
       this.plumeMeshes = [];
       this.accentMats = [];
       this.runningLights = [];
-      next.traverse((o) => {
+      const batched = batchShipMeshes(next);
+      batched.traverse((o) => {
         if (!(o instanceof THREE.Mesh)) return;
-        if (o.material && 'emissive' in o.material) {
-          (o.material as THREE.MeshStandardMaterial).toneMapped = false;
-        }
         if (o.name.startsWith('EngineGlow') || o.name.includes('Nozzle')) {
           this.engineGlow.push(o);
         }
@@ -74,8 +148,11 @@ export class Ship {
           else o.material.dispose();
         }
       });
-      this.body = next;
+      this.body = batched;
       this.group.add(this.body);
+      next.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.geometry.dispose();
+      });
     } catch {
       // Procedural hull remains
     }

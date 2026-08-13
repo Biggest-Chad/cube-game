@@ -1,74 +1,31 @@
 import * as THREE from 'three';
 
-const METRO = [
-  { r: 74, y: 3.95, speed: 0.085, cars: 4, consists: 2, color: 0x66e8ff },
-  { r: 96, y: 5.65, speed: -0.062, cars: 3, consists: 2, color: 0xff66cc },
-];
-
-const FLOOR_DIM = new Set([
-  'SquareGrid',
-  'SquareGridMid',
-  'SquareGridFar',
-  'HexLines',
-  'HexPads',
-  'Ground',
-  'GroundApron',
-  'HorizonCore',
-  'HorizonGlow',
-  'CityStreets',
-  'CityLots',
-  'DebrisNeon',
-]);
-
-function emitMat(color: number, intensity = 1.1): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    color: 0x0a1014,
-    emissive: color,
-    emissiveIntensity: intensity,
-    metalness: 0.35,
-    roughness: 0.4,
-    toneMapped: false,
-  });
-}
-
-function makeTrain(cars: number, color: number): THREE.Group {
-  const g = new THREE.Group();
-  const body = emitMat(color, 0.85);
-  const glass = new THREE.MeshBasicMaterial({ color, toneMapped: false, fog: false });
-  const lamp = new THREE.MeshBasicMaterial({ color: 0xfff4d0, toneMapped: false, fog: false });
-  for (let i = 0; i < cars; i++) {
-    const car = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.58, 0.78), body);
-    car.position.x = (i - (cars - 1) * 0.5) * 2.2;
-    g.add(car);
-    const win = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.16, 0.8), glass);
-    win.position.set(car.position.x, 0.08, 0);
-    g.add(win);
-  }
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.5), lamp);
-  head.position.set((cars - 1) * 1.1 + 1.15, 0.02, 0);
-  g.add(head);
-  return g;
-}
-
-export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
+/**
+ * Distant floor fade only. No trains, flyers, cars, or glitter —
+ * those were competing with the cube / ship / drones for GPU time.
+ */
+export function addCityAmbience(root: THREE.Group): void {
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
-    if (!FLOOR_DIM.has(o.name)) return;
+    if (o.name !== 'CityStreets' && o.name !== 'CityLots' && o.name !== 'Ground' && o.name !== 'GroundApron' && o.name !== 'HorizonCore') {
+      return;
+    }
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of mats) {
-      if (!m || !('emissive' in m)) continue;
-      const em = m as THREE.MeshStandardMaterial;
-      em.emissiveIntensity *= o.name.startsWith('SquareGrid') || o.name === 'HexLines' ? 0.55 : 0.7;
+      if (!m || !('opacity' in m)) continue;
+      const mat = m as THREE.MeshBasicMaterial;
+      mat.transparent = true;
+      mat.opacity = Math.min(mat.opacity ?? 1, 0.55);
     }
   });
 
   const fade = new THREE.Mesh(
-    new THREE.CircleGeometry(320, 24),
+    new THREE.CircleGeometry(180, 16),
     new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       fog: false,
-      uniforms: { uInner: { value: 80 }, uOuter: { value: 220 } },
+      uniforms: { uInner: { value: 42 }, uOuter: { value: 120 } },
       vertexShader: `
         varying vec3 vW;
         void main(){
@@ -83,7 +40,7 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
         void main(){
           float d = length(vW.xz);
           float a = smoothstep(uInner, uOuter, d);
-          gl_FragColor = vec4(0.0, 0.0, 0.0, a * 0.94);
+          gl_FragColor = vec4(0.0, 0.0, 0.0, a * 0.96);
         }`,
     })
   );
@@ -92,131 +49,4 @@ export function addCityLife(root: THREE.Group, quality: 0 | 1 | 2): void {
   fade.name = 'DistanceFade';
   fade.renderOrder = 2;
   root.add(fade);
-
-  const life = new THREE.Group();
-  life.name = 'CityLife';
-
-  const trains: { obj: THREE.Group; r: number; y: number; speed: number; phase: number }[] = [];
-  const consistN = quality === 0 ? 0 : 1;
-  for (const line of METRO) {
-    for (let c = 0; c < consistN; c++) {
-      const train = makeTrain(line.cars, line.color);
-      life.add(train);
-      trains.push({
-        obj: train,
-        r: line.r,
-        y: line.y,
-        speed: line.speed,
-        phase: (c / consistN) * Math.PI * 2,
-      });
-    }
-  }
-
-  const flyerN = quality === 0 ? 0 : quality === 1 ? 8 : 18;
-  const flyers =
-    flyerN > 0
-      ? new THREE.InstancedMesh(new THREE.BoxGeometry(0.95, 0.16, 0.32), emitMat(0x88f0ff, 0.9), flyerN)
-      : null;
-  const flyerDummy = new THREE.Object3D();
-  const flyerMeta = Array.from({ length: flyerN }, (_, i) => ({
-    r: 52 + (i % 9) * 9,
-    y: 7 + (i % 7) * 1.35,
-    speed: 0.11 + (i % 5) * 0.025,
-    phase: (i / Math.max(1, flyerN)) * Math.PI * 2,
-    bank: i % 2 === 0 ? 1 : -1,
-  }));
-  if (flyers) life.add(flyers);
-
-  const carN = quality === 0 ? 0 : quality === 1 ? 12 : 28;
-  const cars =
-    carN > 0
-      ? new THREE.InstancedMesh(new THREE.BoxGeometry(0.7, 0.18, 0.32), emitMat(0xffc878, 0.7), carN)
-      : null;
-  const carDummy = new THREE.Object3D();
-  const carMeta = Array.from({ length: carN }, (_, i) => ({
-    r: [58, 66, 78, 90, 104][i % 5],
-    speed: 0.16 + (i % 4) * 0.03,
-    phase: (i / Math.max(1, carN)) * Math.PI * 2,
-    dir: i % 3 === 0 ? -1 : 1,
-  }));
-  if (cars) life.add(cars);
-
-  const glitterN = quality === 0 ? 0 : quality === 1 ? 80 : 160;
-  if (glitterN > 0) {
-    const gPos = new Float32Array(glitterN * 3);
-    const gCol = new Float32Array(glitterN * 3);
-    const cTmp = new THREE.Color();
-    for (let i = 0; i < glitterN; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = 62 + Math.random() * 58;
-      gPos[i * 3] = Math.cos(a) * r;
-      gPos[i * 3 + 1] = 1.2 + Math.random() * 14;
-      gPos[i * 3 + 2] = Math.sin(a) * r;
-      cTmp.setHSL(0.48 + Math.random() * 0.22, 0.7, 0.62);
-      gCol[i * 3] = cTmp.r;
-      gCol[i * 3 + 1] = cTmp.g;
-      gCol[i * 3 + 2] = cTmp.b;
-    }
-    const gGeo = new THREE.BufferGeometry();
-    gGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3));
-    gGeo.setAttribute('color', new THREE.BufferAttribute(gCol, 3));
-    const glitter = new THREE.Points(
-      gGeo,
-      new THREE.PointsMaterial({
-        size: 0.38,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.85,
-        depthWrite: false,
-        toneMapped: false,
-      })
-    );
-    glitter.name = 'CityGlitter';
-    glitter.matrixAutoUpdate = false;
-    glitter.updateMatrix();
-    life.add(glitter);
-  }
-
-  root.userData.lifeQuality = quality;
-  const prev = root.userData.tick as ((t: number, dt: number) => void) | undefined;
-  let lifeClock = 0;
-  root.userData.tick = (t: number, dt: number) => {
-    prev?.(t, dt);
-    const q = (root.userData.lifeQuality as 0 | 1 | 2) ?? 1;
-    if (q === 0) return;
-    lifeClock += dt;
-    // Traffic can step at ~20 Hz — motion still reads, GPU uploads drop.
-    if (lifeClock < 0.048) return;
-    lifeClock = 0;
-    for (const tr of trains) {
-      const a = t * tr.speed + tr.phase;
-      tr.obj.position.set(Math.cos(a) * tr.r, tr.y, Math.sin(a) * tr.r);
-      tr.obj.rotation.y = -a + Math.PI / 2;
-    }
-    if (flyers) {
-      for (let i = 0; i < flyerN; i++) {
-        const f = flyerMeta[i];
-        const a = t * f.speed * f.bank + f.phase;
-        flyerDummy.position.set(Math.cos(a) * f.r, f.y + Math.sin(t * 0.7 + f.phase) * 0.35, Math.sin(a) * f.r);
-        flyerDummy.rotation.set(0, -a + Math.PI / 2, 0);
-        flyerDummy.updateMatrix();
-        flyers.setMatrixAt(i, flyerDummy.matrix);
-      }
-      flyers.instanceMatrix.needsUpdate = true;
-    }
-    if (cars) {
-      for (let i = 0; i < carN; i++) {
-        const c = carMeta[i];
-        const a = t * c.speed * c.dir + c.phase;
-        carDummy.position.set(Math.cos(a) * c.r, 0.22, Math.sin(a) * c.r);
-        carDummy.rotation.y = -a + Math.PI / 2;
-        carDummy.updateMatrix();
-        cars.setMatrixAt(i, carDummy.matrix);
-      }
-      cars.instanceMatrix.needsUpdate = true;
-    }
-  };
-
-  life.visible = quality > 0;
-  root.add(life);
 }
