@@ -22,9 +22,9 @@ export class Time {
     return this.delta;
   }
 
+  /** Snap the frame clock after a pause — do NOT zero elapsed (regen/hit timers use it). */
   reset(): void {
     this.last = performance.now();
     this.delta = 0;
-    this.elapsed = 0;
   }
 }

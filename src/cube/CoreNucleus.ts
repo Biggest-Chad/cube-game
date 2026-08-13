@@ -112,7 +112,8 @@ export class CoreNucleus {
   get hitRadius(): number {
     if (!this.active || this.hp <= 0) return 0;
     // Peak render scale of core mesh / ring (matches updateVfx pulses)
-    const scaleMul = 1.12 + this.pulse * 0.2;
+    // Visual pulse must not inflate the hitbox (would magnet-snipe during fire)
+    const scaleMul = 1.12;
     // Body: unit icosahedron radius 1; ring: major 1.35 + tube 0.06
     const bodyR = this.baseScale * scaleMul;
     const ringR = this.baseScale * 1.41 * scaleMul;

@@ -208,6 +208,24 @@ export class InputController {
     if (Math.abs(this.aimY) < 0.004) this.aimY = 0;
   }
 
+  /** Drop sticks / keys so pause / overlay cannot inherit a held orbit. */
+  releaseAll(): void {
+    this.joyPointerId = null;
+    this.aimPointerId = null;
+    this.joyActive = false;
+    this.aimActive = false;
+    this.axisX = 0;
+    this.axisY = 0;
+    this.aimRawX = 0;
+    this.aimRawY = 0;
+    this.aimX = 0;
+    this.aimY = 0;
+    this.zoomDelta = 0;
+    this.keys.clear();
+    this.setStick(this.stickEl, 0, 0);
+    this.setStick(this.aimStickEl, 0, 0);
+  }
+
   consumeZoom(): number {
     const z = this.zoomDelta;
     this.zoomDelta = 0;

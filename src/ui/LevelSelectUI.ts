@@ -55,7 +55,11 @@ export class LevelSelectUI {
     html += `</div></div>`;
     this.root.innerHTML = html;
 
-    this.root.querySelector('#lv-close')?.addEventListener('click', () => this.onClose?.());
+    this.root.querySelector('#lv-close')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.onClose?.();
+    });
     this.root.querySelector('#lv-replay')?.addEventListener('click', () => this.onReplayIntro?.());
     this.root.querySelectorAll('.level-card:not(:disabled)').forEach((btn) => {
       btn.addEventListener('click', () => {

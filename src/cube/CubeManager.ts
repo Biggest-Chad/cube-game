@@ -191,7 +191,7 @@ export class CubeManager {
     this.mesh.setColorAt(instanceId, _color);
   }
 
-  private removeInstance(instanceId: number): void {
+  private removeInstance(instanceId: number, opts?: { deferGpu?: boolean }): void {
     if (!this.mesh) return;
     const last = this.mesh.count - 1;
     const ref = this.refs[instanceId];
@@ -218,9 +218,16 @@ export class CubeManager {
     }
     this.refs.pop();
     this.mesh.count = last;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     this.aliveBlocks = last;
+    if (!opts?.deferGpu) {
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  /** Wipe remaining instances without N GPU uploads (one flush at the end). */
+  private removeInstanceDeferred(instanceId: number): void {
+    this.removeInstance(instanceId, { deferGpu: true });
   }
 
   /**
@@ -632,8 +639,12 @@ export class CubeManager {
       const ref = this.refs[id];
       if (ref) {
         ref.chunk.clearBlock(ref.localIndex);
-        this.removeInstance(id);
+        this.removeInstanceDeferred(id);
       }
+    }
+    if (this.mesh) {
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
     void now;
     return out;

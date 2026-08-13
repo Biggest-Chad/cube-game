@@ -1,5 +1,6 @@
 /**
  * Settings panel — graphics, audio, reset progress.
+ * Close / Back never start a sector; Game decides the return destination.
  */
 import {
   GRAPHICS_QUALITIES,
@@ -21,6 +22,9 @@ export class SettingsUI {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    // Swallow closing taps so they cannot activate START MISSION under the panel.
+    this.root.addEventListener('pointerup', (ev) => ev.stopPropagation());
+    this.root.addEventListener('click', (ev) => ev.stopPropagation());
   }
 
   show(opts: {
@@ -32,27 +36,38 @@ export class SettingsUI {
     this.muted = opts.muted;
     this.volume = opts.volume;
     this.root.classList.remove('panel-hidden');
+    this.root.setAttribute('aria-hidden', 'false');
     this.render();
   }
 
   hide(): void {
     this.root.classList.add('panel-hidden');
+    this.root.setAttribute('aria-hidden', 'true');
     this.root.innerHTML = '';
+  }
+
+  private requestClose(): void {
+    // Do not hide here — Game owns teardown + destination (menu / pause / resume).
+    this.onClose?.();
   }
 
   private render(): void {
     const preset = GRAPHICS_PRESETS[this.quality];
     this.root.innerHTML = `
-      <div class="settings-panel interactive tech-panel">
+      <div class="settings-panel interactive tech-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div class="shop-header tech-header">
           <div>
-            <h2>SETTINGS</h2>
+            <h2 id="settings-title">SETTINGS</h2>
             <div class="tech-header-sub">Graphics · audio · data</div>
           </div>
-          <button class="icon-btn" id="settings-close" type="button" aria-label="Close">✕</button>
+          <button class="icon-btn ui-btn" id="settings-close" type="button" aria-label="Back">✕</button>
         </div>
 
         <div class="settings-body">
+          <button class="menu-btn primary ui-btn settings-back" id="settings-back" type="button">
+            BACK
+          </button>
+
           <section class="settings-section">
             <div class="settings-label">GRAPHICS QUALITY</div>
             <div class="settings-seg" role="radiogroup" aria-label="Graphics quality">
@@ -71,10 +86,12 @@ export class SettingsUI {
           <section class="settings-section">
             <div class="settings-label">AUDIO</div>
             <div class="settings-row">
-              <span>Master volume</span>
+              <label for="settings-volume">Master volume</label>
               <input type="range" id="settings-volume" min="0" max="100"
                 value="${Math.round(this.volume * 100)}"
-                ${this.muted ? 'disabled' : ''} />
+                ${this.muted ? 'disabled' : ''}
+                aria-valuemin="0" aria-valuemax="100"
+                aria-valuenow="${Math.round(this.volume * 100)}" />
               <span class="settings-vol-val">${Math.round(this.volume * 100)}%</span>
             </div>
             <button type="button" class="menu-btn ui-btn ${this.muted ? 'primary' : ''}" id="settings-mute">
@@ -102,13 +119,17 @@ export class SettingsUI {
       </div>
     `;
 
-    this.root.querySelector('#settings-close')?.addEventListener('click', () => {
-      this.hide();
-      this.onClose?.();
-    });
+    const close = (ev: Event) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.requestClose();
+    };
+    this.root.querySelector('#settings-close')?.addEventListener('click', close);
+    this.root.querySelector('#settings-back')?.addEventListener('click', close);
 
     this.root.querySelectorAll('[data-gfx]').forEach((btn) => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
         const q = (btn as HTMLElement).dataset.gfx as GraphicsQuality;
         if (!q || q === this.quality) return;
         this.quality = q;
@@ -123,16 +144,19 @@ export class SettingsUI {
       this.volume = v;
       const label = this.root.querySelector('.settings-vol-val');
       if (label) label.textContent = `${Math.round(v * 100)}%`;
+      vol.setAttribute('aria-valuenow', String(Math.round(v * 100)));
       this.onVolumeChange?.(v);
     });
 
-    this.root.querySelector('#settings-mute')?.addEventListener('click', () => {
+    this.root.querySelector('#settings-mute')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
       this.muted = !this.muted;
       this.onMuteChange?.(this.muted);
       this.render();
     });
 
-    this.root.querySelector('#settings-reset')?.addEventListener('click', () => {
+    this.root.querySelector('#settings-reset')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
       if (
         confirm(
           'Erase ALL progress?\n\nThis deletes fragments, upgrades, loadouts and sector progress.'
@@ -140,6 +164,10 @@ export class SettingsUI {
       ) {
         this.onReset?.();
       }
+    });
+
+    requestAnimationFrame(() => {
+      (this.root.querySelector('#settings-back') as HTMLButtonElement | null)?.focus();
     });
   }
 }

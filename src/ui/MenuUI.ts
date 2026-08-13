@@ -1,7 +1,12 @@
+import { UI_CLICK_LOCK_MS } from '../core/NavPolicy';
+
 export class MenuUI {
   private root: HTMLElement;
   private ascensionTier = 0;
   private coreEnergy = 0;
+  private shopLocked = false;
+  private shopLockHint = 'Need 150 FRAG';
+  private missionLabel = 'START MISSION';
 
   onPlay: (() => void) | null = null;
   onTech: (() => void) | null = null;
@@ -18,6 +23,16 @@ export class MenuUI {
   setMeta(ascensionTier: number, coreEnergy: number): void {
     this.ascensionTier = ascensionTier;
     this.coreEnergy = coreEnergy;
+  }
+
+  setChrome(opts: {
+    shopLocked: boolean;
+    shopLockHint?: string;
+    missionLabel?: string;
+  }): void {
+    this.shopLocked = opts.shopLocked;
+    if (opts.shopLockHint) this.shopLockHint = opts.shopLockHint;
+    if (opts.missionLabel) this.missionLabel = opts.missionLabel;
   }
 
   private renderMain(): void {
@@ -37,21 +52,26 @@ export class MenuUI {
           <div class="menu-actions">
             <button class="menu-btn menu-engage primary ui-btn" id="m-play" type="button">
               <span class="menu-engage-glow" aria-hidden="true"></span>
-              <span class="menu-btn-label">START MISSION</span>
+              <span class="menu-btn-label">${this.missionLabel}</span>
             </button>
 
             <div class="menu-subrow" role="group" aria-label="Submenus">
               <button class="menu-btn menu-subbtn ui-btn" id="m-levels" type="button">
                 <span class="menu-btn-label">Sectors</span>
               </button>
-              <button class="menu-btn menu-subbtn ui-btn" id="m-tech" type="button">
+              <button class="menu-btn menu-subbtn ui-btn" id="m-tech" type="button"
+                ${this.shopLocked ? `disabled aria-disabled="true" title="${this.shopLockHint}"` : ''}>
                 <span class="menu-btn-label">Shop</span>
+                ${this.shopLocked ? `<span class="menu-btn-lock">${this.shopLockHint}</span>` : ''}
               </button>
               <button class="menu-btn menu-subbtn ui-btn" id="m-research" type="button">
                 <span class="menu-btn-label">Lattice</span>
+                <span class="menu-btn-lock">Core research</span>
               </button>
-              <button class="menu-btn menu-subbtn ui-btn" id="m-loadout" type="button">
+              <button class="menu-btn menu-subbtn ui-btn" id="m-loadout" type="button"
+                ${this.shopLocked ? `disabled aria-disabled="true" title="${this.shopLockHint}"` : ''}>
                 <span class="menu-btn-label">Loadout</span>
+                ${this.shopLocked ? `<span class="menu-btn-lock">${this.shopLockHint}</span>` : ''}
               </button>
               <button class="menu-btn menu-subbtn ui-btn" id="m-settings" type="button">
                 <span class="menu-btn-label">Settings</span>
@@ -80,6 +100,16 @@ export class MenuUI {
   show(): void {
     this.root.classList.remove('panel-hidden');
     this.renderMain();
+    // Closing settings remounts this menu in the same tap — keep START inert briefly.
+    const play = this.root.querySelector('#m-play') as HTMLButtonElement | null;
+    if (play) {
+      play.disabled = true;
+      play.setAttribute('aria-disabled', 'true');
+      window.setTimeout(() => {
+        play.disabled = false;
+        play.removeAttribute('aria-disabled');
+      }, UI_CLICK_LOCK_MS);
+    }
   }
 
   hide(): void {

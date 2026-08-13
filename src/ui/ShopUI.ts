@@ -384,7 +384,11 @@ export class ShopUI {
   }
 
   private bindEvents(tree: TechTree, currency: Currency): void {
-    this.root.querySelector('#shop-close')?.addEventListener('click', () => this.onClose?.());
+    this.root.querySelector('#shop-close')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.onClose?.();
+    });
 
     this.root.querySelectorAll('.shop-tab').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -441,6 +445,7 @@ export class ShopUI {
 
     this.root.querySelectorAll('[data-drone-sub]').forEach((el) => {
       el.addEventListener('click', () => {
+        if ((el as HTMLButtonElement).disabled) return;
         const sub = (el as HTMLElement).dataset.droneSub as DroneSubTab;
         if (sub === 'stock' || sub === 'upgrades') {
           this.droneSubTab = sub;
@@ -872,7 +877,8 @@ export class ShopUI {
         </div>
         <div class="lo-subtabs" role="tablist">
           <button type="button" role="tab" class="lo-subtab ${stockActive ? 'active' : ''}"
-            data-drone-sub="stock" aria-selected="${stockActive}">
+            data-drone-sub="stock" aria-selected="${stockActive}"
+            ${dronesOn ? '' : 'disabled'}>
             FLEET
           </button>
           <button type="button" role="tab" class="lo-subtab ${upgradesActive ? 'active' : ''}"

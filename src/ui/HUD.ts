@@ -94,7 +94,7 @@ export class HUD {
           </button>
           <button class="action-btn interactive ui-btn" id="btn-menu" type="button">
             <span class="action-btn-icon">▦</span>
-            <span class="action-btn-label">Menu</span>
+            <span class="action-btn-label">Pause</span>
           </button>
         </div>
 

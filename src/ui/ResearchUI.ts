@@ -192,7 +192,9 @@ export class ResearchUI {
   }
 
   private bind(research: ResearchTree, currency: Currency): void {
-    this.root.querySelector('#research-close')?.addEventListener('click', () => {
+    this.root.querySelector('#research-close')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
       this.onClose?.();
     });
 

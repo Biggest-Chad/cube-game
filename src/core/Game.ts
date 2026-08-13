@@ -53,9 +53,19 @@ import { ResearchUI } from '../ui/ResearchUI';
 import { LevelSelectUI } from '../ui/LevelSelectUI';
 import { LoadoutUI } from '../ui/LoadoutUI';
 import { SettingsUI } from '../ui/SettingsUI';
+import { PauseUI } from '../ui/PauseUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
 import { TutorialDirector } from '../ui/TutorialDirector';
 import { ScreenTransition } from '../ui/ScreenTransition';
+import {
+  UI_CLICK_LOCK_MS,
+  assertNavPolicyInvariants,
+  canOpenOverlay,
+  isFromCombatSeat,
+  resolveOverlayClose,
+  shouldPauseInsteadOfExtract,
+  shouldReloadMenuDemo,
+} from './NavPolicy';
 import { cheapestPurchasableWeapon, weaponUnlockCost } from '../data/weapons';
 import {
   baselineFromTier,
@@ -77,6 +87,7 @@ type Mode =
   | 'levels'
   | 'loadout'
   | 'settings'
+  | 'paused'
   | 'dying'
   | 'dead';
 
@@ -126,6 +137,7 @@ export class Game {
   private levelUI: LevelSelectUI;
   private loadoutUI: LoadoutUI;
   private settingsUI: SettingsUI;
+  private pauseUI: PauseUI;
   private adsUI: AdsOfferUI;
   private tutorial!: TutorialDirector;
   private screenFx!: ScreenTransition;
@@ -157,7 +169,21 @@ export class Game {
   private hasSeenCinematic = false;
   private saveAccum = 0;
   private clearRewardMul = 1;
-  private pendingReturnMode: Mode = 'playing';
+  private pendingReturnMode: Mode = 'menu';
+  /** After closing settings/shop from HUD pause, land on pause — not a new stage. */
+  private returnToPause = false;
+  /** Ignore START / RESUME for a few hundred ms after remounting chrome. */
+  private uiClickLockUntil = 0;
+  /** Mode to restore when leaving pause (playing or intro). */
+  private prePauseMode: Mode = 'playing';
+  /** Restore LEVEL CLEAR card after shop/loadout opened from that card. */
+  private returnToClear = false;
+  private clearCard: {
+    name: string;
+    frag: number;
+    core: number;
+    doubled: boolean;
+  } | null = null;
   private sessionBlocksDestroyed = 0;
   private sessionPurchased = false;
   private shopOpen = false;
@@ -277,6 +303,7 @@ export class Game {
     this.levelUI = new LevelSelectUI(document.getElementById('level-select-root')!);
     this.loadoutUI = new LoadoutUI(document.getElementById('loadout-root')!);
     this.settingsUI = new SettingsUI(document.getElementById('settings-root')!);
+    this.pauseUI = new PauseUI(document.getElementById('overlay-root')!);
     this.adsUI = new AdsOfferUI(document.getElementById('ads-root')!);
     this.overlay = document.getElementById('overlay-root')!;
     this.toastRoot =
@@ -301,8 +328,10 @@ export class Game {
     window.addEventListener('orientationchange', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibility);
     window.addEventListener('beforeunload', () => this.persist());
+    window.addEventListener('keydown', this.onOverlayKey);
     this.lockLandscape();
 
+    assertNavPolicyInvariants();
     this.showMenu();
     this.loop();
   }
@@ -338,17 +367,95 @@ export class Game {
     sessionCleaner.resetCombatWorld();
   }
 
+  private armUiClickLock(ms = UI_CLICK_LOCK_MS): void {
+    this.uiClickLockUntil = performance.now() + ms;
+  }
+
+  private isUiClickLocked(): boolean {
+    return performance.now() < this.uiClickLockUntil;
+  }
+
+  private hidePauseCard(): void {
+    this.pauseUI.hide();
+  }
+
+  private onOverlayKey = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape') return;
+    if (this.isUiClickLocked()) return;
+    if (this.mode === 'settings') {
+      e.preventDefault();
+      this.closeActiveOverlay();
+      return;
+    }
+    if (this.mode === 'tech') {
+      e.preventDefault();
+      // Same path as ✕ so tutorial notifyShopClosed still fires
+      if (this.shopUI.onClose) this.shopUI.onClose();
+      else this.closeActiveOverlay();
+      return;
+    }
+    if (this.mode === 'research' || this.mode === 'levels') {
+      e.preventDefault();
+      this.closeActiveOverlay();
+      return;
+    }
+    if (this.mode === 'paused') {
+      e.preventDefault();
+      this.resumeFromPause();
+      return;
+    }
+    if (shouldPauseInsteadOfExtract(this.mode)) {
+      e.preventDefault();
+      this.showPause();
+    }
+  };
+
   private wireUI(): void {
     this.menu.onPlay = () => {
+      if (this.isUiClickLocked()) return;
       void this.audio.resume();
       void this.music.unlock();
       this.startLevel(this.currentLevelId);
     };
-    this.menu.onTech = () => this.openTech();
-    this.menu.onLevels = () => this.openLevels();
-    this.menu.onLoadout = () => this.openLoadout();
-    this.menu.onSettings = () => this.openSettings();
-    this.menu.onResearch = () => this.openResearch();
+    this.menu.onTech = () => {
+      if (this.isUiClickLocked()) return;
+      this.openTech();
+    };
+    this.menu.onLevels = () => {
+      if (this.isUiClickLocked()) return;
+      this.openLevels();
+    };
+    this.menu.onLoadout = () => {
+      if (this.isUiClickLocked()) return;
+      this.openLoadout();
+    };
+    this.menu.onSettings = () => {
+      if (this.isUiClickLocked()) return;
+      this.openSettings();
+    };
+    this.menu.onResearch = () => {
+      if (this.isUiClickLocked()) return;
+      this.openResearch();
+    };
+
+    this.pauseUI.onResume = () => {
+      if (this.isUiClickLocked()) return;
+      this.resumeFromPause();
+    };
+    this.pauseUI.onSettings = () => {
+      if (this.isUiClickLocked()) return;
+      this.returnToPause = true;
+      this.openSettings();
+    };
+    this.pauseUI.onShop = () => {
+      if (this.isUiClickLocked()) return;
+      this.returnToPause = true;
+      this.openTech();
+    };
+    this.pauseUI.onExtract = () => {
+      if (this.isUiClickLocked()) return;
+      this.extractFromPause();
+    };
 
     const els = this.hud.elements;
     els.btnTech.addEventListener('click', () => this.openTech());
@@ -356,7 +463,11 @@ export class Game {
     els.btnLoadout.addEventListener('click', () => this.openLoadout());
     els.btnMenu.addEventListener('click', () => {
       this.persist();
-      this.showMenu();
+      if (shouldPauseInsteadOfExtract(this.mode)) {
+        this.showPause();
+      } else {
+        this.showMenu({ forceReloadDemo: this.mode !== 'menu' });
+      }
     });
     els.btnMute.addEventListener('click', () => {
       this.audio.setMuted(!this.audio.muted);
@@ -382,11 +493,7 @@ export class Game {
         ownsArcBeam: this.loadout.isOwned('rocket_pod'),
         hasEquippedWeapon: this.loadout.allDerived().length > 0,
       });
-      if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
-        this.resumeGameplayFromShop();
-      } else {
-        this.showMenu();
-      }
+      this.closeActiveOverlay();
     };
     this.shopUI.onPurchase = (node) => this.buyUpgrade(node);
     this.shopUI.onBuyWeapon = (defId) => this.buyWeapon(defId);
@@ -522,7 +629,7 @@ export class Game {
 
     this.researchUI.onClose = () => {
       this.researchUI.hide();
-      this.showMenu();
+      this.closeActiveOverlay();
     };
     this.researchUI.onPurchase = (nodeId) => {
       const node = getResearchNode(nodeId);
@@ -612,20 +719,7 @@ export class Game {
 
     this.levelUI.onClose = () => {
       this.levelUI.hide();
-      const toPlaying =
-        this.pendingReturnMode === 'playing' &&
-        !this.menuDemoActive &&
-        this.cube.aliveBlocks > 0;
-      if (toPlaying) {
-        this.resumeGameplayFromShop();
-      } else if (this.cube.aliveBlocks > 0 && !this.menuDemoActive) {
-        this.mode = 'playing';
-        this.hud.setVisible(true);
-        this.refreshShopPrompt();
-        this.syncMusicToMode();
-      } else {
-        this.showMenu();
-      }
+      this.closeActiveOverlay();
     };
     this.levelUI.onSelect = (id) => {
       this.levelUI.hide();
@@ -674,12 +768,7 @@ export class Game {
 
     this.settingsUI.onClose = () => {
       this.settingsUI.hide();
-      // Never drop into combat from menu demo cube (aliveBlocks > 0 on menu)
-      if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
-        this.resumeGameplayFromShop();
-      } else {
-        this.showMenu();
-      }
+      this.closeActiveOverlay();
     };
     this.settingsUI.onGraphicsChange = (q) => {
       this.graphicsQuality = q;
@@ -707,9 +796,11 @@ export class Game {
       this.shopHintShown = false;
       this.hasSeenCinematic = false;
       this.settingsUI.hide();
+      this.hidePauseCard();
+      this.returnToPause = false;
       this.loadProgress();
       this.applyGraphics(this.graphicsQuality, false);
-      this.showMenu();
+      this.showMenu({ forceReloadDemo: true });
       this.toast('PROGRESS RESET');
     };
 
@@ -742,23 +833,24 @@ export class Game {
   }
 
   private openSettings(): void {
+    if (!canOpenOverlay(this.mode) && this.mode !== 'paused') return;
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
-    // Capture return BEFORE switching mode. Menu demo has a live cube, so
-    // aliveBlocks alone must not mean "resume combat".
-    const prev = this.mode;
-    const fromCombat =
-      !this.menuDemoActive &&
-      (prev === 'playing' ||
-        prev === 'levelclear' ||
-        prev === 'intro' ||
-        (prev === 'settings' && this.pendingReturnMode === 'playing') ||
-        (prev === 'tech' && this.pendingReturnMode === 'playing'));
+    this.researchUI.hide();
+    // Hide pause card so overlay-root cannot steal settings clicks
+    const keepPauseReturn = this.returnToPause || this.mode === 'paused';
+    this.hidePauseCard();
+    const fromCombat = isFromCombatSeat({
+      mode: this.mode,
+      menuDemoActive: this.menuDemoActive,
+      pendingReturnPlaying: this.pendingReturnMode === 'playing',
+    });
     this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
+    this.returnToPause = keepPauseReturn && fromCombat;
     this.mode = 'settings';
     this.hud.setVisible(false);
     this.settingsUI.show({
@@ -840,6 +932,7 @@ export class Game {
   }
 
   private openResearch(): void {
+    if (!canOpenOverlay(this.mode) && this.mode !== 'paused') return;
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
@@ -847,6 +940,15 @@ export class Game {
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.settingsUI.hide();
+    const keepPauseReturn = this.returnToPause || this.mode === 'paused';
+    this.hidePauseCard();
+    const fromCombat = isFromCombatSeat({
+      mode: this.mode,
+      menuDemoActive: this.menuDemoActive,
+      pendingReturnPlaying: this.pendingReturnMode === 'playing',
+    });
+    this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
+    this.returnToPause = keepPauseReturn && fromCombat;
     this.mode = 'research';
     this.hud.setVisible(false);
     this.researchUI.show(
@@ -1183,6 +1285,8 @@ export class Game {
 
   /** Restore combat camera/ship after closing the shop mid-stage. */
   private resumeGameplayFromShop(): void {
+    this.hidePauseCard();
+    this.returnToPause = false;
     this.mode = 'playing';
     this.menuDemoActive = false;
     this.shopOpen = false;
@@ -1225,10 +1329,9 @@ export class Game {
       else this.music.setContext('stage', { levelId: this.currentLevelId });
       return;
     }
-    // Sector select / settings: keep current bed (menu Boot Sequence) playing — no pause
-    if (m === 'levels' || m === 'settings') {
+    // Sector select / settings / combat pause: keep current bed — no restart
+    if (m === 'levels' || m === 'settings' || m === 'paused') {
       this.music.setContext('preserve');
-      // If we came from main menu, radio can stay hidden but bed continues
       return;
     }
     // Shop / research / loadout: duck + muffle, never stop the bed
@@ -1242,7 +1345,7 @@ export class Game {
 
   private extractToMenu(): void {
     this.vitals.fullRestore();
-    this.showMenu();
+    this.showMenu({ forceReloadDemo: true });
   }
 
   private applyStatsToSystems(): void {
@@ -1530,8 +1633,39 @@ export class Game {
     this.save.save();
   }
 
-  private showMenu(): void {
+  /**
+   * Return to the title screen.
+   * Closing settings / shop / sectors from the menu MUST NOT call loadLevel —
+   * that rebuild looks like a new stage starting.
+   */
+  private showMenu(opts?: { preserveDemo?: boolean; forceReloadDemo?: boolean }): void {
+    const leavingCombat =
+      !this.menuDemoActive &&
+      (this.mode === 'playing' ||
+        this.mode === 'intro' ||
+        this.mode === 'cinematic' ||
+        this.mode === 'core_death' ||
+        this.mode === 'dying' ||
+        this.mode === 'dead' ||
+        this.mode === 'levelclear' ||
+        this.mode === 'paused' ||
+        (this.pendingReturnMode === 'playing' && !opts?.preserveDemo));
+
+    const reloadDemo = shouldReloadMenuDemo({
+      forceReload: !!opts?.forceReloadDemo,
+      leavingCombat,
+      menuDemoActive: this.menuDemoActive,
+      preserveDemo: opts?.preserveDemo !== false,
+      hasDemoCube: this.menuDemoActive && this.cube.aliveBlocks > 0,
+    });
+
     this.mode = 'menu';
+    this.shopOpen = false;
+    this.returnToPause = false;
+    this.returnToClear = false;
+    this.pendingReturnMode = 'menu';
+    this.levelLoadBusy = false;
+    this.screenFx?.cancel();
     this.hud.setVisible(false);
     this.hud.setIntro(false);
     this.reticle.setVisible(false);
@@ -1541,21 +1675,64 @@ export class Game {
     this.loadoutUI.hide();
     this.settingsUI.hide();
     this.adsUI.hide?.();
+    this.hidePauseCard();
     this.cinematicRoot?.classList.add('panel-hidden');
     this.cinematicCube.group.visible = false;
     this.cube.group.visible = true;
     this.cubeAnimator.bind(this.cube);
-    this.overlay.innerHTML = '';
     this.cameraCtrl.endCinematic();
+    this.input.releaseAll();
     // Restore user graphics preference if FPS demotion was active
     if (this.effectiveQuality !== this.graphicsQuality) {
       this.applyGraphics(this.graphicsQuality, false);
     }
+    this.armUiClickLock();
+    const ownsDrone =
+      this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
+    this.menu.setChrome({
+      shopLocked: !ownsDrone && this.currency.dataFragments < 150,
+      shopLockHint: 'Need 150 FRAG',
+      missionLabel: `START · SECTOR ${this.currentLevelId}`,
+    });
     this.menu.setMeta(this.save.data.ascensionTier, this.currency.coreEnergy);
     this.menu.show();
-    this.startMenuDemo();
+    if (reloadDemo) {
+      this.startMenuDemo();
+    } else {
+      this.presentMenuDemo();
+    }
     void this.music.unlock().then(() => this.syncMusicToMode());
     this.syncMusicToMode();
+  }
+
+  /** Shared title-screen cube motion so settings/shop don't snap the lattice. */
+  private updateMenuPresentation(dt: number, now: number): void {
+    this.post.setPresentation(true);
+    this.cameraCtrl.yaw += dt * 0.1;
+    this.cameraCtrl.pitch = 0.3 + Math.sin(now * 0.18) * 0.06;
+    this.cameraCtrl.update(dt);
+    this.cube.update(dt, now);
+    this.cubeAnimator.update(dt);
+    this.cube.group.scale.setScalar(1);
+    this.cube.group.position.y = 0.35;
+    this.cube.group.rotation.x = 0.12;
+    this.cube.group.rotation.z = 0.06;
+    if (!this.cubeAnimator.isRotating) {
+      this.cube.group.rotation.y += dt * 0.045;
+    }
+  }
+
+  /** Pose the existing demo cube — no wipe, no loadLevel. */
+  private presentMenuDemo(): void {
+    this.menuDemoActive = true;
+    this.ship.group.visible = false;
+    this.hardpoints.group.visible = false;
+    this.cube.group.visible = true;
+    this.cinematicCube.group.visible = false;
+    this.cubeAnimator.bind(this.cube);
+    this.cubeAnimator.setDemoMode(true);
+    this.cubeAnimator.setEnabled(true);
+    this.cameraCtrl.setOrbitLimits(this.cube.halfExtent * 1.15);
   }
 
   /** Passive demo cube on main menu — rubik slices + slow orbit. */
@@ -1576,6 +1753,100 @@ export class Game {
     this.cameraCtrl.setOrbitLimits(this.cube.halfExtent * 1.15);
     this.cameraCtrl.yaw = 0.95;
     this.cameraCtrl.pitch = 0.32;
+  }
+
+  /** Close settings / shop / lattice / sectors to the correct seat. */
+  private closeActiveOverlay(): void {
+    this.shopUI.hide();
+    this.shopOpen = false;
+    this.settingsUI.hide();
+    this.researchUI.hide();
+    this.levelUI.hide();
+    this.loadoutUI.hide();
+    this.armUiClickLock();
+    const dest = resolveOverlayClose({
+      pendingReturnPlaying: this.pendingReturnMode === 'playing',
+      menuDemoActive: this.menuDemoActive,
+      returnToPause: this.returnToPause,
+      returnToClear: this.returnToClear,
+    });
+    if (dest === 'clear') {
+      this.returnToClear = false;
+      this.presentLevelClearCard();
+      return;
+    }
+    if (dest === 'pause') {
+      this.showPause();
+      return;
+    }
+    if (dest === 'resume') {
+      this.returnToPause = false;
+      this.resumeGameplayFromShop();
+      return;
+    }
+    this.showMenu({ preserveDemo: true });
+  }
+
+  private showPause(): void {
+    if (this.mode === 'core_death' || this.mode === 'dying' || this.mode === 'dead') {
+      return;
+    }
+    if (this.mode === 'cinematic') return;
+    if (this.mode === 'levelclear') {
+      // Clear card owns this moment — extract via its MENU
+      return;
+    }
+    if (this.mode !== 'paused') {
+      this.prePauseMode = this.mode === 'settings' || this.mode === 'tech' || this.mode === 'levels' || this.mode === 'research'
+        ? this.prePauseMode || 'playing'
+        : this.mode === 'intro'
+          ? 'intro'
+          : 'playing';
+    }
+    this.pendingReturnMode = 'playing';
+    this.returnToPause = true;
+    this.menuDemoActive = false;
+    this.shopOpen = false;
+    this.mode = 'paused';
+    this.menu.hide();
+    this.shopUI.hide();
+    this.settingsUI.hide();
+    this.researchUI.hide();
+    this.levelUI.hide();
+    this.loadoutUI.hide();
+    this.hud.setVisible(false);
+    this.reticle.setVisible(false);
+    this.tutorial.hide();
+    this.input.releaseAll();
+    this.armUiClickLock();
+    const level = getLevel(this.currentLevelId);
+    this.pauseUI.show({ sectorName: level.name, sectorId: level.id });
+    this.syncMusicToMode();
+  }
+
+  private resumeFromPause(): void {
+    this.hidePauseCard();
+    this.returnToPause = false;
+    this.input.releaseAll();
+    this.tutorial.showIfActive();
+    if (this.prePauseMode === 'intro') {
+      this.mode = 'intro';
+      this.shopOpen = false;
+      this.restoreShipVisual();
+      this.hud.setVisible(true);
+      const level = getLevel(this.currentLevelId);
+      this.hud.setIntro(true, `${level.name} · ${level.size}³ lattice`);
+      this.syncMusicToMode();
+      return;
+    }
+    this.resumeGameplayFromShop();
+  }
+
+  private extractFromPause(): void {
+    this.hidePauseCard();
+    this.returnToPause = false;
+    this.persist();
+    this.showMenu({ forceReloadDemo: true });
   }
 
   private stopMenuDemo(): void {
@@ -1600,6 +1871,9 @@ export class Game {
       return;
     }
 
+    if (this.mode === 'core_death' || this.mode === 'dying' || this.mode === 'dead') {
+      return;
+    }
     // Block shop during black cut — opening mid-fade left tech-tree empty + ship at scale 0
     if (this.screenFx.isActive || this.levelLoadBusy) {
       this.toast('STAND BY — SECTOR LOADING');
@@ -1611,6 +1885,7 @@ export class Game {
     if (this.mode === 'intro' || this.mode === 'cinematic') {
       this.finishIntroImmediate();
     }
+    if (this.mode === 'levelclear') this.returnToClear = true;
 
     void this.audio.resume();
     this.audio.playUi();
@@ -1620,14 +1895,16 @@ export class Game {
     this.settingsUI.hide();
     this.researchUI.hide();
     this.overlay.innerHTML = '';
-    // Resume combat only from live stage — not level-clear (avoids empty-lattice limbo)
-    const fromCombat =
-      !this.menuDemoActive &&
-      (this.mode === 'playing' ||
-        this.mode === 'intro' ||
-        this.mode === 'cinematic' ||
-        (this.mode === 'tech' && this.pendingReturnMode === 'playing'));
+    // Resume combat only from live stage — not the menu demo cube
+    const keepPauseReturn = this.returnToPause || this.mode === 'paused';
+    this.hidePauseCard();
+    const fromCombat = isFromCombatSeat({
+      mode: this.mode,
+      menuDemoActive: this.menuDemoActive,
+      pendingReturnPlaying: this.pendingReturnMode === 'playing',
+    });
     this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
+    this.returnToPause = keepPauseReturn && fromCombat;
     this.mode = 'tech';
     this.shopOpen = true;
     this.hud.setVisible(false);
@@ -1675,14 +1952,16 @@ export class Game {
     this.menu.hide();
     this.shopUI.hide();
     this.loadoutUI.hide();
-    const fromCombat =
-      !this.menuDemoActive &&
-      (this.mode === 'playing' ||
-        this.mode === 'intro' ||
-        this.mode === 'levelclear' ||
-        (this.mode === 'tech' && this.pendingReturnMode === 'playing') ||
-        (this.mode === 'settings' && this.pendingReturnMode === 'playing'));
+    this.settingsUI.hide();
+    const keepPauseReturn = this.returnToPause || this.mode === 'paused';
+    this.hidePauseCard();
+    const fromCombat = isFromCombatSeat({
+      mode: this.mode,
+      menuDemoActive: this.menuDemoActive,
+      pendingReturnPlaying: this.pendingReturnMode === 'playing',
+    });
     this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
+    this.returnToPause = keepPauseReturn && fromCombat;
     this.mode = 'levels';
     this.hud.setVisible(false);
     this.levelUI.show(this.save.data.highestLevel, this.currentLevelId);
@@ -1792,7 +2071,6 @@ export class Game {
   }
 
   private startLevelImmediate(id: number): void {
-    this.levelLoadGen++;
     const level = getLevel(id);
     this.currentLevelId = id;
     this.levelClearHandled = false;
@@ -1807,6 +2085,8 @@ export class Game {
     this.loadoutUI.hide();
     this.settingsUI.hide();
     this.adsUI.hide?.();
+    this.hidePauseCard();
+    this.returnToPause = false;
     this.overlay.innerHTML = '';
     this.hud.setIntro(false);
     // Never inherit scale 0 / off-map pose from cinematic or death
@@ -2076,6 +2356,11 @@ export class Game {
     if (this.mode === 'core_death' || this.levelClearHandled) return;
     this.mode = 'core_death';
     this.coreDeathT = 0;
+    this.shopUI.hide();
+    this.shopOpen = false;
+    this.hidePauseCard();
+    this.returnToPause = false;
+    this.hud.setVisible(false);
     this.hud.setCrosshairVisible(false);
     this.reticle.setVisible(false);
     this.weapon.reset();
@@ -2100,11 +2385,11 @@ export class Game {
 
     // Disconnect remaining shell — shatter outward, float away
     const remaining = this.cube.ejectAllRemainingBlocks(this.time.elapsed);
-    const budget = Math.max(12, Math.floor(48 * this.vfxScale));
+    // Cap mesh shatter to the 96-piece pool; rest get cheap sparks
+    const budget = Math.max(8, Math.min(28, Math.floor(24 * this.vfxScale)));
     const step = Math.max(1, Math.ceil(remaining.length / budget));
     for (let i = 0; i < remaining.length; i += step) {
       const b = remaining[i];
-      // Radial bias from origin so chunks disconnect and fly out
       const len = Math.hypot(b.x, b.y, b.z) || 1;
       this.shatter.shatter(
         b.x,
@@ -2115,13 +2400,12 @@ export class Game {
         b.x / len,
         b.y / len,
         b.z / len,
-        Math.min(1, this.vfxScale * 0.95)
+        Math.min(0.7, this.vfxScale * 0.65)
       );
     }
-    // Fill residual sample with lighter sparks (no mesh pool overflow)
-    for (let i = 1; i < remaining.length && i < budget * 2; i += step + 1) {
+    for (let i = 1; i < remaining.length && i < budget * 3; i += step + 1) {
       const b = remaining[i];
-      this.particles.spawn(b.x, b.y, b.z, COLORS.cyan, 4, 10, 'debris');
+      this.particles.spawn(b.x, b.y, b.z, COLORS.cyan, 3, 8, 'debris');
     }
 
     this.showPhaseChip('NUCLEUS DESTROYED', 'destroyed');
@@ -2158,7 +2442,8 @@ export class Game {
   private onLevelClear(): void {
     if (this.levelClearHandled) return;
     this.levelClearHandled = true;
-    this.mode = 'levelclear';
+    this.hidePauseCard();
+    this.returnToPause = false;
     this.audio.playLevelClear();
     this.hud.setShopAffordable(false, false);
 
@@ -2166,10 +2451,10 @@ export class Game {
     this.wipeCombatSession();
 
     const level = getLevel(this.currentLevelId);
-    let fragGain = Math.round(
+    const fragGain = Math.round(
       level.rewardFragments * this.tech.stats.fragmentMul * this.clearRewardMul
     );
-    let coreGain = Math.round(
+    const coreGain = Math.round(
       level.rewardCoreEnergy * this.tech.stats.coreEnergyMul * this.clearRewardMul
     );
     this.currency.addFragments(fragGain, 1);
@@ -2185,22 +2470,54 @@ export class Game {
     this.loadout.syncLevelUnlocks(this.save.data.highestLevel);
     this.persist();
 
+    this.clearCard = {
+      name: level.name,
+      frag: fragGain,
+      core: coreGain,
+      doubled: this.clearRewardMul >= 2,
+    };
+    this.presentLevelClearCard();
+  }
+
+  /** Re-show the LEVEL CLEAR card (first time or after shop/loadout). Does not re-pay. */
+  private presentLevelClearCard(): void {
+    const card = this.clearCard;
+    if (!card) {
+      this.showMenu({ forceReloadDemo: true });
+      return;
+    }
+    this.mode = 'levelclear';
+    this.returnToClear = false;
+    this.shopOpen = false;
+    this.hidePauseCard();
+    this.hud.setVisible(false);
+    this.shopUI.hide();
+    this.loadoutUI.hide();
+    this.settingsUI.hide();
+    this.menu.hide();
+    this.armUiClickLock();
+
+    const rewardText = card.doubled
+      ? `+${card.frag} FRAG · +${card.core} CORE (×2)`
+      : `+${card.frag} FRAG · +${card.core} CORE`;
+
     this.overlay.innerHTML = `
-      <div class="overlay-card interactive">
-        <h2>LEVEL CLEAR</h2>
-        <p>${level.name}</p>
-        <div class="reward">+${fragGain} FRAG · +${coreGain} CORE</div>
+      <div class="overlay-card interactive" role="dialog" aria-modal="true" aria-labelledby="clear-title">
+        <h2 id="clear-title">LEVEL CLEAR</h2>
+        <p>${card.name}</p>
+        <div class="reward">${rewardText}</div>
         <button class="menu-btn primary" id="next-level" type="button">NEXT SECTOR</button>
         <button class="menu-btn" id="clear-loadout" type="button">LOADOUT</button>
-        <button class="menu-btn" id="clear-tech" type="button">TECH SHOP</button>
-        <button class="menu-btn magenta" id="clear-ad" type="button">WATCH AD · ×2 REWARD</button>
-        <button class="menu-btn" id="clear-menu" type="button">MENU</button>
+        <button class="menu-btn" id="clear-tech" type="button">SHOP</button>
+        <button class="menu-btn magenta" id="clear-ad" type="button"${
+          card.doubled ? ' disabled' : ''
+        }>${card.doubled ? 'REWARD DOUBLED' : 'WATCH AD · ×2 REWARD'}</button>
+        <button class="menu-btn" id="clear-menu" type="button">TITLE SCREEN</button>
       </div>
     `;
 
-    let doubled = this.clearRewardMul >= 2;
     this.overlay.querySelector('#clear-ad')!.addEventListener('click', () => {
-      if (doubled) return;
+      if (!this.clearCard || this.clearCard.doubled) return;
       const ok = this.adsUI.show(this.ads, {
         placement: 'clear_double',
         rewardText: 'Double this clear reward',
@@ -2213,22 +2530,28 @@ export class Game {
         void this.ads
           .offer(p)
           .then(({ reward }) => {
-            if (reward?.fragmentMul && !doubled) {
-              doubled = true;
-              const extraF = fragGain;
-              const extraC = coreGain;
+            if (reward?.fragmentMul && this.clearCard && !this.clearCard.doubled) {
+              this.clearCard.doubled = true;
+              const extraF = this.clearCard.frag;
+              const extraC = this.clearCard.core;
               this.currency.addFragments(extraF, 1);
               this.currency.addCoreEnergy(extraC, 1);
-              fragGain *= 2;
-              coreGain *= 2;
+              this.clearCard.frag *= 2;
+              this.clearCard.core *= 2;
               const rew = this.overlay.querySelector('.reward');
-              if (rew) rew.textContent = `+${fragGain} FRAG · +${coreGain} CORE (×2)`;
+              if (rew) {
+                rew.textContent = `+${this.clearCard.frag} FRAG · +${this.clearCard.core} CORE (×2)`;
+              }
+              const adBtn = this.overlay.querySelector('#clear-ad') as HTMLButtonElement | null;
+              if (adBtn) {
+                adBtn.disabled = true;
+                adBtn.textContent = 'REWARD DOUBLED';
+              }
               this.persist();
               this.toast('REWARD DOUBLED');
             }
           })
           .finally(() => {
-            // Always clear ad dim layer so clear card stays interactive
             this.adsUI.hide();
           });
       };
@@ -2239,20 +2562,26 @@ export class Game {
 
     this.overlay.querySelector('#next-level')!.addEventListener('click', () => {
       this.overlay.innerHTML = '';
+      this.returnToClear = false;
       this.startLevel(this.currentLevelId + 1);
     });
     this.overlay.querySelector('#clear-loadout')!.addEventListener('click', () => {
+      this.returnToClear = true;
       this.overlay.innerHTML = '';
       this.openLoadout();
+      if (this.mode !== 'tech') this.presentLevelClearCard();
     });
     this.overlay.querySelector('#clear-tech')!.addEventListener('click', () => {
+      this.returnToClear = true;
       this.overlay.innerHTML = '';
       this.openTech();
+      if (this.mode !== 'tech') this.presentLevelClearCard();
     });
     this.overlay.querySelector('#clear-menu')!.addEventListener('click', () => {
       this.overlay.innerHTML = '';
+      this.returnToClear = false;
       this.currentLevelId = Math.min(this.currentLevelId + 1, this.save.data.highestLevel);
-      this.showMenu();
+      this.showMenu({ forceReloadDemo: true });
     });
   }
 
@@ -2278,11 +2607,15 @@ export class Game {
 
   private onVisibility = (): void => {
     this.hidden = document.hidden;
-    if (!document.hidden) this.time.reset();
-    this.persist();
+    if (!document.hidden) {
+      this.time.reset();
+      void this.music.unlock();
+    }
+    if (this.mode !== 'core_death' && this.mode !== 'dying') this.persist();
   };
 
   private maybeSave(dt: number): void {
+    if (this.mode === 'core_death' || this.mode === 'dying') return;
     this.saveAccum += dt;
     if (this.saveAccum > 10) {
       this.saveAccum = 0;
@@ -2300,6 +2633,7 @@ export class Game {
       this.mode === 'playing' ||
       this.mode === 'intro' ||
       this.mode === 'cinematic' ||
+      this.mode === 'core_death' ||
       this.mode === 'levelclear'
     ) {
       if (this.time.fps < PERF.lowFpsThreshold) {
@@ -2342,21 +2676,9 @@ export class Game {
     this.ambient.update(dt);
     this.screenFx.update(dt);
 
-    if (this.mode === 'menu') {
-      // Demo cube: smooth orbit presentation
-      this.post.setPresentation(true);
-      this.cameraCtrl.yaw += dt * 0.1;
-      this.cameraCtrl.pitch = 0.3 + Math.sin(now * 0.18) * 0.06;
-      this.cameraCtrl.update(dt);
-      this.cube.update(dt, now);
-      this.cubeAnimator.update(dt);
-      this.cube.group.scale.setScalar(1);
-      this.cube.group.position.y = 0.35;
-      this.cube.group.rotation.x = 0.12;
-      this.cube.group.rotation.z = 0.06;
-      if (!this.cubeAnimator.isRotating) {
-        this.cube.group.rotation.y += dt * 0.045;
-      }
+    if (this.mode === 'menu' || (this.mode === 'settings' && this.menuDemoActive)) {
+      // Demo cube: smooth orbit presentation (settings must not pop the cube)
+      this.updateMenuPresentation(dt, now);
     } else if (this.mode === 'cinematic' && this.cinematic) {
       this.post.setPresentation(true);
       // Animate the instanced cinematic cube only — real cube stays pristine & hidden
@@ -2397,14 +2719,15 @@ export class Game {
         this.cube.totalBlocks
       );
       if (progress >= 1) this.finishIntro();
-    } else if (this.mode === 'settings') {
-      // Static backdrop — keep menu demo if it was running
-      this.cameraCtrl.yaw += dt * 0.04;
+    } else if (this.mode === 'paused') {
+      this.post.setPresentation(false);
       this.cameraCtrl.update(dt);
-      if (this.menuDemoActive) {
-        this.cube.update(dt, now);
-        this.cubeAnimator.update(dt);
-      }
+      this.ship.update(this.cameraCtrl, 0);
+    } else if (this.mode === 'settings') {
+      // Combat-seat settings: hold the live cube, do not load a demo stage
+      this.post.setPresentation(false);
+      this.cameraCtrl.update(dt);
+      this.ship.update(this.cameraCtrl, 0);
     } else if (this.mode === 'playing' || this.mode === 'levelclear') {
       this.input.update(dt);
       const zoom = this.input.consumeZoom();
@@ -2560,15 +2883,12 @@ export class Game {
       if (this.pendingReturnMode === 'playing' && !this.menuDemoActive) {
         this.cameraCtrl.update(dt);
         this.ship.update(this.cameraCtrl, dt);
+      } else if (this.menuDemoActive) {
+        this.updateMenuPresentation(dt, now);
       } else {
         this.cameraCtrl.yaw += dt * 0.05;
         this.cameraCtrl.update(dt);
-        if (this.menuDemoActive) {
-          this.cube.update(dt, now);
-          this.cubeAnimator.update(dt);
-        } else {
-          this.ship.update(this.cameraCtrl, dt);
-        }
+        this.ship.update(this.cameraCtrl, dt);
       }
     }
 
@@ -2583,6 +2903,7 @@ export class Game {
     cancelAnimationFrame(this.raf);
     for (const u of this.unsubs) u();
     window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('keydown', this.onOverlayKey);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.cube.dispose();
     this.cinematicCube.dispose();

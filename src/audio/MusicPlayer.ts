@@ -344,7 +344,12 @@ export class MusicPlayer {
       this.playTrack(MUSIC_INTRO, { loop: true, forceRestart: true, fade: false });
       return;
     }
-    // stage / ui / dying: continue shuffle without gaps
+    if (this.context === 'ui') {
+      // Shop duck: keep the same bed — do not shuffle into a new combat track
+      this.ensurePlaying();
+      return;
+    }
+    // stage / dying: continue shuffle without gaps
     this.ensureShuffle();
     const t = this.pickShuffleNext(true);
     if (t) this.playTrack(t, { loop: false, forceRestart: true, fade: true });
