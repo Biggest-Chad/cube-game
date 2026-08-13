@@ -33,10 +33,10 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     name: 'Fighter',
     description:
       'Agile interceptor. Hunts enemy drones & large projectiles. Light block damage.',
-    blockDamageMul: 0.4375,
+    blockDamageMul: 0.65625,
     splashRadius: 0,
     armorPierce: 0,
-    antiDroneMul: 1.5,
+    antiDroneMul: 2.25,
     pointDefenseMul: 1.2,
     frontalShield: 0,
     fireRateMul: 1.4,

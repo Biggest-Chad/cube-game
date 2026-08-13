@@ -27,7 +27,8 @@ function isHeavyDecor(name: string): boolean {
     name.startsWith('Metro') ||
     name === 'HorizonGlow' ||
     name === 'CityAccents' ||
-    name === 'CityPodiums'
+    name === 'CityPodiums' ||
+    name.startsWith('Proto_')
   );
 }
 
@@ -82,6 +83,7 @@ export class GridVoidArena implements ArenaInstance {
   private fog = new THREE.Fog(0x02060c, 48, 155);
   private envMap: THREE.Texture | null = null;
   private quality: 0 | 1 | 2 = 1;
+  private elapsed = 0;
   private disposed = false;
 
   private constructor() {
@@ -180,8 +182,11 @@ export class GridVoidArena implements ArenaInstance {
     this.fog.far = 155;
   }
 
-  update(_dt: number): void {
-    // Static backdrop — no per-frame city animation.
+  update(dt: number): void {
+    if (this.disposed) return;
+    this.elapsed += dt;
+    const tick = this.root.userData.tick as ((t: number, dt: number) => void) | undefined;
+    tick?.(this.elapsed, dt);
   }
 
   dispose(): void {

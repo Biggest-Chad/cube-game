@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { addCircuitFloor } from './circuitFloor';
+import { addCitySkyline } from './citySkyline';
 
 /**
- * Distant floor fade + cheap circuit deck. No trains, flyers, or glitter.
+ * Distant floor fade + cheap circuit deck + instanced skyline / metro.
  */
 export function addCityAmbience(root: THREE.Group): void {
   addCircuitFloor(root);
+  addCitySkyline(root);
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     if (o.name !== 'CityStreets' && o.name !== 'CityLots' && o.name !== 'Ground' && o.name !== 'GroundApron' && o.name !== 'HorizonCore') {
