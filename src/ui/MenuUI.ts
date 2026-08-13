@@ -4,8 +4,9 @@ export class MenuUI {
   private root: HTMLElement;
   private ascensionTier = 0;
   private coreEnergy = 0;
-  private shopLocked = false;
-  private shopLockHint = 'Need 150 FRAG';
+  private showShop = false;
+  private showLoadout = false;
+  private showLattice = false;
   private missionLabel = 'START MISSION';
 
   onPlay: (() => void) | null = null;
@@ -26,12 +27,14 @@ export class MenuUI {
   }
 
   setChrome(opts: {
-    shopLocked: boolean;
-    shopLockHint?: string;
+    showShop: boolean;
+    showLoadout: boolean;
+    showLattice: boolean;
     missionLabel?: string;
   }): void {
-    this.shopLocked = opts.shopLocked;
-    if (opts.shopLockHint) this.shopLockHint = opts.shopLockHint;
+    this.showShop = opts.showShop;
+    this.showLoadout = opts.showLoadout;
+    this.showLattice = opts.showLattice;
     if (opts.missionLabel) this.missionLabel = opts.missionLabel;
   }
 
@@ -59,20 +62,27 @@ export class MenuUI {
               <button class="menu-btn menu-subbtn ui-btn" id="m-levels" type="button">
                 <span class="menu-btn-label">Sectors</span>
               </button>
-              <button class="menu-btn menu-subbtn ui-btn" id="m-tech" type="button"
-                ${this.shopLocked ? `disabled aria-disabled="true" title="${this.shopLockHint}"` : ''}>
+              ${
+                this.showShop
+                  ? `<button class="menu-btn menu-subbtn ui-btn" id="m-tech" type="button">
                 <span class="menu-btn-label">Shop</span>
-                ${this.shopLocked ? `<span class="menu-btn-lock">${this.shopLockHint}</span>` : ''}
-              </button>
-              <button class="menu-btn menu-subbtn ui-btn" id="m-research" type="button">
+              </button>`
+                  : ''
+              }
+              ${
+                this.showLattice
+                  ? `<button class="menu-btn menu-subbtn ui-btn" id="m-research" type="button">
                 <span class="menu-btn-label">Lattice</span>
-                <span class="menu-btn-lock">Core research</span>
-              </button>
-              <button class="menu-btn menu-subbtn ui-btn" id="m-loadout" type="button"
-                ${this.shopLocked ? `disabled aria-disabled="true" title="${this.shopLockHint}"` : ''}>
+              </button>`
+                  : ''
+              }
+              ${
+                this.showLoadout
+                  ? `<button class="menu-btn menu-subbtn ui-btn" id="m-loadout" type="button">
                 <span class="menu-btn-label">Loadout</span>
-                ${this.shopLocked ? `<span class="menu-btn-lock">${this.shopLockHint}</span>` : ''}
-              </button>
+              </button>`
+                  : ''
+              }
               <button class="menu-btn menu-subbtn ui-btn" id="m-settings" type="button">
                 <span class="menu-btn-label">Settings</span>
               </button>

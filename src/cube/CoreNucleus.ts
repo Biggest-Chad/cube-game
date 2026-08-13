@@ -61,10 +61,21 @@ export class CoreNucleus {
   private arcTimer = 0;
   private enrageTimer = 0;
   private pulse = 0;
+  private hitFlinch = 0;
+  private leakT = 0;
+  private dying = false;
+  private deathT = 0;
   private coreMesh: THREE.Mesh | null = null;
+  private membrane: THREE.Mesh | null = null;
   private ringMesh: THREE.Mesh | null = null;
   private glowMat: THREE.MeshBasicMaterial | null = null;
   private ringMat: THREE.MeshBasicMaterial | null = null;
+  private membraneMat: THREE.ShaderMaterial | null = null;
+  private tendrils: THREE.Mesh[] = [];
+  private tendrilDirs: THREE.Vector3[] = [];
+  private ichorPts: THREE.Points | null = null;
+  private ichorPos: Float32Array | null = null;
+  private ichorLife: Float32Array | null = null;
   private baseScale = 1;
   private _tmp = new THREE.Vector3();
   private _tmp2 = new THREE.Vector3();
@@ -114,10 +125,9 @@ export class CoreNucleus {
     // Peak render scale of core mesh / ring (matches updateVfx pulses)
     // Visual pulse must not inflate the hitbox (would magnet-snipe during fire)
     const scaleMul = 1.12;
-    // Body: unit icosahedron radius 1; ring: major 1.35 + tube 0.06
-    const bodyR = this.baseScale * scaleMul;
-    const ringR = this.baseScale * 1.41 * scaleMul;
-    const visualMax = Math.max(bodyR, ringR);
+    const bodyR = this.baseScale * 1.08 * scaleMul;
+    const tendrilR = this.baseScale * 1.55;
+    const visualMax = Math.max(bodyR, tendrilR);
     // 10–15% padding (use 12.5%); floor scales with cube half-extent so small sectors stay hittable
     const he = this.cube?.halfExtent ?? 4;
     return Math.max(he * 0.22, visualMax * 1.125);
@@ -238,20 +248,13 @@ export class CoreNucleus {
     this.hp = this.maxHp;
 
     let shell = 0;
-    let coreBlocks = 0;
     const n = this.cube.aliveBlocks;
     for (let id = 0; id < n; id++) {
       const t = this.cube.getBlockType(id);
-      if (t === BlockType.Empty) continue;
-      if (t === BlockType.Core) coreBlocks++;
-      else shell++;
+      if (t !== BlockType.Empty) shell++;
     }
     this.shellTotal = Math.max(0, shell);
     this.shellAlive = shell;
-
-    // Inflate individual core block HP so they never die before shared pool
-    // (shared pool is the real gate)
-    this.cube.boostCoreBlockHealth(this.maxHp * 10);
 
     this.buildVfx();
     bus.emit('core-started', {
@@ -284,37 +287,152 @@ export class CoreNucleus {
   }
 
   private buildVfx(): void {
+    this.clearVfx();
     const he = this.cube?.halfExtent ?? 4;
-    this.baseScale = Math.max(0.55, he * 0.16);
-    this.glowMat = new THREE.MeshBasicMaterial({
-      color: COLORS.core,
+    this.baseScale = Math.max(0.62, he * 0.2);
+    this.dying = false;
+    this.deathT = 0;
+
+    this.membraneMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uPulse: { value: 0 },
+        uPain: { value: 0 },
+        uHp: { value: 1 },
+        uExposed: { value: 0 },
+        uDying: { value: 0 },
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uPulse;
+        uniform float uPain;
+        uniform float uDying;
+        varying vec3 vN;
+        varying vec3 vP;
+        varying float vWobble;
+        void main() {
+          vec3 p = position;
+          float n = sin(p.x * 3.4 + uTime * 2.2) * sin(p.y * 2.8 - uTime * 1.7) * sin(p.z * 3.7 + uTime * 1.4);
+          float strain = sin(uTime * 6.2 + p.y * 9.0) * (0.045 + uPain * 0.11);
+          float disp = 0.14 + uPulse * 0.22 + uPain * 0.28 + uDying * 0.55;
+          p += normal * (n * disp + strain);
+          p += normal * uDying * sin(uTime * 18.0 + p.x * 20.0) * 0.12;
+          vWobble = n;
+          vN = normalize(normalMatrix * normal);
+          vP = p;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uPulse;
+        uniform float uPain;
+        uniform float uHp;
+        uniform float uExposed;
+        uniform float uDying;
+        varying vec3 vN;
+        varying vec3 vP;
+        varying float vWobble;
+        void main() {
+          float fres = pow(1.0 - abs(dot(normalize(vN), vec3(0.0, 0.0, 1.0))), 2.2);
+          float veins = abs(sin(vP.x * 11.0 + uTime) * sin(vP.y * 9.0 - uTime * 1.3));
+          vec3 meat = mix(vec3(0.18, 0.02, 0.06), vec3(0.62, 0.05, 0.18), veins);
+          vec3 bile = vec3(0.22, 0.55, 0.08);
+          vec3 hot = vec3(1.0, 0.18, 0.42);
+          vec3 col = mix(meat, hot, uPulse * 0.7 + uPain * 0.5);
+          col = mix(col, bile, (1.0 - uHp) * 0.45);
+          col = mix(col, vec3(1.0, 0.55, 0.12), uExposed * 0.25);
+          col += fres * vec3(0.85, 0.08, 0.35);
+          col += vec3(vWobble * 0.12, 0.0, 0.06);
+          float a = 0.42 + fres * 0.38 + uPulse * 0.2 + uDying * 0.25;
+          a *= mix(1.0, 0.35, uDying);
+          gl_FragColor = vec4(col, clamp(a, 0.15, 0.92));
+        }
+      `,
       transparent: true,
-      opacity: 0.55,
-      blending: THREE.AdditiveBlending,
       depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+    });
+
+    this.membrane = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.08, 3),
+      this.membraneMat
+    );
+    this.membrane.scale.setScalar(this.baseScale);
+    this.vfxGroup.add(this.membrane);
+
+    this.glowMat = new THREE.MeshBasicMaterial({
+      color: 0x4a0014,
+      transparent: true,
+      opacity: 0.92,
     });
     this.coreMesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1, 1),
+      new THREE.IcosahedronGeometry(0.52, 2),
       this.glowMat
     );
     this.coreMesh.scale.setScalar(this.baseScale);
     this.vfxGroup.add(this.coreMesh);
 
     this.ringMat = new THREE.MeshBasicMaterial({
-      color: COLORS.magenta,
+      color: 0x6a1028,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.45,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
     this.ringMesh = new THREE.Mesh(
-      new THREE.TorusGeometry(1.35, 0.06, 8, 48),
+      new THREE.TorusGeometry(1.22, 0.045, 10, 56),
       this.ringMat
     );
     this.ringMesh.scale.setScalar(this.baseScale);
-    this.ringMesh.rotation.x = Math.PI / 2;
+    this.ringMesh.rotation.x = Math.PI / 2.4;
     this.vfxGroup.add(this.ringMesh);
+
+    const tendrilMat = new THREE.MeshBasicMaterial({
+      color: 0x3a0814,
+      transparent: true,
+      opacity: 0.88,
+    });
+    this.tendrils = [];
+    this.tendrilDirs = [];
+    const tCount = 9;
+    for (let i = 0; i < tCount; i++) {
+      const phi = Math.acos(-1 + (2 * i) / tCount);
+      const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+      const dir = new THREE.Vector3(
+        Math.sin(phi) * Math.cos(theta),
+        Math.cos(phi),
+        Math.sin(phi) * Math.sin(theta)
+      ).normalize();
+      const mesh = new THREE.Mesh(
+        new THREE.ConeGeometry(0.11, 1.15, 6, 1, true),
+        tendrilMat.clone()
+      );
+      mesh.geometry.translate(0, 0.55, 0);
+      this.vfxGroup.add(mesh);
+      this.tendrils.push(mesh);
+      this.tendrilDirs.push(dir);
+    }
+
+    const ichorN = 48;
+    this.ichorPos = new Float32Array(ichorN * 3);
+    this.ichorLife = new Float32Array(ichorN);
+    const igeo = new THREE.BufferGeometry();
+    igeo.setAttribute('position', new THREE.BufferAttribute(this.ichorPos, 3));
+    this.ichorPts = new THREE.Points(
+      igeo,
+      new THREE.PointsMaterial({
+        color: 0x8a1028,
+        size: 0.11,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    this.vfxGroup.add(this.ichorPts);
   }
 
   /** Shell block destroyed or resurrected — keep counts accurate. */
@@ -445,8 +563,9 @@ export class CoreNucleus {
       };
     }
 
-    // Flash nucleus VFX
-    this.pulse = Math.min(1, this.pulse + 0.45);
+    // Flash / flinch — living tissue reacting to the wound
+    this.pulse = Math.min(1, this.pulse + 0.55);
+    this.hitFlinch = Math.min(1, this.hitFlinch + 0.85);
     return {
       coreDamage: toCore,
       transferDamage: transfer,
@@ -529,6 +648,7 @@ export class CoreNucleus {
     this.destroyAllCoreBlocks(now);
     this.completed = true;
     this.active = false;
+    this.beginDeath();
     bus.emit('core-destroyed', {
       levelId: this.levelId,
       attribute: this.attribute,
@@ -541,6 +661,18 @@ export class CoreNucleus {
     });
   }
 
+  beginDeath(): void {
+    this.dying = true;
+    this.deathT = 0;
+    this.pulse = 1;
+    this.hitFlinch = 1;
+    if (this.membraneMat) this.membraneMat.uniforms.uDying.value = 1;
+  }
+
+  get isDying(): boolean {
+    return this.dying;
+  }
+
   private destroyAllCoreBlocks(now: number): void {
     if (!this.cube) return;
     const ids = this.cube.collectIdsOfType(BlockType.Core).sort((a, b) => b - a);
@@ -548,8 +680,6 @@ export class CoreNucleus {
       this.cube.applyDamageDirect(id, 1e12, now);
     }
     this.active = false;
-    if (this.coreMesh) this.coreMesh.visible = false;
-    if (this.ringMesh) this.ringMesh.visible = false;
   }
 
   /**
@@ -563,8 +693,13 @@ export class CoreNucleus {
       fireRateMulOut?: { value: number };
     }
   ): void {
+    if (this.dying) {
+      this.updateDeath(dt);
+      return;
+    }
     if (!this.active) return;
     this.pulse = Math.max(0, this.pulse - dt * 1.8);
+    this.hitFlinch = Math.max(0, this.hitFlinch - dt * 2.4);
     this.overloadTimer = Math.max(0, this.overloadTimer - dt);
     this.enrageTimer = Math.max(0, this.enrageTimer - dt);
 
@@ -633,67 +768,131 @@ export class CoreNucleus {
     return new THREE.Vector3(Math.cos(u), v, Math.sin(u)).normalize();
   }
 
+  updateDeath(dt: number): void {
+    this.deathT += dt;
+    this.pulse = 1;
+    this.hitFlinch = 1;
+    this.updateVfx(dt);
+    if (this.deathT > 2.4) {
+      this.vfxGroup.visible = false;
+    }
+  }
+
   private updateVfx(dt: number): void {
     if (!this.coreMesh || !this.glowMat) return;
-    this.coreMesh.rotation.y += dt * (0.6 + (this.overloadTimer > 0 ? 4 : 0));
-    this.coreMesh.rotation.x += dt * (0.25 + (this.overloadTimer > 0 ? 2 : 0));
-    if (this.ringMesh) {
-      this.ringMesh.rotation.z += dt * (0.8 + (this.exposed ? 1.5 : 0));
-    }
-
+    const t = performance.now() * 0.001;
     const hpR = this.hp / Math.max(1, this.maxHp);
-    let color: number = COLORS.core;
-    let opacity = 0.4 + (1 - hpR) * 0.35 + this.pulse * 0.3;
-    let scale = this.baseScale * (1 + this.pulse * 0.12);
+    const pain = this.hitFlinch;
+    const breath = 1 + Math.sin(t * 2.15) * 0.045 + Math.sin(t * 5.1) * 0.02;
+    const strain = this.exposed ? 1.08 : 1;
+    let scale = this.baseScale * breath * strain * (1 + this.pulse * 0.16);
 
-    if (this.overloadTimer > 0 && this.overloadKind === 'rage') {
-      color = 0xff2200;
-      opacity = 0.75 + Math.sin(performance.now() * 0.04) * 0.2;
-      scale = this.baseScale * (1.15 + Math.sin(performance.now() * 0.05) * 0.12);
-      // Aggressive vibration
-      this.coreMesh.position.set(
-        (Math.random() - 0.5) * 0.18,
-        (Math.random() - 0.5) * 0.18,
-        (Math.random() - 0.5) * 0.18
-      );
-    } else if (this.overloadTimer > 0 && this.overloadKind === 'regen') {
-      color = 0x44ff88;
-      opacity = 0.7;
-      scale = this.baseScale * 1.2;
-      this.coreMesh.position.set(0, 0, 0);
-    } else if (this.overloadTimer > 0 && this.overloadKind === 'swarm') {
-      color = 0xff66ff;
-      opacity = 0.7;
-      scale = this.baseScale * (1.1 + Math.sin(performance.now() * 0.03) * 0.08);
-      this.coreMesh.position.set(0, 0, 0);
-    } else if (this.exposed) {
-      color = 0xff6688;
-      opacity = 0.55 + Math.sin(performance.now() * 0.008) * 0.12;
-      scale = this.baseScale * (1.05 + Math.sin(performance.now() * 0.006) * 0.04);
-      this.coreMesh.position.set(0, 0, 0);
-    } else if (this.decaying) {
-      color = 0xffaa44;
-      opacity = 0.5 + Math.sin(performance.now() * 0.01) * 0.15;
-      this.coreMesh.position.set(
-        (Math.random() - 0.5) * 0.05,
-        (Math.random() - 0.5) * 0.05,
-        (Math.random() - 0.5) * 0.05
+    if (this.dying) {
+      const burst = this.deathT < 0.28 ? 1.35 + this.deathT * 2.2 : Math.max(0.05, 1.6 - this.deathT * 0.85);
+      scale = this.baseScale * burst;
+      this.vfxGroup.rotation.x += dt * (4 + this.deathT * 8);
+      this.vfxGroup.rotation.z += dt * 6;
+      this.vfxGroup.position.set(
+        (Math.random() - 0.5) * 0.35,
+        (Math.random() - 0.5) * 0.35,
+        (Math.random() - 0.5) * 0.35
       );
     } else {
-      this.coreMesh.position.set(0, 0, 0);
+      this.vfxGroup.position.set(
+        (Math.random() - 0.5) * pain * 0.14,
+        (Math.random() - 0.5) * pain * 0.14,
+        (Math.random() - 0.5) * pain * 0.14
+      );
     }
 
-    this.glowMat.color.setHex(color);
-    this.glowMat.opacity = opacity;
-    this.coreMesh.scale.setScalar(scale);
-    if (this.ringMat) {
-      this.ringMat.color.setHex(this.exposed ? 0xff0044 : COLORS.magenta);
-      this.ringMat.opacity = this.overloadTimer > 0 ? 0.7 : 0.3;
-    }
-    if (this.ringMesh) this.ringMesh.scale.setScalar(scale * 1.05);
+    this.coreMesh.rotation.y += dt * (0.85 + (this.overloadTimer > 0 ? 5 : 0) + pain * 3);
+    this.coreMesh.rotation.x += dt * (0.4 + pain * 2);
+    this.coreMesh.scale.setScalar(scale * (0.72 + (1 - hpR) * 0.18));
+    const heartCol = this.dying
+      ? 0x2a0008
+      : this.overloadKind === 'rage' && this.overloadTimer > 0
+        ? 0xff2208
+        : this.exposed
+          ? 0xff3355
+          : 0x5a0818;
+    this.glowMat.color.setHex(heartCol);
+    this.glowMat.opacity = this.dying ? Math.max(0.1, 0.9 - this.deathT * 0.4) : 0.95;
 
-    // Keep VFX at cube center (cube group may rotate via animator — parent handles)
-    this.vfxGroup.position.set(0, 0, 0);
+    if (this.membrane && this.membraneMat) {
+      this.membrane.scale.setScalar(scale);
+      this.membrane.rotation.y -= dt * 0.35;
+      this.membrane.rotation.z += dt * 0.18;
+      this.membraneMat.uniforms.uTime.value = t;
+      this.membraneMat.uniforms.uPulse.value = this.pulse;
+      this.membraneMat.uniforms.uPain.value = pain;
+      this.membraneMat.uniforms.uHp.value = hpR;
+      this.membraneMat.uniforms.uExposed.value = this.exposed ? 1 : 0;
+      this.membraneMat.uniforms.uDying.value = this.dying ? 1 : 0;
+    }
+
+    if (this.ringMesh && this.ringMat) {
+      this.ringMesh.rotation.z += dt * (1.1 + (this.exposed ? 2.2 : 0));
+      this.ringMesh.rotation.y += dt * 0.4;
+      this.ringMesh.scale.setScalar(scale * (1.02 + Math.sin(t * 3) * 0.04));
+      this.ringMat.color.setHex(this.dying ? 0x4a0008 : this.exposed ? 0xff1030 : 0x7a1830);
+      this.ringMat.opacity = this.dying ? 0.15 : 0.4 + this.pulse * 0.3;
+    }
+
+    for (let i = 0; i < this.tendrils.length; i++) {
+      const mesh = this.tendrils[i];
+      const dir = this.tendrilDirs[i];
+      const wiggle = Math.sin(t * (2.4 + i * 0.37) + i) * (0.22 + pain * 0.45);
+      const reach = this.baseScale * (0.85 + Math.sin(t * 1.7 + i) * 0.12 + pain * 0.2);
+      const reachDying = this.dying ? reach * (1.4 - this.deathT * 0.5) : reach;
+      const aim = dir.clone();
+      aim.x += wiggle;
+      aim.y += Math.cos(t * 1.9 + i * 0.6) * 0.18;
+      aim.normalize();
+      mesh.position.copy(aim).multiplyScalar(this.baseScale * 0.55);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), aim);
+      mesh.scale.set(
+        this.dying ? 0.7 + Math.random() * 0.8 : 1,
+        reachDying / this.baseScale,
+        this.dying ? 0.7 + Math.random() * 0.8 : 1
+      );
+      const tm = mesh.material as THREE.MeshBasicMaterial;
+      tm.color.setHex(this.dying ? 0x1a0004 : pain > 0.3 ? 0x8a1020 : 0x3a0814);
+    }
+
+    this.leakT += dt;
+    this.updateIchor(dt, t, hpR);
+
+    this.vfxGroup.visible = !this.dying || this.deathT < 2.45;
+  }
+
+  private updateIchor(dt: number, t: number, hpR: number): void {
+    if (!this.ichorPts || !this.ichorPos || !this.ichorLife) return;
+    const n = this.ichorLife.length;
+    const rate = this.dying ? 28 : this.exposed || this.pulse > 0.2 ? 10 : 4;
+    for (let i = 0; i < n; i++) {
+      if (this.ichorLife[i] <= 0) {
+        if (Math.random() < dt * rate) {
+          const a = Math.random() * Math.PI * 2;
+          const b = (Math.random() - 0.5) * Math.PI;
+          const r = this.baseScale * (0.4 + Math.random() * 0.5);
+          this.ichorPos[i * 3] = Math.cos(a) * Math.cos(b) * r;
+          this.ichorPos[i * 3 + 1] = Math.sin(b) * r;
+          this.ichorPos[i * 3 + 2] = Math.sin(a) * Math.cos(b) * r;
+          this.ichorLife[i] = 0.35 + Math.random() * 0.55;
+        }
+        continue;
+      }
+      this.ichorLife[i] -= dt;
+      this.ichorPos[i * 3 + 1] -= dt * (0.35 + (1 - hpR) * 0.5);
+      this.ichorPos[i * 3] *= 1 + dt * 0.4;
+      this.ichorPos[i * 3 + 2] *= 1 + dt * 0.4;
+    }
+    const attr = this.ichorPts.geometry.getAttribute('position') as THREE.BufferAttribute;
+    attr.needsUpdate = true;
+    const mat = this.ichorPts.material as THREE.PointsMaterial;
+    mat.opacity = this.dying ? 0.95 : 0.55 + this.pulse * 0.35;
+    mat.color.setHex(this.dying ? 0xff2244 : hpR < 0.4 ? 0x66aa22 : 0xaa1830);
+    void t;
   }
 
   /** Combat progress 0..1 — shell clear is 85%, nucleus 15%. */
@@ -724,6 +923,8 @@ export class CoreNucleus {
   reset(): void {
     this.active = false;
     this.completed = false;
+    this.dying = false;
+    this.deathT = 0;
     this.hp = 1;
     this.maxHp = 1;
     this.shellTotal = 0;
@@ -739,19 +940,40 @@ export class CoreNucleus {
     this.arcTimer = 0;
     this.enrageTimer = 0;
     this.pulse = 0;
+    this.hitFlinch = 0;
+    this.clearVfx();
+  }
+
+  private clearVfx(): void {
+    this.vfxGroup.visible = true;
+    this.vfxGroup.position.set(0, 0, 0);
+    this.vfxGroup.rotation.set(0, 0, 0);
     while (this.vfxGroup.children.length) {
-      const c = this.vfxGroup.children[0];
-      this.vfxGroup.remove(c);
-      if (c instanceof THREE.Mesh) {
-        c.geometry.dispose();
-        if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose());
-        else (c.material as THREE.Material).dispose();
-      }
+      this.disposeObject(this.vfxGroup.children[0]);
     }
     this.coreMesh = null;
+    this.membrane = null;
     this.ringMesh = null;
     this.glowMat = null;
     this.ringMat = null;
+    this.membraneMat = null;
+    this.tendrils = [];
+    this.tendrilDirs = [];
+    this.ichorPts = null;
+    this.ichorPos = null;
+    this.ichorLife = null;
+  }
+
+  private disposeObject(obj: THREE.Object3D): void {
+    this.vfxGroup.remove(obj);
+    obj.traverse((c) => {
+      if (c instanceof THREE.Mesh || c instanceof THREE.Points || c instanceof THREE.LineSegments) {
+        c.geometry.dispose();
+        const mat = c.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else (mat as THREE.Material).dispose();
+      }
+    });
   }
 
   dispose(): void {

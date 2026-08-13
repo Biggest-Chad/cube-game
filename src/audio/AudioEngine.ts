@@ -60,6 +60,14 @@ export class AudioEngine {
     }
   }
 
+  /** Stop every SFX/ambient voice immediately (app backgrounded / closed). */
+  suspend(): void {
+    if (!this.ctx) return;
+    if (this.ctx.state === 'running') {
+      void this.ctx.suspend().catch(() => undefined);
+    }
+  }
+
   setMuted(m: boolean): void {
     this.muted = m;
     this.applyMasterGain();
@@ -434,7 +442,14 @@ export class AudioEngine {
   // ── Graph ───────────────────────────────────────────────────
 
   private ready(): boolean {
-    return !!(this.ctx && this.master && this.sfxBus && !this.muted && this.started);
+    return !!(
+      this.ctx &&
+      this.ctx.state === 'running' &&
+      this.master &&
+      this.sfxBus &&
+      !this.muted &&
+      this.started
+    );
   }
 
   private now(): number {

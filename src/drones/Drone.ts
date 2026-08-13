@@ -26,6 +26,8 @@ export interface DroneCombatContext {
   onInterceptHit?: (id: string, damage: number) => void;
   shipPos?: THREE.Vector3;
   nucleusExposed?: boolean;
+  /** Other living drone world positions — used for swarm separation. */
+  neighbors?: THREE.Vector3[];
 }
 
 /**
@@ -42,6 +44,23 @@ export class Drone {
   private orbitAngle: number;
   private orbitHeight: number;
   private orbitRadius = 10;
+  private vel = new THREE.Vector3();
+  private steer = new THREE.Vector3();
+  private desired = new THREE.Vector3();
+  private radial = new THREE.Vector3();
+  private tangent = new THREE.Vector3();
+  private fireLook = new THREE.Vector3();
+  private hasFireLook = false;
+  private wanderT = 0;
+  private nextJink = 0;
+  private jinkA = 0;
+  private jinkB = 0;
+  private radiusGoal = 12;
+  private heightGoal = 0;
+  private tanSign = 1;
+  private peelId = -1;
+  private peelT = 0;
+  private seed = 1;
   private heat = 0;
   private beamCore: THREE.Mesh;
   private beamGlow: THREE.Mesh;
@@ -74,9 +93,14 @@ export class Drone {
     this.roleColor = DRONE_ROLES[role].color;
     this.maxHp = DRONE_ROLES[role].baseHp;
     this.hp = this.maxHp;
-    this.orbitAngle = index * 1.2;
+    this.orbitAngle = index * 1.2 + Math.random() * 2.2;
     this.orbitHeight = (index % 3) * 1.5 - 1.5;
     this.orbitRadius = 10 + (index % 4) * 1.5 + DRONE_ROLES[role].orbitRadiusBias;
+    this.seed = (index * 9973 + 131) | 0;
+    this.wanderT = index * 0.73;
+    this.nextJink = Math.random() * 0.4;
+    this.tanSign = index % 2 === 0 ? 1 : -1;
+    this.vel.set(Math.cos(this.orbitAngle), 0.2, Math.sin(this.orbitAngle)).multiplyScalar(5);
 
     this.buildMesh();
     this.rotor = this.group.getObjectByName('rotor') as THREE.Group | null;
@@ -244,41 +268,13 @@ export class Drone {
     const def = DRONE_ROLES[this.role];
     const half = cube.halfExtent;
     const ship = combat?.shipPos;
+    this.hasFireLook = false;
 
-    // Positioning by role
     if (this.role === 'defender' && ship) {
-      // Screen in front of ship (toward cube origin from ship)
-      const toCenter = this._dir.copy(ship).multiplyScalar(-1).normalize();
-      if (toCenter.lengthSq() < 1e-6) toCenter.set(0, 0, -1);
-      const side = (this.index % 3) - 1;
-      this._pos
-        .copy(ship)
-        .addScaledVector(toCenter, 2.2)
-        .addScaledVector(this._up, side * 0.9 + Math.sin(now * 2 + this.index) * 0.2);
-      const right = this._look.crossVectors(toCenter, this._up).normalize();
-      this._pos.addScaledVector(right, side * 1.1);
+      this.updateDefenderSeat(dt, ship, now);
     } else {
-      this.orbitRadius =
-        half * 1.55 + 2 + def.orbitRadiusBias + (this.index % 4) * 0.8;
-      const angSpeed =
-        this.role === 'bomber' ? 0.16 : 0.32 + stats.droneFireRateMul * 0.08;
-      this.orbitAngle += dt * angSpeed;
-      const weave = Math.sin(this.orbitAngle * 2.1 + this.index) * 1.4;
-      const bob = Math.sin(this.orbitAngle * 0.7 + this.index * 0.5) * 1.6;
-      this._pos.set(
-        Math.cos(this.orbitAngle) * (this.orbitRadius + weave * 0.3),
-        this.orbitHeight + bob,
-        Math.sin(this.orbitAngle) * (this.orbitRadius + weave * 0.3)
-      );
+      this.updateSwarmFlight(dt, cube, combat);
     }
-
-    const k = 1 - Math.exp(-(this.role === 'bomber' ? 1.6 : 3.2) * dt);
-    this.group.position.lerp(this._pos, k);
-
-    this._look.set(0, 0, 0);
-    this._m.lookAt(this.group.position, this._look, this._up);
-    this._targetQuat.setFromRotationMatrix(this._m);
-    this.group.quaternion.slerp(this._targetQuat, 1 - Math.exp(-3.5 * dt));
 
     this.spin += dt * (8 + (1 - this.heat) * 4);
     if (this.rotor) this.rotor.rotation.z = this.spin;
@@ -372,12 +368,13 @@ export class Drone {
       return;
     }
 
-    // —— Fighter: enemies → intercepts → light blocks ——
+    // —— Fighter: enemies → intercepts → peel outer hull inward ——
     if (this.role === 'fighter') {
       if (combat?.enemies?.length && combat.onEnemyHit) {
         const enemy = pickBestEnemy(combat.enemies, this.group.position, 90);
         if (enemy) {
           this._target.set(enemy.position.x, enemy.position.y, enemy.position.z);
+          this.markFireLook(this._target);
           this.showBeam(this.group.position, this._target);
           combat.onEnemyHit(
             enemy.id,
@@ -390,6 +387,7 @@ export class Drone {
         const t = pickBestIntercept(combat.intercepts, this.group.position, 70);
         if (t) {
           this._target.set(t.position.x, t.position.y, t.position.z);
+          this.markFireLook(this._target);
           this.showBeam(this.group.position, this._target);
           combat.onInterceptHit(
             t.id,
@@ -398,38 +396,168 @@ export class Drone {
           return;
         }
       }
-      const nearest = cube.findNearest(this.group.position, 70, (t) =>
-        targetPriority(t, stats, 'fighter')
-      );
-      if (!nearest) return;
-      cube.getBlockWorldPos(nearest.instanceId, this._target);
+      const peel = this.acquirePeelTarget(dt, cube, stats, 78, false);
+      if (peel === -1) return;
+      cube.getBlockWorldPos(peel, this._target);
+      this.markFireLook(this._target);
       this.showBeam(this.group.position, this._target);
-      const type = cube.getBlockType(nearest.instanceId);
+      const type = cube.getBlockType(peel);
       const raw = COMBAT.baseDamage * 0.35 * stats.droneDamageMul * def.blockDamageMul;
       const applied = applyToBlock(
         { raw, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
         type
       );
-      const result = cube.applyDamage(nearest.instanceId, applied.finalDamage, now);
+      const result = cube.applyDamage(peel, applied.finalDamage, now);
       if (result) bus.emit('beam-hit', { ...result, style: 'beam' as const });
       return;
     }
 
-    // —— Bomber: plasma bomb toward core if exposed else high-value blocks ——
+    // —— Bomber: peel outer armor first; nucleus only once the hull is thin ——
     if (this.bombActive) return;
-    const preferCore = combat?.nucleusExposed || stats.dronePriorityCore;
-    const nearest = cube.findNearest(this.group.position, 100, (t) => {
-      if (preferCore && t === BlockType.Core) return 50;
-      return targetPriority(t, stats, 'bomber');
-    });
-    if (!nearest || !this.bombMesh) return;
-    cube.getBlockWorldPos(nearest.instanceId, this._target);
+    const preferCore = !!(combat?.nucleusExposed || stats.dronePriorityCore);
+    const peel = this.acquirePeelTarget(dt, cube, stats, 110, preferCore);
+    if (peel === -1 || !this.bombMesh) return;
+    cube.getBlockWorldPos(peel, this._target);
+    this.markFireLook(this._target);
     this.bombPos.copy(this.group.position);
     this.bombVel.copy(this._target).sub(this.bombPos).normalize().multiplyScalar(18);
     this.bombActive = true;
     this.bombMesh.visible = true;
     this.bombMesh.position.set(0, 0, 0);
     this.showBeam(this.group.position, this._target);
+  }
+
+  private markFireLook(world: THREE.Vector3): void {
+    this.fireLook.copy(world);
+    this.hasFireLook = true;
+  }
+
+  /** Stick to an outer-shell block briefly, then retarget slightly inward. */
+  private acquirePeelTarget(
+    dt: number,
+    cube: CubeManager,
+    stats: PlayerStats,
+    maxDist: number,
+    allowNucleus: boolean
+  ): number {
+    this.peelT -= dt;
+    if (this.peelT > 0 && this.peelId !== -1 && cube.hasInstance(this.peelId)) {
+      return this.peelId;
+    }
+    this.peelT = 0.4 + Math.random() * 0.95;
+    const hit = cube.findPeelTarget(this.group.position, maxDist, {
+      prefer: (t) => targetPriority(t, stats, this.role),
+      seed: this.seed + ((this.wanderT * 10) | 0),
+      allowNucleus,
+    });
+    this.peelId = hit?.instanceId ?? -1;
+    return this.peelId;
+  }
+
+  private updateDefenderSeat(dt: number, ship: THREE.Vector3, now: number): void {
+    const toCenter = this._dir.copy(ship).multiplyScalar(-1).normalize();
+    if (toCenter.lengthSq() < 1e-6) toCenter.set(0, 0, -1);
+    const side = (this.index % 3) - 1;
+    this._pos
+      .copy(ship)
+      .addScaledVector(toCenter, 2.2)
+      .addScaledVector(this._up, side * 0.9 + Math.sin(now * 2 + this.index) * 0.35);
+    const right = this._look.crossVectors(toCenter, this._up).normalize();
+    this._pos.addScaledVector(right, side * 1.1 + Math.sin(now * 1.4 + this.seed) * 0.35);
+    const k = 1 - Math.exp(-3.4 * dt);
+    this.group.position.lerp(this._pos, k);
+    this._look.copy(ship);
+    this._m.lookAt(this.group.position, this._look, this._up);
+    this._targetQuat.setFromRotationMatrix(this._m);
+    this.group.quaternion.slerp(this._targetQuat, 1 - Math.exp(-4 * dt));
+  }
+
+  /** Boids-ish swarm: wander, jink, peel, stay off the hull. */
+  private updateSwarmFlight(
+    dt: number,
+    cube: CubeManager,
+    combat?: DroneCombatContext
+  ): void {
+    const he = cube.halfExtent;
+    const def = DRONE_ROLES[this.role];
+    const minR = he * 1.22 + 1.8;
+    const maxR = he * 2.4 + 3.2 + def.orbitRadiusBias * 0.35;
+    const p = this.group.position;
+
+    this.wanderT += dt;
+    this.nextJink -= dt;
+    if (this.nextJink <= 0) {
+      this.nextJink = 0.28 + Math.random() * 1.05;
+      this.jinkA = (Math.random() - 0.5) * 2.8;
+      this.jinkB = (Math.random() - 0.5) * 1.9;
+      this.radiusGoal = minR + Math.random() * (maxR - minR);
+      this.heightGoal = (Math.random() - 0.5) * he * 1.15;
+      if (Math.random() < 0.18) this.tanSign *= -1;
+    }
+
+    const rz = Math.hypot(p.x, p.z) || 0.001;
+    const ang = Math.atan2(p.z, p.x);
+    this.tangent.set(-Math.sin(ang), 0, Math.cos(ang));
+    this.radial.set(p.x / rz, 0, p.z / rz);
+
+    const tanSpeed = this.role === 'bomber' ? 5.2 : 8.4;
+    this.desired.set(0, 0, 0);
+    this.desired.addScaledVector(this.tangent, this.tanSign * (tanSpeed + Math.sin(this.wanderT * 1.4 + this.index) * 3.2));
+    this.desired.addScaledVector(this.radial, (this.radiusGoal - rz) * 2.1);
+    this.desired.y += (this.heightGoal - p.y) * 1.55;
+    this.desired.x += this.jinkA * 4.4 + Math.sin(this.wanderT * 2.6 + this.seed) * 2.6;
+    this.desired.y += this.jinkB * 3.2 + Math.sin(this.wanderT * 1.9 + this.index * 0.7) * 2.1;
+    this.desired.z += Math.cos(this.wanderT * 2.1 + this.seed * 0.01) * 2.8;
+
+    const dist3 = p.length();
+    if (dist3 < minR && dist3 > 1e-4) {
+      this.desired.addScaledVector(p, ((minR - dist3) * 9) / dist3);
+    }
+
+    const neighbors = combat?.neighbors;
+    if (neighbors) {
+      for (let i = 0; i < neighbors.length; i++) {
+        const n = neighbors[i];
+        const dx = p.x - n.x;
+        const dy = p.y - n.y;
+        const dz = p.z - n.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < 0.04 || d2 > 20) continue;
+        const d = Math.sqrt(d2);
+        const push = 4.8 / d;
+        this.desired.x += (dx / d) * push;
+        this.desired.y += (dy / d) * push;
+        this.desired.z += (dz / d) * push;
+      }
+    }
+
+    if (this.peelId !== -1 && cube.hasInstance(this.peelId)) {
+      cube.getBlockWorldPos(this.peelId, this._target);
+      const tx = this._target.x - p.x;
+      const ty = this._target.y - p.y;
+      const tz = this._target.z - p.z;
+      this.desired.x += tx * 0.22;
+      this.desired.y += ty * 0.18;
+      this.desired.z += tz * 0.22;
+    }
+
+    const maxSpd = this.role === 'bomber' ? 8.5 : 13.5;
+    const maxAcc = this.role === 'bomber' ? 11 : 22;
+    this.steer.copy(this.desired);
+    if (this.steer.lengthSq() > 1e-6) this.steer.setLength(maxSpd);
+    this.steer.sub(this.vel);
+    if (this.steer.length() > maxAcc) this.steer.setLength(maxAcc);
+    this.vel.addScaledVector(this.steer, dt);
+    const spd = this.vel.length();
+    if (spd > maxSpd) this.vel.multiplyScalar(maxSpd / spd);
+    else if (spd < 2.2 && spd > 1e-4) this.vel.multiplyScalar(2.2 / spd);
+    this.group.position.addScaledVector(this.vel, dt);
+
+    this._look.copy(p).add(this.vel);
+    if (this.hasFireLook) this._look.lerp(this.fireLook, 0.4);
+    this._m.lookAt(p, this._look, this._up);
+    this._targetQuat.setFromRotationMatrix(this._m);
+    this.group.quaternion.slerp(this._targetQuat, 1 - Math.exp(-5.2 * dt));
   }
 
   private showBeam(from: THREE.Vector3, to: THREE.Vector3): void {

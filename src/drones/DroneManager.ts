@@ -209,6 +209,11 @@ export class DroneManager {
       mesh.visible = true;
     }
 
+    const neighbors: THREE.Vector3[] = [];
+    for (const d of this.drones) {
+      if (d.alive) neighbors.push(d.group.position);
+    }
+    this.combat.neighbors = neighbors;
     for (const d of this.drones) {
       d.update(dt, cube, stats, now, hidden, this.combat);
     }

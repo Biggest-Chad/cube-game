@@ -90,7 +90,8 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
   },
 };
 
-export const DRONE_BAY_MAX = 12;
+/** +50% over the original 12-bay hull. */
+export const DRONE_BAY_MAX = 18;
 export const DRONE_BAY_START = 0;
 /** Frag cost for bay slot n (0-indexed next purchase). */
 export function droneBayUnlockCost(ownedBays: number): number {

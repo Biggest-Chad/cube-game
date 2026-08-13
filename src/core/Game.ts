@@ -56,6 +56,7 @@ import { SettingsUI } from '../ui/SettingsUI';
 import { PauseUI } from '../ui/PauseUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
 import { TutorialDirector } from '../ui/TutorialDirector';
+import { EvolveReadyUI } from '../ui/EvolveReadyUI';
 import { ScreenTransition } from '../ui/ScreenTransition';
 import {
   UI_CLICK_LOCK_MS,
@@ -140,6 +141,7 @@ export class Game {
   private pauseUI: PauseUI;
   private adsUI: AdsOfferUI;
   private tutorial!: TutorialDirector;
+  private evolveReady!: EvolveReadyUI;
   private screenFx!: ScreenTransition;
   private overlay: HTMLElement;
   private toastRoot: HTMLElement;
@@ -313,6 +315,9 @@ export class Game {
       stage1Done: false,
       loadoutDone: false,
     });
+    this.evolveReady = new EvolveReadyUI(document.getElementById('ui-root')!);
+    this.evolveReady.onOpenShop = () => this.openTech();
+    this.evolveReady.onDismiss = () => undefined;
     this.screenFx = new ScreenTransition(document.getElementById('app') ?? document.body);
 
     const els = this.hud.elements;
@@ -327,7 +332,11 @@ export class Game {
     window.addEventListener('resize', this.onResize);
     window.addEventListener('orientationchange', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibility);
-    window.addEventListener('beforeunload', () => this.persist());
+    window.addEventListener('pagehide', this.onPageHide);
+    window.addEventListener('beforeunload', () => {
+      this.silenceAudio();
+      this.persist();
+    });
     window.addEventListener('keydown', this.onOverlayKey);
     this.lockLandscape();
 
@@ -1631,6 +1640,36 @@ export class Game {
       this.save.data.highestLevel = this.currentLevelId;
     }
     this.save.save();
+    this.maybeOfferEvolveReady();
+  }
+
+  /** Tutorial-style reminder once evolve goals are met for this ascension. */
+  private maybeOfferEvolveReady(): void {
+    if (this.hidden) return;
+    if (this.evolveReady.visible) return;
+    if (this.tutorial.isStage1Active()) return;
+    if (
+      this.mode === 'core_death' ||
+      this.mode === 'dying' ||
+      this.mode === 'dead' ||
+      this.mode === 'cinematic'
+    ) {
+      return;
+    }
+    const check = canEvolve(
+      this.currency.dataFragments,
+      this.save.data.highestLevel,
+      this.save.data.ascensionTier
+    );
+    if (!check.ok) return;
+    if (this.save.data.evolveReadySeenTier === this.save.data.ascensionTier) return;
+    this.save.data.evolveReadySeenTier = this.save.data.ascensionTier;
+    this.save.save();
+    this.evolveReady.show({
+      cost: check.cost,
+      nextTier: this.save.data.ascensionTier + 1,
+      fragPerCore: EVOLVE_FRAG_PER_CORE,
+    });
   }
 
   /**
@@ -1690,8 +1729,12 @@ export class Game {
     const ownsDrone =
       this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
     this.menu.setChrome({
-      shopLocked: !ownsDrone && this.currency.dataFragments < 150,
-      shopLockHint: 'Need 150 FRAG',
+      showShop: ownsDrone || this.currency.dataFragments >= 150,
+      showLoadout: ownsDrone || this.currency.dataFragments >= 150,
+      showLattice:
+        this.currency.coreEnergy > 0 ||
+        this.save.data.ascensionTier > 0 ||
+        this.save.data.researchOwned.length > 0,
       missionLabel: `START · SECTOR ${this.currentLevelId}`,
     });
     this.menu.setMeta(this.save.data.ascensionTier, this.currency.coreEnergy);
@@ -1886,6 +1929,7 @@ export class Game {
       this.finishIntroImmediate();
     }
     if (this.mode === 'levelclear') this.returnToClear = true;
+    this.evolveReady.hide();
 
     void this.audio.resume();
     this.audio.playUi();
@@ -2375,13 +2419,15 @@ export class Game {
     } catch {
       /* audio optional */
     }
-    this.particles.spawn(0, 0, 0, COLORS.magenta, 70, 26, 'ember');
-    this.particles.spawn(0, 0, 0, COLORS.cyan, 55, 22, 'spark');
-    this.particles.spawn(0, 0, 0, 0xffffff, 40, 18, 'glow');
-    this.particles.spawn(0, 0, 0, 0xff4488, 48, 24, 'debris');
-    this.rings.spawn(0, 0, 0, COLORS.magenta, 3.2);
-    this.rings.spawn(0, 0, 0, COLORS.cyan, 2.4);
-    this.rings.spawn(0, 0, 0, 0xffffff, 1.6);
+    this.cube.nucleus.beginDeath();
+    this.particles.spawn(0, 0, 0, 0x8a1020, 90, 28, 'ember');
+    this.particles.spawn(0, 0, 0, 0x2a4a08, 50, 20, 'debris');
+    this.particles.spawn(0, 0, 0, 0xff2244, 70, 24, 'spark');
+    this.particles.spawn(0, 0, 0, 0x4a0010, 55, 18, 'glow');
+    this.particles.spawn(0, 0, 0, 0xaa6622, 40, 16, 'debris');
+    this.rings.spawn(0, 0, 0, 0x6a0818, 3.4);
+    this.rings.spawn(0, 0, 0, 0xff2040, 2.6);
+    this.rings.spawn(0, 0, 0, 0x335508, 1.8);
 
     // Disconnect remaining shell — shatter outward, float away
     const remaining = this.cube.ejectAllRemainingBlocks(this.time.elapsed);
@@ -2413,21 +2459,23 @@ export class Game {
 
   private updateCoreDeath(dt: number): void {
     this.coreDeathT += dt;
-    // Secondary shockwaves
-    if (this.coreDeathT < 1.4 && Math.random() < dt * 10) {
-      const r = 0.4 + Math.random() * 2.8;
+    this.cube.nucleus.updateDeath(dt);
+    // Secondary viscera bursts
+    if (this.coreDeathT < 1.8 && Math.random() < dt * 14) {
+      const r = 0.3 + Math.random() * 3.1;
       const a = Math.random() * Math.PI * 2;
-      const y = (Math.random() - 0.5) * 2.2;
+      const y = (Math.random() - 0.5) * 2.4;
+      const gore = Math.random() > 0.55 ? 0x8a1020 : Math.random() > 0.5 ? 0x4a6610 : 0xff3355;
       this.particles.spawn(
         Math.cos(a) * r,
         y,
         Math.sin(a) * r,
-        Math.random() > 0.5 ? COLORS.magenta : 0xff6622,
-        8,
-        14,
-        'ember'
+        gore,
+        10,
+        16,
+        Math.random() > 0.4 ? 'ember' : 'debris'
       );
-      if (Math.random() > 0.7) this.cameraCtrl.shake(0.08);
+      if (Math.random() > 0.6) this.cameraCtrl.shake(0.1);
     }
     this.cameraCtrl.update(dt);
     this.ship.update(this.cameraCtrl, dt, this.particles);
@@ -2605,12 +2653,31 @@ export class Game {
     this.updateOrientationGate();
   };
 
+  private silenceAudio(): void {
+    this.music.pause();
+    this.audio.suspend();
+  }
+
+  private restoreAudio(): void {
+    void this.audio.resume();
+    void this.music.unlock();
+    this.music.resume();
+    this.syncMusicToMode();
+  }
+
+  private onPageHide = (): void => {
+    this.silenceAudio();
+  };
+
   private onVisibility = (): void => {
     this.hidden = document.hidden;
-    if (!document.hidden) {
-      this.time.reset();
-      void this.music.unlock();
+    if (document.hidden) {
+      this.silenceAudio();
+      if (this.mode !== 'core_death' && this.mode !== 'dying') this.persist();
+      return;
     }
+    this.time.reset();
+    this.restoreAudio();
     if (this.mode !== 'core_death' && this.mode !== 'dying') this.persist();
   };
 
@@ -2905,6 +2972,7 @@ export class Game {
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('keydown', this.onOverlayKey);
     document.removeEventListener('visibilitychange', this.onVisibility);
+    window.removeEventListener('pagehide', this.onPageHide);
     this.cube.dispose();
     this.cinematicCube.dispose();
     this.cubeAnimator.dispose();

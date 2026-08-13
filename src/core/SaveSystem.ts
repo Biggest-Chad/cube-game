@@ -66,6 +66,8 @@ export interface SaveData {
   // --- tutorials ---
   tutorialStage1Done: boolean;
   tutorialLoadoutDone: boolean;
+  /** Ascension tier for which the evolve-ready briefing was already shown. */
+  evolveReadySeenTier: number;
 
   // --- Evolve / Ascension + Research Lattice ---
   /** Times evolved (0 = no prestige). */
@@ -118,6 +120,7 @@ export function defaultSave(): SaveData {
 
     tutorialStage1Done: false,
     tutorialLoadoutDone: false,
+    evolveReadySeenTier: -1,
 
     ascensionTier: 0,
     lifetimeEvolves: 0,
@@ -254,6 +257,9 @@ export class SaveSystem {
       };
       // Always fold baseline from tier (ignore tampered mult blobs)
       this.data.baseline = baselineFromTier(this.data.ascensionTier);
+      if (typeof this.data.evolveReadySeenTier !== 'number') {
+        this.data.evolveReadySeenTier = -1;
+      }
       this.rolloverAdsIfNeeded();
       return this.data;
     } catch {

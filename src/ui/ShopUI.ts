@@ -29,6 +29,7 @@ import type { Currency } from '../progression/Currency';
 import type { LoadoutState } from '../loadout/LoadoutState';
 import type { DroneBayController } from '../loadout/DroneBayState';
 import {
+  DRONE_BAY_MAX,
   DRONE_ROLES,
   freeInventory,
   type DroneRole,
@@ -797,9 +798,9 @@ export class ShopUI {
         <div class="lo-toolbar">
           <button type="button" class="menu-btn primary bp-unlock-btn" id="drone-bay-unlock"
             ${canBay ? '' : 'disabled'}>
-            ${B.canUnlockBay() ? `+ BAY · ${bayCost} FRAG` : 'MAX BAYS'}
+            ${B.canUnlockBay() ? `+ BAY · ${bayCost} FRAG` : `MAX ${DRONE_BAY_MAX} BAYS`}
           </button>
-          <span class="dim">${st.bays} bays · ${B.equippedCount()} active · tap type then bay</span>
+          <span class="dim">${st.bays}/${DRONE_BAY_MAX} bays · ${B.equippedCount()} active · tap type then bay</span>
         </div>
         <div class="lo-card-grid">
           ${(['fighter', 'bomber', 'defender'] as DroneRole[])

@@ -2683,6 +2683,13 @@ body.orientation-portrait #rotate-overlay {
   opacity: 0.85;
   margin-bottom: 6px;
 }
+.evolve-ready-card {
+  border-color: rgba(255, 0, 170, 0.55);
+  box-shadow: 0 0 28px rgba(255, 0, 170, 0.35), 0 0 40px rgba(0, 240, 255, 0.1);
+}
+.evolve-ready-card .tutorial-kicker {
+  color: var(--magenta);
+}
 .tutorial-title {
   font-size: clamp(14px, 2.4vw, 18px);
   font-weight: 700;
@@ -2925,18 +2932,7 @@ body.orientation-portrait #rotate-overlay {
   min-height: 44px;
   letter-spacing: 0.22em;
 }
-.menu-subbtn:disabled,
-.menu-subbtn[aria-disabled='true'] {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-.menu-subbtn .menu-btn-lock {
-  display: block;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  opacity: 0.8;
-  margin-top: 2px;
-}
+
 .settings-body {
   max-width: 520px;
   margin: 12px auto 0;
@@ -3117,17 +3113,26 @@ body.orientation-portrait #rotate-overlay {
   gap: 8px;
 }
 .menu-subbtn {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
   min-height: 44px !important;
-  padding: 10px 12px !important;
+  padding: 10px 8px !important;
   font-size: 12px !important;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.08em;
+  text-align: center !important;
   opacity: 0.88;
   border-color: rgba(0, 240, 255, 0.28) !important;
   background: rgba(0, 12, 18, 0.65) !important;
 }
 .menu-subbtn .menu-btn-label {
+  display: block;
+  width: 100%;
+  text-align: center;
   font-size: 12px !important;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.15;
 }
 .menu-subbtn:hover {
   opacity: 1;
@@ -3697,10 +3702,10 @@ body.orientation-portrait #rotate-overlay {
 }
 .lo-slot {
   position: relative;
-  flex: 1 1 72px;
-  min-width: 70px;
-  max-width: 140px;
-  min-height: 52px;
+  flex: 1 1 58px;
+  min-width: 56px;
+  max-width: 118px;
+  min-height: 48px;
   padding: 6px 8px 8px;
   border: 1px dashed rgba(0, 240, 255, 0.4);
   background: rgba(0, 14, 22, 0.75);

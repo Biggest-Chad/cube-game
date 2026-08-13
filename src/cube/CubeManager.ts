@@ -14,6 +14,9 @@ const _quat = new THREE.Quaternion();
 const _scale = new THREE.Vector3(1, 1, 1);
 const _zero = new THREE.Vector3(0, 0, 0);
 
+/** Sentinel instance id for the living nucleus (not a lattice voxel). */
+export const NUCLEUS_HIT_ID = -2;
+
 export interface DamageResult {
   destroyed: boolean;
   type: BlockType;
@@ -268,13 +271,10 @@ export class CubeManager {
       const nucPt = new THREE.Vector3();
       const nucDist = this.nucleus.raycastSolid(origin, dir, maxDist, nucPt);
       if (nucDist != null && nucDist <= bestDist) {
-        const coreId = this.findCoreInstanceId(ignoreId);
-        if (coreId >= 0) {
-          bestDist = nucDist;
-          bestId = coreId;
-          bestPoint = nucPt.clone();
-          nucleusSolid = true;
-        }
+        bestDist = nucDist;
+        bestId = NUCLEUS_HIT_ID;
+        bestPoint = nucPt.clone();
+        nucleusSolid = true;
       }
     }
 
@@ -351,6 +351,68 @@ export class CubeManager {
     return -1;
   }
 
+  /**
+   * Peel the lattice from the outside in.
+   * Fighters/bombers prefer destructible blocks with the largest radius
+   * from cube center, then work inward. `seed` jitters so a swarm
+   * does not all lock the same voxel.
+   */
+  findPeelTarget(
+    from: THREE.Vector3,
+    maxDist: number,
+    opts?: {
+      prefer?: (t: BlockType) => number;
+      seed?: number;
+      allowNucleus?: boolean;
+    }
+  ): { instanceId: number; distance: number } | null {
+    if (!this.mesh && !this.nucleus.isActive) return null;
+    const prefer = opts?.prefer;
+    const seed = opts?.seed ?? 1;
+    let bestScore = -Infinity;
+    let bestId = -1;
+    let bestDist = maxDist;
+
+    if (this.mesh) {
+      for (let id = 0; id < this.mesh.count; id++) {
+        const t = this.getBlockType(id);
+        if (t === BlockType.Empty || t === BlockType.Core) continue;
+        this.mesh.getMatrixAt(id, _matrix);
+        _pos.setFromMatrixPosition(_matrix);
+        const d = from.distanceTo(_pos);
+        if (d > maxDist) continue;
+        const radial = Math.hypot(_pos.x, _pos.y, _pos.z);
+        const typePrio = prefer ? prefer(t) : BLOCK_DEFS[t]?.priority ?? 1;
+        // Cheap per-drone hash so adjacent craft pick different faces
+        const jitter = ((id * 2654435761 + seed * 97) >>> 0) % 1000 / 1000;
+        const score = radial * 9 + typePrio * 2.4 - d * 0.28 + jitter * 3.2;
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = id;
+          bestDist = d;
+        }
+      }
+    }
+
+    if (opts?.allowNucleus && this.nucleus.isActive) {
+      this.nucleus.getWorldCenter(_pos);
+      const d = from.distanceTo(_pos);
+      if (d <= maxDist) {
+        const shell = this.nucleus.snapshot().shellRatio;
+        // Nucleus is last — only attractive once the outer hull is thin
+        const nucScore = (1 - shell) * 22 + (prefer?.(BlockType.Core) ?? 0) * 0.4 - d * 0.15;
+        if (shell < 0.38 && nucScore > bestScore) {
+          bestScore = nucScore;
+          bestId = NUCLEUS_HIT_ID;
+          bestDist = d;
+        }
+      }
+    }
+
+    if (bestId < 0) return null;
+    return { instanceId: bestId, distance: bestDist };
+  }
+
   /** Find nearest block to a world point (for drones / splash). */
   findNearest(world: THREE.Vector3, maxDist: number, prefer?: (t: BlockType) => number): {
     instanceId: number;
@@ -386,6 +448,7 @@ export class CubeManager {
   }
 
   getBlockType(instanceId: number): BlockType {
+    if (instanceId === NUCLEUS_HIT_ID) return BlockType.Core;
     const ref = this.refs[instanceId];
     if (!ref) return BlockType.Empty;
     return ref.chunk.types[ref.localIndex] as BlockType;
@@ -402,57 +465,53 @@ export class CubeManager {
   }
 
   hasInstance(id: number): boolean {
+    if (id === NUCLEUS_HIT_ID) return this.nucleus.isActive;
     return !!this.mesh && id >= 0 && id < this.mesh.count && this.getBlockType(id) !== BlockType.Empty;
   }
 
   applyDamage(instanceId: number, damage: number, now: number): DamageResult | null {
-    if (!this.mesh || !this.generated || !this.level) return null;
+    if (!this.generated || !this.level) return null;
+    if (instanceId === NUCLEUS_HIT_ID || this.getBlockType(instanceId) === BlockType.Core) {
+      return this.applyNucleusHit(damage, now);
+    }
+    if (!this.mesh) return null;
     const ref = this.refs[instanceId];
     if (!ref) return null;
-    const { chunk, localIndex: i } = ref;
-    const t = chunk.types[i] as BlockType;
-    if (t === BlockType.Empty) return null;
+    return this.applyDamageDirect(instanceId, damage, now);
+  }
 
-    this.mesh.getMatrixAt(instanceId, _matrix);
-    _pos.setFromMatrixPosition(_matrix);
-
-    // Shared nucleus routing — shell DR + transfer + pool HP
-    if (t === BlockType.Core && this.coreRouting && this.nucleus.isActive) {
-      const outcome = this.nucleus.applyDamage(damage, now);
-      this.flashMap.set(instanceId, 1);
-      this.updateInstanceVisual(instanceId);
-      this.mesh.instanceMatrix.needsUpdate = true;
-      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
-      const def = BLOCK_DEFS[t];
-      const fragments = outcome.destroyed
-        ? Math.max(
-            8,
-            Math.round(Math.sqrt(Math.max(1, this.level.avgHP)) * 1.2 * def.fragmentMul)
-          )
-        : 0;
-      if (outcome.destroyed) {
-        bus.emit('block-destroyed', {
-          type: t,
-          x: _pos.x,
-          y: _pos.y,
-          z: _pos.z,
-          fragments,
-        });
-      }
-      return {
-        destroyed: !!outcome.destroyed,
-        type: t,
+  /** Shared nucleus HP pool — the living core, not a lattice voxel. */
+  applyNucleusHit(damage: number, now: number): DamageResult | null {
+    if (!this.nucleus.isActive || !this.level) return null;
+    const outcome = this.nucleus.applyDamage(damage, now);
+    this.nucleus.getWorldCenter(_pos);
+    const def = BLOCK_DEFS[BlockType.Core];
+    const fragments = outcome.destroyed
+      ? Math.max(
+          8,
+          Math.round(Math.sqrt(Math.max(1, this.level.avgHP)) * 1.2 * def.fragmentMul)
+        )
+      : 0;
+    if (outcome.destroyed) {
+      bus.emit('block-destroyed', {
+        type: BlockType.Core,
         x: _pos.x,
         y: _pos.y,
         z: _pos.z,
         fragments,
-        explosive: false,
-        coreHit: true,
-        coreDestroyed: outcome.destroyed,
-      };
+      });
     }
-
-    return this.applyDamageDirect(instanceId, damage, now);
+    return {
+      destroyed: !!outcome.destroyed,
+      type: BlockType.Core,
+      x: _pos.x,
+      y: _pos.y,
+      z: _pos.z,
+      fragments,
+      explosive: false,
+      coreHit: true,
+      coreDestroyed: outcome.destroyed,
+    };
   }
 
   /**
@@ -677,12 +736,11 @@ export class CubeManager {
     if (this.nucleus.isActive) {
       const primaryWasCore =
         ignoreId >= 0 && this.getBlockType(ignoreId) === BlockType.Core;
-      if (!primaryWasCore) {
+      if (!primaryWasCore && ignoreId !== NUCLEUS_HIT_ID) {
         this.nucleus.getWorldCenter(_pos);
         const nucR = this.nucleus.hitRadius;
         if (center.distanceTo(_pos) <= radius + nucR * 0.85) {
-          const coreId = this.findCoreInstanceId(ignoreId);
-          if (coreId >= 0 && !hits.includes(coreId)) hits.push(coreId);
+          hits.push(NUCLEUS_HIT_ID);
         }
       }
     }
@@ -691,7 +749,7 @@ export class CubeManager {
     hits.sort((a, b) => b - a);
     let coreSplashed = false;
     for (const id of hits) {
-      if (this.getBlockType(id) === BlockType.Core) {
+      if (id === NUCLEUS_HIT_ID || this.getBlockType(id) === BlockType.Core) {
         if (coreSplashed) continue;
         coreSplashed = true;
       }
@@ -846,6 +904,7 @@ export class CubeManager {
   }
 
   getInstanceWorldPos(id: number, out = new THREE.Vector3()): THREE.Vector3 {
+    if (id === NUCLEUS_HIT_ID) return this.nucleus.getWorldCenter(out);
     if (!this.mesh || id < 0 || id >= this.mesh.count) return out.copy(_zero);
     this.mesh.getMatrixAt(id, _matrix);
     return out.setFromMatrixPosition(_matrix);

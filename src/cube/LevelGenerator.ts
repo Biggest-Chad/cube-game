@@ -82,66 +82,38 @@ export function generateCube(level: LevelDefinition): GeneratedCube {
         const dy = y - coreCenter;
         const dz = z - coreCenter;
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        const isCore = level.hasCore && dist <= coreRadius + 0.01;
+        // Living nucleus occupies the center cavity — never place Core voxels
+        if (level.hasCore && dist <= coreRadius) continue;
 
-        if (!isCore) {
-          if (size >= 10 && !shell && dist > coreRadius + 1.5) {
-            // interior fill with density
-            if (rng() > level.density * 0.55) continue;
-          } else if (rng() > level.density) {
-            continue;
-          }
+        if (size >= 10 && !shell && dist > coreRadius + 1.5) {
+          // interior fill with density
+          if (rng() > level.density * 0.55) continue;
+        } else if (rng() > level.density) {
+          continue;
         }
 
-        let type: BlockType;
-        let hp: number;
-        if (isCore) {
-          type = BlockType.Core;
-          hp = Math.max(
-            1,
-            Math.round(level.coreHP / Math.max(1, Math.floor(coreRadius * 2 + 1) ** 3 * 0.35))
-          );
-          if (dist > coreRadius * 0.55 && rng() > 0.4) {
-            // armor shell around core — late levels use siege plating
-            if (level.id >= 15 && rng() < 0.35) {
-              type = BlockType.Siege;
-              hp = Math.round(level.avgHP * 3.2);
-            } else {
-              type = BlockType.Reinforced;
-              hp = Math.round(level.avgHP * 2.5);
-            }
-          } else if (dist > 0.2) {
-            if (dist > 0.8) {
-              type = pickType(rng, level);
-              const defMul =
-                type === BlockType.Siege ? 3.5 : type === BlockType.Reinforced ? 2.2 : 1;
-              hp = Math.round(level.avgHP * defMul * (0.85 + rng() * 0.3));
-            }
-          }
-        } else {
-          type = pickType(rng, level);
-          // Surface defense nodes (lattice turrets) — more common mid/late game
-          if (shell && level.id >= 5) {
-            const tChance =
-              level.id <= 7 ? 0.04 : level.id <= 14 ? 0.07 : level.id <= 22 ? 0.1 : 0.13;
-            if (rng() < tChance) type = BlockType.Turret;
-          }
-          const defMul =
-            type === BlockType.Siege
-              ? 3.5
-              : type === BlockType.Turret
-                ? 2.4
-                : type === BlockType.Reinforced
-                  ? 2.2
-                  : type === BlockType.Regenerating
-                    ? 1.3
-                    : type === BlockType.DataNode
-                      ? 1.1
-                      : type === BlockType.Explosive
-                        ? 0.9
-                        : 1;
-          hp = Math.max(1, Math.round(level.avgHP * defMul * (0.85 + rng() * 0.35)));
+        let type = pickType(rng, level);
+        // Surface defense nodes (lattice turrets) — more common mid/late game
+        if (shell && level.id >= 5) {
+          const tChance =
+            level.id <= 7 ? 0.04 : level.id <= 14 ? 0.07 : level.id <= 22 ? 0.1 : 0.13;
+          if (rng() < tChance) type = BlockType.Turret;
         }
+        const defMul =
+          type === BlockType.Siege
+            ? 3.5
+            : type === BlockType.Turret
+              ? 2.4
+              : type === BlockType.Reinforced
+                ? 2.2
+                : type === BlockType.Regenerating
+                  ? 1.3
+                  : type === BlockType.DataNode
+                    ? 1.1
+                    : type === BlockType.Explosive
+                      ? 0.9
+                      : 1;
+        const hp = Math.max(1, Math.round(level.avgHP * defMul * (0.85 + rng() * 0.35)));
 
         // Offset so cube is centered at origin
         const wx = x;
@@ -157,27 +129,6 @@ export function generateCube(level: LevelDefinition): GeneratedCube {
         chunk.setBlock(lx, ly, lz, type, hp);
         totalBlocks++;
       }
-    }
-  }
-
-  // Ensure at least one core block if hasCore
-  if (level.hasCore) {
-    const cx = Math.floor(coreCenter / CHUNK_SIZE);
-    const cy = Math.floor(coreCenter / CHUNK_SIZE);
-    const cz = Math.floor(coreCenter / CHUNK_SIZE);
-    const chunk = getChunk(cx, cy, cz);
-    const lx = Math.floor(coreCenter) % CHUNK_SIZE;
-    const ly = Math.floor(coreCenter) % CHUNK_SIZE;
-    const lz = Math.floor(coreCenter) % CHUNK_SIZE;
-    const i = Chunk.index(lx, ly, lz);
-    if (chunk.types[i] === BlockType.Empty) {
-      chunk.setBlock(lx, ly, lz, BlockType.Core, level.coreHP);
-      totalBlocks++;
-    } else {
-      chunk.types[i] = BlockType.Core;
-      chunk.health[i] = level.coreHP;
-      chunk.maxHealth[i] = level.coreHP;
-      chunk.dirty = true;
     }
   }
 

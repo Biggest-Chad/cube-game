@@ -34,7 +34,8 @@ npm run apk:debug
 ```
 
 Output: `android/app/build/outputs/apk/debug/app-debug.apk`  
-(also copied to `releases/` when packaging a release).
+Copy to `release/` / `releases/` as **`thecube-<version>-debug.apk`** (version from `package.json`).  
+Example: `thecube-1.0.0-debug.apk`. Always include the version in the APK filename.
 
 Install: transfer the APK to the device, enable **Install unknown apps**, open the file.  
 The app locks to **landscape**, uses immersive system UI (status / nav bars hidden), and runs the full WebView game shell.

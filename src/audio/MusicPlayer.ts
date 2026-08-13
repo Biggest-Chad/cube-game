@@ -95,7 +95,7 @@ export class MusicPlayer {
    * High-level bed selection.
    * Continuity-first for most transitions — one exception:
    * intro / stage 1 always force The Final Protocol (cinematic + first sector).
-   * - ui: duck/muffle only (60% bed + low-pass)
+   * - ui: duck/muffle only (75% bed + low-pass “next room”)
    * - preserve: unmuffle, keep bed
    */
   setContext(ctx: MusicContext, _opts?: { levelId?: number }): void {
@@ -413,8 +413,8 @@ export class MusicPlayer {
 
   private targetGain(): number {
     const base = this.muted ? 0 : this.masterVol;
-    // Shop / UI: 60% bed + low-pass “next room” filter
-    return base * (this.muffled ? 0.6 : 1);
+    // Shop / UI: 75% bed + low-pass “next room” filter
+    return base * (this.muffled ? 0.75 : 1);
   }
 
   private applyGains(rampSec = 0.18): void {
@@ -426,7 +426,7 @@ export class MusicPlayer {
       this.gain.gain.linearRampToValueAtTime(Math.max(0.001, vol), t + Math.max(0.02, rampSec));
       this.filter.frequency.cancelScheduledValues(t);
       this.filter.frequency.linearRampToValueAtTime(
-        this.muffled ? 480 : 18000,
+        this.muffled ? 720 : 18000,
         t + Math.max(0.05, rampSec)
       );
       this.audio.volume = 1;
