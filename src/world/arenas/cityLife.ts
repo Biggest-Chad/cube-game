@@ -1,10 +1,11 @@
 import * as THREE from 'three';
+import { addCircuitFloor } from './circuitFloor';
 
 /**
- * Distant floor fade only. No trains, flyers, cars, or glitter —
- * those were competing with the cube / ship / drones for GPU time.
+ * Distant floor fade + cheap circuit deck. No trains, flyers, or glitter.
  */
 export function addCityAmbience(root: THREE.Group): void {
+  addCircuitFloor(root);
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     if (o.name !== 'CityStreets' && o.name !== 'CityLots' && o.name !== 'Ground' && o.name !== 'GroundApron' && o.name !== 'HorizonCore') {
@@ -26,7 +27,7 @@ export function addCityAmbience(root: THREE.Group): void {
       transparent: true,
       depthWrite: false,
       fog: false,
-      uniforms: { uInner: { value: 42 }, uOuter: { value: 120 } },
+      uniforms: { uInner: { value: 72 }, uOuter: { value: 145 } },
       vertexShader: `
         varying vec3 vW;
         void main(){

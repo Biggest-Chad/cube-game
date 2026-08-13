@@ -79,7 +79,7 @@ export class GridVoidArena implements ArenaInstance {
   private scene: THREE.Scene | null = null;
   private prevFog: THREE.Fog | THREE.FogExp2 | null = null;
   private prevBg: THREE.Color | THREE.Texture | null = null;
-  private fog = new THREE.Fog(0x000000, 38, 130);
+  private fog = new THREE.Fog(0x02060c, 48, 155);
   private envMap: THREE.Texture | null = null;
   private quality: 0 | 1 | 2 = 1;
   private disposed = false;
@@ -104,6 +104,17 @@ export class GridVoidArena implements ArenaInstance {
         return;
       }
       keepAuthoredMaterial(o);
+      // Ground discs are almost black in the GLB — lift them so the pit isn't a hole
+      if (o.name === 'Ground' || o.name === 'GroundApron') {
+        const list = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of list) {
+          if (!m || !('color' in m)) continue;
+          const std = m as THREE.MeshStandardMaterial;
+          std.color.setHex(0x081018);
+          std.emissive.setHex(0x041018);
+          std.emissiveIntensity = Math.max(std.emissiveIntensity, 0.35);
+        }
+      }
     });
     arena.root.add(gltf.scene);
 
@@ -154,8 +165,8 @@ export class GridVoidArena implements ArenaInstance {
   setQuality(tier: 0 | 1 | 2): void {
     this.quality = tier;
     // Same cheap ambience on every tier — gameplay keeps the GPU.
-    this.fog.near = 38;
-    this.fog.far = 130;
+    this.fog.near = 48;
+    this.fog.far = 155;
   }
 
   update(_dt: number): void {
