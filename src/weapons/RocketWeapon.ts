@@ -4,7 +4,7 @@
  */
 import * as THREE from 'three';
 import type { WeaponStats } from '../data/weapons';
-import type { CubeManager } from '../cube/CubeManager';
+import { NUCLEUS_HIT_ID, type CubeManager } from '../cube/CubeManager';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
 import type { WeaponBehavior, WeaponFireContext } from './WeaponBehavior';
@@ -351,11 +351,8 @@ export class RocketWeapon implements WeaponBehavior {
 
       // Solid nucleus proximity fuse after ignition
       if (r.phase !== 'drop' && cube.nucleus.isActive && cube.nucleus.containsPoint(r.pos)) {
-        const coreId = cube.findCoreInstanceId();
-        if (coreId >= 0) {
-          this.detonate(r, cube, coreId, r.pos.clone(), now);
-          continue;
-        }
+        this.detonate(r, cube, NUCLEUS_HIT_ID, r.pos.clone(), now);
+        continue;
       }
 
       const move = this.move.copy(r.pos).sub(prev);

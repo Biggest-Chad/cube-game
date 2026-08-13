@@ -396,7 +396,7 @@ export class Drone {
           return;
         }
       }
-      const peel = this.acquirePeelTarget(dt, cube, stats, 78, false);
+      const peel = this.acquirePeelTarget(dt, cube, stats, 78, true);
       if (peel === -1) return;
       cube.getBlockWorldPos(peel, this._target);
       this.markFireLook(this._target);
@@ -414,8 +414,7 @@ export class Drone {
 
     // —— Bomber: peel outer armor first; nucleus only once the hull is thin ——
     if (this.bombActive) return;
-    const preferCore = !!(combat?.nucleusExposed || stats.dronePriorityCore);
-    const peel = this.acquirePeelTarget(dt, cube, stats, 110, preferCore);
+    const peel = this.acquirePeelTarget(dt, cube, stats, 110, true);
     if (peel === -1 || !this.bombMesh) return;
     cube.getBlockWorldPos(peel, this._target);
     this.markFireLook(this._target);

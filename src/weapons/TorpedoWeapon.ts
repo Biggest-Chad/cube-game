@@ -3,7 +3,7 @@
  */
 import * as THREE from 'three';
 import type { WeaponStats } from '../data/weapons';
-import type { CubeManager } from '../cube/CubeManager';
+import { NUCLEUS_HIT_ID, type CubeManager } from '../cube/CubeManager';
 import { BlockType } from '../cube/BlockTypes';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
@@ -256,11 +256,8 @@ export class TorpedoWeapon implements WeaponBehavior {
 
       // Always solid-collide (including during arm window) so torps never tunnel
       if (cube.nucleus.isActive && cube.nucleus.containsPoint(t.pos)) {
-        const coreId = cube.findCoreInstanceId();
-        if (coreId >= 0) {
-          this.detonate(t, cube, t.pos.clone(), coreId, now);
-          continue;
-        }
+        this.detonate(t, cube, t.pos.clone(), NUCLEUS_HIT_ID, now);
+        continue;
       }
 
       const move = this.move.copy(t.pos).sub(prev);
@@ -286,7 +283,7 @@ export class TorpedoWeapon implements WeaponBehavior {
     if (!t.active) return;
     // Pre-arm impact still detonates but at reduced warhead yield (safety fuse)
     const yieldMul = t.armed > 0 ? 0.45 : 1;
-    if (instanceId >= 0) {
+    if (cube.hasInstance(instanceId)) {
       const type = cube.getBlockType(instanceId);
       const applied = applyToBlock(
         {

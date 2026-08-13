@@ -17,6 +17,11 @@ const _zero = new THREE.Vector3(0, 0, 0);
 /** Sentinel instance id for the living nucleus (not a lattice voxel). */
 export const NUCLEUS_HIT_ID = -2;
 
+/** True for a live lattice instance or the solid nucleus hitbox. */
+export function isLiveTargetId(id: number): boolean {
+  return id === NUCLEUS_HIT_ID || id >= 0;
+}
+
 export interface DamageResult {
   destroyed: boolean;
   type: BlockType;
@@ -267,7 +272,7 @@ export class CubeManager {
     // —— Solid nucleus sphere (full isotropic 3D; wins when closer than shell) ——
     // Test first so a clean sphere hit is the baseline; shell voxels may still
     // win when they are strictly nearer (outer armor).
-    if (this.nucleus.isActive) {
+    if (this.nucleus.isActive && ignoreId !== NUCLEUS_HIT_ID) {
       const nucPt = new THREE.Vector3();
       const nucDist = this.nucleus.raycastSolid(origin, dir, maxDist, nucPt);
       if (nucDist != null && nucDist <= bestDist) {
@@ -308,7 +313,8 @@ export class CubeManager {
       }
     }
 
-    if (bestId < 0 || !bestPoint) return null;
+    // NUCLEUS_HIT_ID is -2 — do not treat the solid core as "no hit"
+    if (!bestPoint || !isLiveTargetId(bestId)) return null;
 
     const normal = new THREE.Vector3();
     if (nucleusSolid) {
@@ -341,8 +347,14 @@ export class CubeManager {
     };
   }
 
-  /** First live Core block instance (for routing solid-nucleus hits into the shared pool). */
+  /**
+   * Living nucleus id (preferred) or a leftover Core voxel.
+   * Levels no longer place Core voxels — the VFX sphere is the only core.
+   */
   findCoreInstanceId(ignoreId = -1): number {
+    if (this.nucleus.isActive && ignoreId !== NUCLEUS_HIT_ID) {
+      return NUCLEUS_HIT_ID;
+    }
     if (!this.mesh) return -1;
     for (let id = 0; id < this.mesh.count; id++) {
       if (id === ignoreId) continue;
@@ -398,18 +410,27 @@ export class CubeManager {
       this.nucleus.getWorldCenter(_pos);
       const d = from.distanceTo(_pos);
       if (d <= maxDist) {
-        const shell = this.nucleus.snapshot().shellRatio;
-        // Nucleus is last — only attractive once the outer hull is thin
-        const nucScore = (1 - shell) * 22 + (prefer?.(BlockType.Core) ?? 0) * 0.4 - d * 0.15;
-        if (shell < 0.38 && nucScore > bestScore) {
-          bestScore = nucScore;
-          bestId = NUCLEUS_HIT_ID;
-          bestDist = d;
+        const snap = this.nucleus.snapshot();
+        const shell = snap.shellRatio;
+        const noOther = !isLiveTargetId(bestId);
+        // Peel the hull first; lock the core once it is exposed, the shell is
+        // thin, or nothing else remains to shoot.
+        if (noOther || snap.exposed || shell < 0.45) {
+          const nucScore =
+            (1 - shell) * 22 +
+            (snap.exposed ? 14 : 0) +
+            (prefer?.(BlockType.Core) ?? 0) * 0.4 -
+            d * 0.15;
+          if (noOther || nucScore > bestScore) {
+            bestScore = nucScore;
+            bestId = NUCLEUS_HIT_ID;
+            bestDist = d;
+          }
         }
       }
     }
 
-    if (bestId < 0) return null;
+    if (!isLiveTargetId(bestId)) return null;
     return { instanceId: bestId, distance: bestDist };
   }
 
@@ -418,31 +439,47 @@ export class CubeManager {
     instanceId: number;
     distance: number;
   } | null {
-    if (!this.mesh) return null;
+    if (!this.mesh && !this.nucleus.isActive) return null;
     let bestScore = -Infinity;
     let bestId = -1;
     let bestDist = maxDist;
-    for (let id = 0; id < this.mesh.count; id++) {
-      this.mesh.getMatrixAt(id, _matrix);
-      _pos.setFromMatrixPosition(_matrix);
-      const d = world.distanceTo(_pos);
-      if (d > maxDist) continue;
-      const ref = this.refs[id];
-      const t = ref.chunk.types[ref.localIndex] as BlockType;
-      const prio = prefer ? prefer(t) : BLOCK_DEFS[t]?.priority ?? 1;
-      const score = prio * 10 - d;
-      if (score > bestScore) {
-        bestScore = score;
-        bestId = id;
-        bestDist = d;
+    if (this.mesh) {
+      for (let id = 0; id < this.mesh.count; id++) {
+        this.mesh.getMatrixAt(id, _matrix);
+        _pos.setFromMatrixPosition(_matrix);
+        const d = world.distanceTo(_pos);
+        if (d > maxDist) continue;
+        const ref = this.refs[id];
+        const t = ref.chunk.types[ref.localIndex] as BlockType;
+        const prio = prefer ? prefer(t) : BLOCK_DEFS[t]?.priority ?? 1;
+        const score = prio * 10 - d;
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = id;
+          bestDist = d;
+        }
       }
     }
-    if (bestId < 0) return null;
+    if (this.nucleus.isActive) {
+      this.nucleus.getWorldCenter(_pos);
+      const d = world.distanceTo(_pos);
+      if (d <= maxDist) {
+        const prio = prefer ? prefer(BlockType.Core) : 8;
+        const score = prio * 10 - d;
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = NUCLEUS_HIT_ID;
+          bestDist = d;
+        }
+      }
+    }
+    if (!isLiveTargetId(bestId)) return null;
     return { instanceId: bestId, distance: bestDist };
   }
 
   getBlockWorldPos(instanceId: number, out = new THREE.Vector3()): THREE.Vector3 {
-    if (!this.mesh) return out.copy(_zero);
+    if (instanceId === NUCLEUS_HIT_ID) return this.nucleus.getWorldCenter(out);
+    if (!this.mesh || instanceId < 0 || instanceId >= this.mesh.count) return out.copy(_zero);
     this.mesh.getMatrixAt(instanceId, _matrix);
     return out.setFromMatrixPosition(_matrix);
   }
@@ -722,14 +759,16 @@ export class CubeManager {
     ignoreId = -1
   ): DamageResult[] {
     const results: DamageResult[] = [];
-    if (!this.mesh) return results;
+    if (!this.mesh && !this.nucleus.isActive) return results;
     // collect ids first (mutation shifts ids)
     const hits: number[] = [];
-    for (let id = 0; id < this.mesh.count; id++) {
-      if (id === ignoreId) continue;
-      this.mesh.getMatrixAt(id, _matrix);
-      _pos.setFromMatrixPosition(_matrix);
-      if (center.distanceTo(_pos) <= radius) hits.push(id);
+    if (this.mesh) {
+      for (let id = 0; id < this.mesh.count; id++) {
+        if (id === ignoreId) continue;
+        this.mesh.getMatrixAt(id, _matrix);
+        _pos.setFromMatrixPosition(_matrix);
+        if (center.distanceTo(_pos) <= radius) hits.push(id);
+      }
     }
     // Also include solid nucleus if blast overlaps the hitbox but no core voxel was in range
     // (and primary impact was not already a core hit)

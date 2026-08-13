@@ -4,7 +4,7 @@
  */
 import * as THREE from 'three';
 import type { WeaponStats } from '../data/weapons';
-import type { CubeManager } from '../cube/CubeManager';
+import { NUCLEUS_HIT_ID, type CubeManager } from '../cube/CubeManager';
 import { BlockType } from '../cube/BlockTypes';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
@@ -233,12 +233,8 @@ export class MissileWeapon implements WeaponBehavior {
   private pickTarget(cube: CubeManager, from: THREE.Vector3): number {
     // Prefer solid nucleus when active — missiles home into the core hitbox
     if (cube.nucleus.isActive) {
-      const coreId = cube.findCoreInstanceId();
-      if (coreId >= 0) {
-        // Only force-core when exposed or hunter, otherwise still strong preference
-        if (cube.nucleus.isExposed || this.stats.flags.has('hunter_core')) {
-          return coreId;
-        }
+      if (cube.nucleus.isExposed || this.stats.flags.has('hunter_core')) {
+        return NUCLEUS_HIT_ID;
       }
     }
     const prefer = (t: BlockType): number => {
@@ -322,13 +318,13 @@ export class MissileWeapon implements WeaponBehavior {
       m.life -= dt;
       m.arm -= dt;
 
-      // Retarget if lost
-      if (m.targetId < 0 || cube.getBlockType(m.targetId) === BlockType.Empty) {
+      // Retarget if lost (NUCLEUS_HIT_ID is -2 — use hasInstance, not id < 0)
+      if (!cube.hasInstance(m.targetId)) {
         m.targetId = this.pickTarget(cube, m.pos);
       }
 
       const armed = m.arm <= 0;
-      if (m.targetId >= 0) {
+      if (cube.hasInstance(m.targetId)) {
         // Home to solid nucleus center when target is a core block — true solid aimpoint
         if (
           cube.nucleus.isActive &&
@@ -376,11 +372,8 @@ export class MissileWeapon implements WeaponBehavior {
 
       // Proximity fuse vs solid nucleus (clear explosion feedback)
       if (cube.nucleus.isActive && cube.nucleus.containsPoint(m.pos)) {
-        const coreId = cube.findCoreInstanceId();
-        if (coreId >= 0) {
-          this.impact(m, cube, coreId, m.pos.clone(), now);
-          continue;
-        }
+        this.impact(m, cube, NUCLEUS_HIT_ID, m.pos.clone(), now);
+        continue;
       }
 
       const move = this.move.copy(m.pos).sub(prev);
