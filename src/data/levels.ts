@@ -1,6 +1,10 @@
+import type { ArenaId } from './arenas';
+
 export interface LevelDefinition {
   id: number;
   name: string;
+  /** Optional explicit backdrop. Unset = pick from unlocked arenas (Ascension). */
+  arena?: ArenaId;
   size: number;
   density: number;
   avgHP: number;
@@ -80,7 +84,7 @@ function makeLevel(
 /** First 30 concrete levels — HP is the primary difficulty lever. */
 export const LEVELS: LevelDefinition[] = [
   // —— Tutorial band: 0–1 upgrades ——
-  // Ramp: enough combat + clear frags for first drone (~150) over L1–L2;
+  // Ramp: enough combat + clear frags for first drone (100 FRAG) over L1–L2;
   // modular weapons stay locked until highestLevel >= 3 (after L2 clear).
   makeLevel(1, 'AWAKENING', 6, 1.0, 12, 0, 0, 1.0, {
     hasCore: true,

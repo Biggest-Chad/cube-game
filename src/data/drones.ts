@@ -44,7 +44,7 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     baseHp: 40,
     color: 0xffd060,
     colorCss: '#ffd060',
-    unitCost: 120,
+    unitCost: 90,
     unlockCost: 0,
     unlockLevel: 1,
   },
@@ -64,8 +64,8 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     baseHp: 70,
     color: 0xff6622,
     colorCss: '#ff6622',
-    unitCost: 200,
-    unlockCost: 180,
+    unitCost: 150,
+    unlockCost: 135,
     unlockLevel: 4,
   },
   defender: {
@@ -84,8 +84,8 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     baseHp: 55,
     color: 0x00ffaa,
     colorCss: '#00ffaa',
-    unitCost: 220,
-    unlockCost: 240,
+    unitCost: 165,
+    unlockCost: 180,
     unlockLevel: 6,
   },
 };
@@ -93,17 +93,38 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
 /** +50% over the original 12-bay hull. */
 export const DRONE_BAY_MAX = 18;
 export const DRONE_BAY_START = 0;
-/** Frag cost for bay slot n (0-indexed next purchase). */
+/** Ally Protocol — first drone purchase. */
+export const FIRST_DRONE_COST = 100;
+/** Frag cost for bay slot n (0-indexed next purchase). ~25% below the old 150×1.48^n curve. */
 export function droneBayUnlockCost(ownedBays: number): number {
-  return Math.round(150 * Math.pow(1.48, Math.max(0, ownedBays)));
+  return Math.round(113 * Math.pow(1.48, Math.max(0, ownedBays)));
 }
 
 export const DRONE_HARD_CAP = DRONE_BAY_MAX;
 
 export const DRONE_COST = {
-  base: 45,
+  base: 34,
   growth: 1.42,
 } as const;
+
+/** FRAG needed to field a second active drone (bay and/or another fighter). */
+export function secondDroneAffordCost(state: DroneBayState): number {
+  const equipped = state.slots.filter((s) => s != null).length;
+  if (equipped >= 2) return 0;
+  const freeFighter = freeInventory(state, 'fighter');
+  const emptyBay = state.slots.some((s) => s == null);
+  const unit = DRONE_ROLES.fighter.unitCost;
+  const bay = droneBayUnlockCost(state.bays);
+  if (emptyBay && freeFighter > 0) return 0;
+  if (emptyBay) return unit;
+  if (freeFighter > 0) return bay;
+  return bay + unit;
+}
+
+export function canAffordSecondDrone(state: DroneBayState, fragments: number): boolean {
+  if (state.slots.filter((s) => s != null).length >= 2) return false;
+  return fragments >= secondDroneAffordCost(state);
+}
 
 /** @deprecated use droneBayUnlockCost / unit costs */
 export function dronePurchaseCost(ownedCount: number): number {

@@ -6,16 +6,13 @@ import type { LoadoutState, DerivedWeapon } from '../loadout/LoadoutState';
 import type { WeaponBehavior, WeaponFireContext } from '../weapons/WeaponBehavior';
 import { createWeaponBehavior } from '../weapons';
 import { MAX_HARDPOINTS } from '../data/weapons';
+import { SHIP_HARDPOINTS } from '../player/ShipMounts';
 import type { CubeManager } from '../cube/CubeManager';
 import type { PlayerStats } from '../progression/TechTree';
 import { bus } from '../core/EventBus';
 
-/** Local offsets — wing hardpoints sit under the wings like fighter pylons. */
-const SLOT_LOCAL: THREE.Vector3[] = [
-  new THREE.Vector3(0.62, -0.16, 0.08), // right wing
-  new THREE.Vector3(-0.62, -0.16, 0.08), // left wing
-  new THREE.Vector3(0, -0.2, -0.28), // center belly
-];
+/** Local offsets — must match `SHIP_HARDPOINTS` / interceptor v2 empties. */
+const SLOT_LOCAL = SHIP_HARDPOINTS;
 
 export class HardpointSystem {
   /** Visual pylons — attach under ship with attachToShip(). */

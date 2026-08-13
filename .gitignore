@@ -16,3 +16,8 @@ android/captures/
 *.iml
 # Keep release APKs for distribution; ignore raw gradle debug dumps
 android/app/release/
+
+# Blender pipeline working files (keep exported GLB/sky in lookdev/public/glb)
+prototypes/blender-pipeline/out/*.blend
+prototypes/blender-pipeline/out/*.blend1
+prototypes/blender-pipeline/blender-portable/

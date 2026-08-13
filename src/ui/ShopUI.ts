@@ -193,6 +193,11 @@ export class ShopUI {
     this.droneBay = ctrl;
   }
 
+  /** Deep-link FLEET vs UPGRADES on the DRONES tab. */
+  setDroneSubTab(sub: 'stock' | 'upgrades'): void {
+    this.droneSubTab = sub;
+  }
+
   show(tree: TechTree, currency: Currency, tab?: ShopTabId | string): void {
     const normalized = normalizeShopTabId(tab ?? null);
     if (normalized) {

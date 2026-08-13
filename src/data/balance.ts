@@ -46,7 +46,7 @@ export function armorEffective(rating: number): number {
  */
 export function droneCost(n: number): number {
   const owned = Math.max(0, Math.floor(n));
-  return Math.floor(80 * Math.pow(1.42, owned));
+  return Math.floor(60 * Math.pow(1.42, owned));
 }
 
 // ---------------------------------------------------------------------------

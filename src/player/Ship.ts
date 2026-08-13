@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { COLORS, ORBIT } from '../data/constants';
 import type { OrbitalCamera } from './OrbitalCamera';
+import { SHIP_HEADLIGHTS, SHIP_MUZZLE, SHIP_THRUSTERS } from './ShipMounts';
 
 /**
  * Aggressive cinematic interceptor — dagger silhouette, forward-swept wings,
@@ -15,7 +17,7 @@ export class Ship {
   private headTarget = new THREE.Object3D();
   private fillLight!: THREE.PointLight;
   /** Local-space muzzle tip (nose cannon aperture). */
-  private muzzleLocal = new THREE.Vector3(0, -0.02, -1.72);
+  private muzzleLocal = SHIP_MUZZLE.clone();
   private _muzzleWorld = new THREE.Vector3();
   private _desired = new THREE.Vector3();
   private _look = new THREE.Vector3();
@@ -38,6 +40,45 @@ export class Ship {
     this.group.add(this.body);
     this.setupLights();
     this.setupThrusterLights();
+    void this.adoptV2Visual();
+  }
+
+  /** Swap in the Blender interceptor when the GLB is available. Mounts stay fixed. */
+  async adoptV2Visual(): Promise<void> {
+    try {
+      const gltf = await new GLTFLoader().loadAsync('./ships/interceptor-v2.glb');
+      const next = gltf.scene;
+      next.name = 'InterceptorV2';
+      this.engineGlow = [];
+      this.plumeMeshes = [];
+      this.accentMats = [];
+      this.runningLights = [];
+      next.traverse((o) => {
+        if (!(o instanceof THREE.Mesh)) return;
+        if (o.material && 'emissive' in o.material) {
+          (o.material as THREE.MeshStandardMaterial).toneMapped = false;
+        }
+        if (o.name.startsWith('EngineGlow') || o.name.includes('Nozzle')) {
+          this.engineGlow.push(o);
+        }
+        if (o.name.startsWith('Plume')) {
+          this.engineGlow.push(o);
+          this.plumeMeshes.push(o);
+        }
+      });
+      this.group.remove(this.body);
+      this.body.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+          else o.material.dispose();
+        }
+      });
+      this.body = next;
+      this.group.add(this.body);
+    } catch {
+      // Procedural hull remains
+    }
   }
 
   private hull(color = 0x1a2430, metal = 0.82, rough = 0.26): THREE.MeshStandardMaterial {
@@ -423,8 +464,9 @@ export class Ship {
 
     // Slight overall scale for third-person readability
     g.scale.setScalar(1.12);
-    // Scale muzzle local to match body scale
-    this.muzzleLocal.multiplyScalar(1.12);
+    // Mounts live on ship.group — already final size (see ShipMounts).
+    this.muzzleLocal.copy(SHIP_MUZZLE);
+    this.thrusterLocals = SHIP_THRUSTERS.map((v) => v.clone());
     return g;
   }
 
@@ -434,11 +476,11 @@ export class Ship {
 
     this.headLightL = new THREE.SpotLight(0xfff0d0, 52, 58, Math.PI / 7, 0.45, 1.15);
     this.headLightR = new THREE.SpotLight(0xfff0d0, 52, 58, Math.PI / 7, 0.45, 1.15);
-    for (const [light, x] of [
-      [this.headLightL, -0.18],
-      [this.headLightR, 0.18],
+    for (const [light, pos] of [
+      [this.headLightL, SHIP_HEADLIGHTS[0]],
+      [this.headLightR, SHIP_HEADLIGHTS[1]],
     ] as const) {
-      light.position.set(x, -0.02, -1.2);
+      light.position.copy(pos);
       light.target = this.headTarget;
       this.group.add(light);
     }

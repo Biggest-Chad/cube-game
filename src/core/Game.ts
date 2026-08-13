@@ -27,6 +27,8 @@ import { DroneBayController } from '../loadout/DroneBayState';
 import { DroneManager } from '../drones/DroneManager';
 import {
   DRONE_ROLES,
+  FIRST_DRONE_COST,
+  canAffordSecondDrone,
   type DroneRole,
 } from '../data/drones';
 import { Currency } from '../progression/Currency';
@@ -39,7 +41,7 @@ import { ImpactRings } from '../vfx/ImpactRings';
 import { AimReticle } from '../vfx/AimReticle';
 import { CinematicIntro } from '../vfx/CinematicIntro';
 import { PostProcessing } from '../vfx/PostProcessing';
-import { AmbientEnvironment } from '../world/AmbientEnvironment';
+import { ArenaDirector } from '../world/ArenaDirector';
 import { AudioEngine } from '../audio/AudioEngine';
 import { MusicPlayer } from '../audio/MusicPlayer';
 import { AdService } from '../ads/AdService';
@@ -100,7 +102,7 @@ export class Game {
   private save = new SaveSystem();
   private cameraCtrl: OrbitalCamera;
   private post: PostProcessing;
-  private ambient = new AmbientEnvironment();
+  private arena = new ArenaDirector();
   private cube = new CubeManager();
   /** Separate lattice used only during the intro cinematic (real cube stays pristine). */
   private cinematicCube = new CubeManager();
@@ -240,7 +242,7 @@ export class Game {
     this.cameraCtrl = new OrbitalCamera(window.innerWidth / window.innerHeight);
     this.post = new PostProcessing(this.renderer, this.scene, this.cameraCtrl.camera);
 
-    this.ambient.applyToScene(this.scene);
+    this.arena.bind(this.scene, this.cameraCtrl.camera);
     this.scene.add(this.cube.group);
     this.scene.add(this.cinematicCube.group);
     this.cinematicCube.group.visible = false;
@@ -314,6 +316,7 @@ export class Game {
     this.tutorial = new TutorialDirector(document.getElementById('ui-root')!, {
       stage1Done: false,
       loadoutDone: false,
+      fleetDone: false,
     });
     this.evolveReady = new EvolveReadyUI(document.getElementById('ui-root')!);
     this.evolveReady.onOpenShop = () => this.openTech();
@@ -501,6 +504,7 @@ export class Game {
           this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked,
         ownsArcBeam: this.loadout.isOwned('rocket_pod'),
         hasEquippedWeapon: this.loadout.allDerived().length > 0,
+        fleetExpanded: this.droneBays.equippedCount() >= 2,
       });
       this.closeActiveOverlay();
     };
@@ -590,6 +594,7 @@ export class Game {
       this.persist();
       this.audio.playPurchase();
       this.toast(`DRONE BAY ${this.droneBays.state.bays} ONLINE`);
+      if (this.droneBays.equippedCount() >= 2) this.tutorial.notifyFleetExpanded();
       return true;
     };
     this.shopUI.onUnlockDroneType = (role) => {
@@ -617,6 +622,7 @@ export class Game {
       this.syncDronesFromBays();
       this.persist();
       this.audio.playPurchase();
+      if (this.droneBays.equippedCount() >= 2) this.tutorial.notifyFleetExpanded();
       return true;
     };
     this.shopUI.onAssignDroneSlot = (slot, role) => {
@@ -624,6 +630,7 @@ export class Game {
       if (ok) {
         this.syncDronesFromBays();
         this.persist();
+        if (this.droneBays.equippedCount() >= 2) this.tutorial.notifyFleetExpanded();
       }
       return ok;
     };
@@ -709,12 +716,16 @@ export class Game {
       const step = this.tutorial.currentStep;
       if (step?.id === 'loadout_buy' || step?.advance === 'weapon_owned') {
         this.openTech('loadouts');
+      } else if (step?.id === 'fleet_hint' || step?.id === 'fleet_expand') {
+        this.shopUI.setDroneSubTab('stock');
+        this.openTech('drone_bays');
       } else if (
         step?.id === 'shop_drone' ||
         step?.id === 'shop_hint' ||
         step?.advance === 'drone_owned'
       ) {
         // Ally Protocol lives under DRONES → UPGRADES
+        this.shopUI.setDroneSubTab('upgrades');
         this.openTech('drone_bays');
       } else {
         this.openTech();
@@ -723,6 +734,7 @@ export class Game {
     this.tutorial.onComplete = (id) => {
       if (id === 'stage1') this.save.data.tutorialStage1Done = true;
       if (id === 'loadout') this.save.data.tutorialLoadoutDone = true;
+      if (id === 'fleet') this.save.data.tutorialFleetDone = true;
       this.persist();
     };
 
@@ -834,7 +846,7 @@ export class Game {
     this.post.setSize(window.innerWidth, window.innerHeight);
     this.post.setQuality(quality);
     this.particles.setBudget(Math.min(PERF.maxParticles, preset.particleBudget));
-    this.ambient.setQuality(preset.ambientTier);
+    this.arena.setQuality(preset.ambientTier);
     this.cameraCtrl.resize(window.innerWidth / window.innerHeight);
     // Base VFX density from tier (adaptive FPS may pull this down further)
     this.vfxScale =
@@ -1399,7 +1411,7 @@ export class Game {
       return;
     }
     const ownsDrone = this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
-    const droneCost = 150;
+    const droneCost = FIRST_DRONE_COST;
     const canAffordDrone =
       !ownsDrone && this.currency.dataFragments >= droneCost;
     // Shop hidden until first drone is affordable OR already owned
@@ -1424,7 +1436,7 @@ export class Game {
     let hint = '';
     if (firstDrone) {
       hint =
-        'Ally Protocol ready — 150 FRAG. Open SHOP and buy your first AI drone.';
+        `Ally Protocol ready — ${FIRST_DRONE_COST} FRAG. Open SHOP and buy your first AI drone.`;
     } else if (firstWeapon && weapon) {
       const c = weaponUnlockCost(weapon);
       hint = `Rocket Pod ready — ${c.fragments} FRAG. Open SHOP → LOADOUTS for your first hardpoint weapon.`;
@@ -1512,7 +1524,8 @@ export class Game {
 
     this.tutorial.setFlags(
       !!data.tutorialStage1Done,
-      !!data.tutorialLoadoutDone
+      !!data.tutorialLoadoutDone,
+      !!data.tutorialFleetDone
     );
 
     this.vitals.syncFromStats(this.tech.stats);
@@ -1698,6 +1711,11 @@ export class Game {
       hasDemoCube: this.menuDemoActive && this.cube.aliveBlocks > 0,
     });
 
+    this.arena.setContext({
+      levelId: this.currentLevelId || 1,
+      ascensionTier: this.save.data.ascensionTier ?? 0,
+      highestLevel: this.save.data.highestLevel,
+    });
     this.mode = 'menu';
     this.shopOpen = false;
     this.returnToPause = false;
@@ -1729,8 +1747,8 @@ export class Game {
     const ownsDrone =
       this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
     this.menu.setChrome({
-      showShop: ownsDrone || this.currency.dataFragments >= 150,
-      showLoadout: ownsDrone || this.currency.dataFragments >= 150,
+      showShop: ownsDrone || this.currency.dataFragments >= FIRST_DRONE_COST,
+      showLoadout: ownsDrone || this.currency.dataFragments >= FIRST_DRONE_COST,
       showLattice:
         this.currency.coreEnergy > 0 ||
         this.save.data.ascensionTier > 0 ||
@@ -1908,9 +1926,9 @@ export class Game {
     // Gate shop until first drone is affordable or already owned
     const ownsDrone =
       this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
-    const canAffordDrone = this.currency.dataFragments >= 150;
+    const canAffordDrone = this.currency.dataFragments >= FIRST_DRONE_COST;
     if (!ownsDrone && !canAffordDrone) {
-      this.toast('SHOP LOCKED — EARN 150 FRAG FOR YOUR FIRST DRONE');
+      this.toast(`SHOP LOCKED — EARN ${FIRST_DRONE_COST} FRAG FOR YOUR FIRST DRONE`);
       return;
     }
 
@@ -2138,6 +2156,12 @@ export class Game {
 
     this.wipeCombatSession();
 
+    this.arena.setContext({
+      levelId: id,
+      ascensionTier: this.save.data.ascensionTier ?? 0,
+      highestLevel: this.save.data.highestLevel,
+      preferred: level.arena,
+    });
     this.cube.loadLevel(level);
     this.cubeAnimator.setDemoMode(false);
     this.cubeAnimator.setLevel(id);
@@ -2314,7 +2338,8 @@ export class Game {
     if (this.currentLevelId === 1) {
       this.tutorial.setFlags(
         this.save.data.tutorialStage1Done,
-        this.save.data.tutorialLoadoutDone
+        this.save.data.tutorialLoadoutDone,
+        this.save.data.tutorialFleetDone
       );
       this.tutorial.tryStartStage1();
       // Tutorial: hold fire until welcome is acknowledged or player moves
@@ -2740,7 +2765,7 @@ export class Game {
       }
     }
 
-    this.ambient.update(dt);
+    this.arena.update(dt);
     this.screenFx.update(dt);
 
     if (this.mode === 'menu' || (this.mode === 'settings' && this.menuDemoActive)) {
@@ -2856,7 +2881,7 @@ export class Game {
           const ownsDrone =
             this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
           const canAffordDrone =
-            !ownsDrone && this.currency.dataFragments >= 150;
+            !ownsDrone && this.currency.dataFragments >= FIRST_DRONE_COST;
           const rocketCost = this.loadout.weaponBuyCost(
             'rocket_pod',
             this.save.data.highestLevel
@@ -2876,7 +2901,20 @@ export class Game {
             canAffordDrone,
             ownsDrone,
             fragments: this.currency.dataFragments,
+            canAffordSecondDrone:
+              ownsDrone &&
+              canAffordSecondDrone(this.droneBays.state, this.currency.dataFragments),
+            fleetExpanded: this.droneBays.equippedCount() >= 2,
           });
+          if (
+            ownsDrone &&
+            this.save.data.tutorialStage1Done &&
+            !this.save.data.tutorialFleetDone &&
+            canAffordSecondDrone(this.droneBays.state, this.currency.dataFragments) &&
+            this.droneBays.equippedCount() < 2
+          ) {
+            this.tutorial.tryStartFleet();
+          }
         }
 
         // Hardpoints: forward / guided only — never player aim stick
@@ -2987,7 +3025,7 @@ export class Game {
     this.reticle.dispose();
     this.cinematic?.dispose();
     this.screenFx?.dispose();
-    this.ambient.dispose();
+    this.arena.dispose();
     this.post.dispose();
     this.audio.dispose();
     this.input.dispose();
