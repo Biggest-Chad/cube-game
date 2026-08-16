@@ -1,26 +1,70 @@
 /**
  * Central balance curves and hard caps.
  * All combat/economy systems should import from here — no magic numbers in systems.
+ * Numeric sources live in `constraints.ts`.
  */
+
+import {
+  ARMOR_HYPERBOLIC_K,
+  ARMOR_MAX_EFFECTIVE_REDUCTION,
+  CRIT_CHANCE_HARD_CAP,
+  CRIT_MULT_HARD_CAP,
+  DEFENSE_ADAPTIVE_MIN_LEVEL,
+  DEFENSE_DRONES_MAX_LEVEL,
+  DEFENSE_FACE_MAX_LEVEL,
+  DEFENSE_NONE_MAX_LEVEL,
+  DEFENSE_SHIELD_MAX_LEVEL,
+  DEFENSE_SHIELD_MIN_LEVEL,
+  DEFENSE_TURRET_MAX_LEVEL,
+  DEFENSE_TURRET_MIN_LEVEL,
+  DEFENSE_FACE_MIN_LEVEL,
+  DEFENSE_DRONES_MIN_LEVEL,
+  DEFENSE_ELITE_MIN_LEVEL,
+  DRONE_ABSOLUTE_HARD_CAP,
+  DRONE_LEGACY_SOFT_COST_BASE,
+  DRONE_LEGACY_COST_GROWTH,
+  FIRE_RATE_MULTIPLIER_HARD_CAP,
+  FRAGMENT_MULTIPLIER_HARD_CAP,
+  HARDPOINT_BETA_ASCENSION_GATE,
+  HARDPOINT_BETA_UNLOCK_COST_CORE,
+  HARDPOINT_GAMMA_ASCENSION_GATE,
+  HARDPOINT_GAMMA_UNLOCK_COST_CORE,
+  HARDPOINTS_MAXIMUM,
+  HARDPOINTS_STARTING_UNLOCKED,
+  INTRO_LEVEL_MAXIMUM,
+  LEVEL_HP_SCALE_LINEAR,
+  LEVEL_HP_SCALE_POWER,
+  LEVEL_HP_SCALE_POWER_WEIGHT,
+  LEVEL_REWARD_SCALE_POWER,
+  LEVEL_REWARD_SCALE_WEIGHT,
+  ORBIT_SPEED_MULTIPLIER_HARD_CAP,
+  SHIP_BASE_ARMOR_RATING,
+  SHIP_BASE_HULL_HIT_POINTS,
+  SHIP_BASE_MAX_HULL,
+  SHIP_BASE_MAX_SHIELD,
+  SHIP_BASE_SHIELD,
+  SHIP_SHIELD_RECHARGE_DELAY_SECONDS,
+  SHIP_SHIELD_RECHARGE_PER_SECOND,
+} from './constraints';
 
 // ---------------------------------------------------------------------------
 // Hard caps (competitor-informed; see PHASED_IMPLEMENTATION_PLAN §1)
 // ---------------------------------------------------------------------------
 
 /** Hyperbolic armor constant: effective = rating / (rating + ARMOR_K) */
-export const ARMOR_K = 100;
+export const ARMOR_K = ARMOR_HYPERBOLIC_K;
 
 /** Max damage reduction from armor (hard ceiling). */
-export const maxEffectiveArmor = 0.55;
+export const maxEffectiveArmor = ARMOR_MAX_EFFECTIVE_REDUCTION;
 
-export const maxCritChance = 0.4;
-export const maxCritMult = 2.25;
-export const maxFireRateMul = 2.75;
-export const maxOrbitSpeedMul = 1.85;
-export const maxFragmentMul = 2.25;
+export const maxCritChance = CRIT_CHANCE_HARD_CAP;
+export const maxCritMult = CRIT_MULT_HARD_CAP;
+export const maxFireRateMul = FIRE_RATE_MULTIPLIER_HARD_CAP;
+export const maxOrbitSpeedMul = ORBIT_SPEED_MULTIPLIER_HARD_CAP;
+export const maxFragmentMul = FRAGMENT_MULTIPLIER_HARD_CAP;
 
 /** Absolute drone fleet cap. Cost curve is the practical limit. */
-export const maxDrones = 24;
+export const maxDrones = DRONE_ABSOLUTE_HARD_CAP;
 
 // ---------------------------------------------------------------------------
 // Armor DR
@@ -46,7 +90,7 @@ export function armorEffective(rating: number): number {
  */
 export function droneCost(n: number): number {
   const owned = Math.max(0, Math.floor(n));
-  return Math.floor(60 * Math.pow(1.42, owned));
+  return Math.floor(DRONE_LEGACY_SOFT_COST_BASE * Math.pow(DRONE_LEGACY_COST_GROWTH, owned));
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +106,7 @@ export function droneCost(n: number): number {
 export function levelHpScale(levelId: number): number {
   const L = Math.max(1, levelId);
   // Mild early, steeper mid: quadratic-ish with soft floor
-  return 1 + (L - 1) * 0.12 + Math.pow(L - 1, 1.55) * 0.018;
+  return 1 + (L - 1) * LEVEL_HP_SCALE_LINEAR + Math.pow(L - 1, LEVEL_HP_SCALE_POWER) * LEVEL_HP_SCALE_POWER_WEIGHT;
 }
 
 /**
@@ -73,7 +117,7 @@ export function levelHpScale(levelId: number): number {
  */
 export function rewardScale(levelId: number): number {
   const L = Math.max(1, levelId);
-  return 1 + Math.pow(L - 1, 0.72) * 0.28;
+  return 1 + Math.pow(L - 1, LEVEL_REWARD_SCALE_POWER) * LEVEL_REWARD_SCALE_WEIGHT;
 }
 
 /**
@@ -101,8 +145,18 @@ export interface HardpointUnlockDef {
 /** HP0 free. HP1/HP2 gated by Ascension + Core (see weapons.HARDPOINT_UNLOCK). */
 export const HARDPOINT_UNLOCKS: readonly HardpointUnlockDef[] = [
   { slot: 0, ascensionGate: 0, coreEnergyCost: 0, label: 'Hardpoint Alpha' },
-  { slot: 1, ascensionGate: 1, coreEnergyCost: 160, label: 'Hardpoint Beta' },
-  { slot: 2, ascensionGate: 2, coreEnergyCost: 480, label: 'Hardpoint Gamma' },
+  {
+    slot: 1,
+    ascensionGate: HARDPOINT_BETA_ASCENSION_GATE,
+    coreEnergyCost: HARDPOINT_BETA_UNLOCK_COST_CORE,
+    label: 'Hardpoint Beta',
+  },
+  {
+    slot: 2,
+    ascensionGate: HARDPOINT_GAMMA_ASCENSION_GATE,
+    coreEnergyCost: HARDPOINT_GAMMA_UNLOCK_COST_CORE,
+    label: 'Hardpoint Gamma',
+  },
 ] as const;
 
 export function hardpointUnlockCost(slot: number): number {
@@ -125,27 +179,27 @@ export function hardpointLevelGate(slot: number): number {
 // ---------------------------------------------------------------------------
 
 /** Levels with no cube self-defense. */
-export const DEFENSE_NONE_MAX = 4;
+export const DEFENSE_NONE_MAX = DEFENSE_NONE_MAX_LEVEL;
 
 /** Core light shield bubble starts. */
-export const DEFENSE_SHIELD_MIN = 5;
-export const DEFENSE_SHIELD_MAX = 7;
+export const DEFENSE_SHIELD_MIN = DEFENSE_SHIELD_MIN_LEVEL;
+export const DEFENSE_SHIELD_MAX = DEFENSE_SHIELD_MAX_LEVEL;
 
 /** First turret band. */
-export const DEFENSE_TURRET_MIN = 8;
-export const DEFENSE_TURRET_MAX = 10;
+export const DEFENSE_TURRET_MIN = DEFENSE_TURRET_MIN_LEVEL;
+export const DEFENSE_TURRET_MAX = DEFENSE_TURRET_MAX_LEVEL;
 
 /** Face shields + multi-turret. */
-export const DEFENSE_FACE_MIN = 11;
-export const DEFENSE_FACE_MAX = 14;
+export const DEFENSE_FACE_MIN = DEFENSE_FACE_MIN_LEVEL;
+export const DEFENSE_FACE_MAX = DEFENSE_FACE_MAX_LEVEL;
 
 /** Enemy drones join. */
-export const DEFENSE_DRONES_MIN = 15;
-export const DEFENSE_DRONES_MAX = 18;
+export const DEFENSE_DRONES_MIN = DEFENSE_DRONES_MIN_LEVEL;
+export const DEFENSE_DRONES_MAX = DEFENSE_DRONES_MAX_LEVEL;
 
 /** Layered elite mix. */
-export const DEFENSE_ELITE_MIN = 19;
-export const DEFENSE_ADAPTIVE_MIN = 26;
+export const DEFENSE_ELITE_MIN = DEFENSE_ELITE_MIN_LEVEL;
+export const DEFENSE_ADAPTIVE_MIN = DEFENSE_ADAPTIVE_MIN_LEVEL;
 
 export type DefenseTier =
   | 'none'
@@ -168,7 +222,7 @@ export function defenseTierForLevel(levelId: number): DefenseTier {
 }
 
 /** Tutorial / intro cinematic levels (deliberate pace, no defenses). */
-export const INTRO_LEVEL_MAX = 3;
+export const INTRO_LEVEL_MAX = INTRO_LEVEL_MAXIMUM;
 
 export function isIntroLevel(levelId: number): boolean {
   return levelId >= 1 && levelId <= INTRO_LEVEL_MAX;
@@ -179,16 +233,16 @@ export function isIntroLevel(levelId: number): boolean {
 // ---------------------------------------------------------------------------
 
 export const VITALS_BASE = {
-  hullHp: 100,
-  maxHull: 100,
-  shield: 0,
-  maxShield: 0,
-  armorRating: 0,
+  hullHp: SHIP_BASE_HULL_HIT_POINTS,
+  maxHull: SHIP_BASE_MAX_HULL,
+  shield: SHIP_BASE_SHIELD,
+  maxShield: SHIP_BASE_MAX_SHIELD,
+  armorRating: SHIP_BASE_ARMOR_RATING,
   /** Seconds without damage before shield starts recharging */
-  shieldRechargeDelay: 3,
-  shieldRechargePerSec: 8,
+  shieldRechargeDelay: SHIP_SHIELD_RECHARGE_DELAY_SECONDS,
+  shieldRechargePerSec: SHIP_SHIELD_RECHARGE_PER_SECOND,
 } as const;
 
 /** Starting hardpoints unlocked (HP0 only). */
-export const HARDPOINTS_START = 1;
-export const HARDPOINTS_MAX = 3;
+export const HARDPOINTS_START = HARDPOINTS_STARTING_UNLOCKED;
+export const HARDPOINTS_MAX = HARDPOINTS_MAXIMUM;

@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {
   getGraphicsPreset,
   type GraphicsQuality,
@@ -16,6 +15,8 @@ export class PostProcessing {
   bloom: UnrealBloomPass;
   private quality: GraphicsQuality = 'medium';
   private presentationBoost = false;
+  /** Session heat cut — applyPreset must not turn bloom back on. */
+  private thermalBloomCut = false;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.Camera;
@@ -39,7 +40,7 @@ export class PostProcessing {
       p.bloomThreshold
     );
     this.composer.addPass(this.bloom);
-    this.composer.addPass(new OutputPass());
+    // Skip OutputPass — Game.ts already sets ACES on the renderer; a second tone-map washes/darkens.
     this.setQuality('medium');
   }
 
@@ -65,6 +66,13 @@ export class PostProcessing {
     return this.quality;
   }
 
+  /** Once set, bloom stays off until clearThermalBloomCut (user graphics change). */
+  setThermalBloomCut(cut: boolean): void {
+    this.thermalBloomCut = cut;
+    if (cut) this.bloom.enabled = false;
+    else this.applyPreset();
+  }
+
   /** Slightly richer bloom during menu / cinematic (presentation). */
   setPresentation(boost: boolean): void {
     this.presentationBoost = boost;
@@ -73,13 +81,14 @@ export class PostProcessing {
 
   private applyPreset(): void {
     const p = getGraphicsPreset(this.quality);
-    this.bloom.enabled = p.bloomEnabled;
-    if (!p.bloomEnabled) return;
+    this.bloom.enabled = p.bloomEnabled && !this.thermalBloomCut;
+    if (!this.bloom.enabled) return;
     let strength = p.bloomStrength;
     let threshold = p.bloomThreshold;
     if (this.presentationBoost && this.quality !== 'low') {
       strength *= 1.08;
-      threshold = Math.max(0.55, threshold - 0.03);
+      // Don't undo cheaper medium bloom by dropping threshold below 0.75.
+      threshold = Math.max(this.quality === 'high' ? 0.55 : 0.75, threshold - 0.03);
     }
     this.bloom.strength = strength;
     this.bloom.threshold = threshold;

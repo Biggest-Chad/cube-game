@@ -77,6 +77,11 @@ import {
   evolveCost,
 } from '../data/evolve';
 import { EVOLVE_FRAG_PER_CORE, getResearchNode } from '../data/research';
+import {
+  PERFORMANCE_COMBAT_BLOOM_GRACE_SECONDS,
+  PERFORMANCE_FRAME_CAP_HZ,
+  PERFORMANCE_MENU_FRAME_CAP_HZ,
+} from '../data/constraints';
 
 type Mode =
   | 'menu'
@@ -154,6 +159,9 @@ export class Game {
   private currentLevelId = 1;
   private raf = 0;
   private hidden = false;
+  private lastPresentMs = 0;
+  private combatBloomElapsed = 0;
+  private bloomThermallyCut = false;
   private lowFpsTimer = 0;
   /** User-selected graphics tier (persisted). Default medium. */
   private graphicsQuality: GraphicsQuality = DEFAULT_GRAPHICS_QUALITY;
@@ -226,7 +234,7 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: bootPreset.antialias,
-      powerPreference: 'high-performance',
+      powerPreference: 'default',
       alpha: false,
       stencil: false,
     });
@@ -234,6 +242,13 @@ export class Game {
       Math.min(window.devicePixelRatio || 1, bootPreset.dprCap)
     );
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    console.info(
+      '[perf] buffer',
+      this.renderer.domElement.width,
+      this.renderer.domElement.height,
+      'dpr',
+      this.renderer.getPixelRatio()
+    );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = bootPreset.exposure;
@@ -276,9 +291,9 @@ export class Game {
     this.orientLock = document.getElementById('orientation-lock');
 
     // Dramatic neon arena lighting — readable cube + punchy emissives
-    const amb = new THREE.AmbientLight(0x142030, 0.55);
+    const amb = new THREE.AmbientLight(0x142030, 0.68);
     this.scene.add(amb);
-    const hemi = new THREE.HemisphereLight(0x4a7a9a, 0x100818, 0.7);
+    const hemi = new THREE.HemisphereLight(0x4a7a9a, 0x100818, 0.88);
     this.scene.add(hemi);
     const key = new THREE.DirectionalLight(0xd8f4ff, 1.05);
     key.position.set(18, 32, 16);
@@ -286,14 +301,6 @@ export class Game {
     const rim = new THREE.DirectionalLight(0xaa44cc, 0.45);
     rim.position.set(-18, -4, -14);
     this.scene.add(rim);
-    const fillCyan = new THREE.PointLight(COLORS.cyan, 18, 90, 2);
-    fillCyan.position.set(0, 14, 0);
-    fillCyan.layers.set(0);
-    this.scene.add(fillCyan);
-    const fillMag = new THREE.PointLight(COLORS.magenta, 12, 70, 2);
-    fillMag.position.set(-12, -6, 10);
-    fillMag.layers.set(0);
-    this.scene.add(fillMag);
     // Arena sits on layer 1 so city StandardMaterials are not point-lit.
     amb.layers.enable(1);
     hemi.layers.enable(1);
@@ -867,6 +874,13 @@ export class Game {
     // Base VFX density from tier (adaptive FPS may pull this down further)
     this.vfxScale =
       quality === 'high' ? 1 : quality === 'medium' ? 0.72 : 0.42;
+    if (!demoted) {
+      this.combatBloomElapsed = 0;
+      this.bloomThermallyCut = false;
+      this.post.setThermalBloomCut(false);
+    } else if (this.bloomThermallyCut) {
+      this.post.setThermalBloomCut(true);
+    }
   }
 
   private openSettings(): void {
@@ -2735,11 +2749,47 @@ export class Game {
     }
   }
 
+  private frameCapHz(): number {
+    switch (this.mode) {
+      case 'playing':
+      case 'intro':
+      case 'cinematic':
+      case 'core_death':
+      case 'levelclear':
+      case 'dying':
+      case 'paused':
+        return PERFORMANCE_FRAME_CAP_HZ;
+      case 'menu':
+        return this.menuDemoActive ? 30 : PERFORMANCE_MENU_FRAME_CAP_HZ;
+      case 'tech':
+      case 'levels':
+      case 'loadout':
+      case 'research':
+      case 'dead':
+      case 'settings':
+        return PERFORMANCE_MENU_FRAME_CAP_HZ;
+      default:
+        return PERFORMANCE_FRAME_CAP_HZ;
+    }
+  }
+
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
     try {
+    const nowMs = performance.now();
+    const minMs = 1000 / this.frameCapHz();
+    if (nowMs - this.lastPresentMs < minMs - 0.5) return;
+    this.lastPresentMs = nowMs;
     const dt = this.time.tick();
     const now = this.time.elapsed;
+
+    if (this.mode === 'playing' && !this.bloomThermallyCut) {
+      this.combatBloomElapsed += dt;
+      if (this.combatBloomElapsed >= PERFORMANCE_COMBAT_BLOOM_GRACE_SECONDS) {
+        this.bloomThermallyCut = true;
+        this.post.setThermalBloomCut(true);
+      }
+    }
 
     // Adaptive VFX + temporary quality demotion under thermal/FPS pressure
     if (

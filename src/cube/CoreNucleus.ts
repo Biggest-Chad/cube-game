@@ -11,6 +11,16 @@ import {
   type CoreAttribute,
 } from '../data/core';
 import { COLORS, ORBIT } from '../data/constants';
+import {
+  NUCLEUS_MEMBRANE_ICOSAHEDRON_DETAIL,
+  NUCLEUS_PROGRESS_CORE_WEIGHT,
+  NUCLEUS_PROGRESS_SHELL_WEIGHT,
+  NUCLEUS_PROJECTILE_SWEPT_PADDING,
+  NUCLEUS_REGEN_OVERLOAD_TIMER_SECONDS,
+  NUCLEUS_VISUAL_BASE_SCALE_FRACTION_OF_HALF_EXTENT,
+  NUCLEUS_VISUAL_BASE_SCALE_MINIMUM,
+  nucleusHitRadiusWorld,
+} from '../data/constraints';
 import type { LevelDefinition } from '../data/levels';
 import { BlockType } from './BlockTypes';
 import type { CubeManager } from './CubeManager';
@@ -121,21 +131,11 @@ export class CoreNucleus {
     this.pulse = Math.max(this.pulse, THREE.MathUtils.clamp(intensity, 0, 1));
   }
 
-  /**
-   * Solid collision radius — full 3D sphere around the nucleus VFX.
-   * Radius = max visual extent (body + ring) × 1.125 (~12.5% padding), isotropic.
-   */
+  /** Isotropic collision radius. Pulse/pain scale is ignored. */
   get hitRadius(): number {
     if (!this.active || this.hp <= 0) return 0;
-    // Peak render scale of core mesh / ring (matches updateVfx pulses)
-    // Visual pulse must not inflate the hitbox (would magnet-snipe during fire)
-    const scaleMul = 1.12;
-    const bodyR = this.baseScale * 1.08 * scaleMul;
-    const tendrilR = this.baseScale * 1.55;
-    const visualMax = Math.max(bodyR, tendrilR);
-    // 10–15% padding (use 12.5%); floor scales with cube half-extent so small sectors stay hittable
     const he = this.cube?.halfExtent ?? 4;
-    return Math.max(he * 0.22, visualMax * 1.125);
+    return nucleusHitRadiusWorld(he, this.baseScale);
   }
 
   /** World-space center of the nucleus solid (cube group origin + local VFX). */
@@ -209,12 +209,59 @@ export class CoreNucleus {
     return t;
   }
 
-  /** True if a world point is inside the solid nucleus hitbox. */
-  containsPoint(world: THREE.Vector3): boolean {
+  /** True if a world point is inside the solid nucleus hitbox (optional extra pad). */
+  containsPoint(world: THREE.Vector3, extraPad = 0): boolean {
     if (!this.active || this.hp <= 0) return false;
-    const r = this.hitRadius;
+    const r = this.hitRadius + extraPad;
     if (r <= 0) return false;
     return this.getWorldCenter(this._tmp2).distanceToSquared(world) <= r * r;
+  }
+
+  /** Closest-point segment test vs the isotropic nucleus sphere. */
+  segmentHits(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    extraPad: number,
+    outPoint: THREE.Vector3
+  ): boolean {
+    if (!this.active || this.hp <= 0) return false;
+    const r = this.hitRadius + extraPad;
+    if (r <= 0) return false;
+    this.getWorldCenter(this._tmp);
+    const abx = to.x - from.x;
+    const aby = to.y - from.y;
+    const abz = to.z - from.z;
+    const acx = this._tmp.x - from.x;
+    const acy = this._tmp.y - from.y;
+    const acz = this._tmp.z - from.z;
+    const abLen2 = abx * abx + aby * aby + abz * abz;
+    let t = 0;
+    if (abLen2 > 1e-12) {
+      t = (acx * abx + acy * aby + acz * abz) / abLen2;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+    }
+    const px = from.x + abx * t;
+    const py = from.y + aby * t;
+    const pz = from.z + abz * t;
+    const dx = px - this._tmp.x;
+    const dy = py - this._tmp.y;
+    const dz = pz - this._tmp.z;
+    if (dx * dx + dy * dy + dz * dz <= r * r) {
+      outPoint.set(px, py, pz);
+      return true;
+    }
+    return false;
+  }
+
+  /** Default projectile swept test (shared pad from constraints). */
+  projectileSweptHit(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    outPoint: THREE.Vector3,
+    extraPad = NUCLEUS_PROJECTILE_SWEPT_PADDING
+  ): boolean {
+    return this.segmentHits(from, to, extraPad, outPoint);
   }
 
   snapshot(): CoreSnapshot {
@@ -294,7 +341,10 @@ export class CoreNucleus {
   private buildVfx(): void {
     this.clearVfx();
     const he = this.cube?.halfExtent ?? 4;
-    this.baseScale = Math.max(0.62, he * 0.2);
+    this.baseScale = Math.max(
+      NUCLEUS_VISUAL_BASE_SCALE_MINIMUM,
+      he * NUCLEUS_VISUAL_BASE_SCALE_FRACTION_OF_HALF_EXTENT
+    );
     this.dying = false;
     this.deathT = 0;
 
@@ -361,7 +411,7 @@ export class CoreNucleus {
     });
 
     this.membrane = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1.08, 3),
+      new THREE.IcosahedronGeometry(1.08, NUCLEUS_MEMBRANE_ICOSAHEDRON_DETAIL),
       this.membraneMat
     );
     this.membrane.scale.setScalar(this.baseScale);
@@ -615,7 +665,7 @@ export class CoreNucleus {
         });
         break;
       case 'regeneration':
-        this.overloadTimer = 2.5;
+        this.overloadTimer = NUCLEUS_REGEN_OVERLOAD_TIMER_SECONDS;
         this.overloadKind = 'regen';
         {
           const span = CORE.regenResurrectFracMax - CORE.regenResurrectFracMin;
@@ -802,18 +852,13 @@ export class CoreNucleus {
       scale = this.baseScale * burst;
       this.vfxGroup.rotation.x += dt * (4 + this.deathT * 8);
       this.vfxGroup.rotation.z += dt * 6;
-      this.vfxGroup.position.set(
-        (Math.random() - 0.5) * 0.35,
-        (Math.random() - 0.5) * 0.35,
-        (Math.random() - 0.5) * 0.35
-      );
-    } else {
-      this.vfxGroup.position.set(
-        (Math.random() - 0.5) * pain * 0.14,
-        (Math.random() - 0.5) * pain * 0.14,
-        (Math.random() - 0.5) * pain * 0.14
-      );
     }
+    const j = this.dying ? 0.35 + this.deathT * 0.08 : pain * 0.14;
+    this.vfxGroup.position.set(
+      Math.sin(t * 31.0) * j,
+      Math.cos(t * 27.0) * j,
+      Math.sin(t * 19.0 + 1.3) * j
+    );
 
     this.coreMesh.rotation.y += dt * (0.85 + (this.overloadTimer > 0 ? 5 : 0) + pain * 3);
     this.coreMesh.rotation.x += dt * (0.4 + pain * 2);
@@ -861,9 +906,9 @@ export class CoreNucleus {
       mesh.position.copy(aim).multiplyScalar(this.baseScale * 0.55);
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), aim);
       mesh.scale.set(
-        this.dying ? 0.7 + Math.random() * 0.8 : 1,
+        this.dying ? 1.1 + Math.sin(t * 17.0 + i) * 0.4 : 1,
         reachDying / this.baseScale,
-        this.dying ? 0.7 + Math.random() * 0.8 : 1
+        this.dying ? 1.1 + Math.cos(t * 13.0 + i * 1.7) * 0.4 : 1
       );
       const tm = mesh.material as THREE.MeshBasicMaterial;
       tm.color.setHex(this.dying ? 0x1a0004 : pain > 0.3 ? 0x8a1020 : 0x3a0814);
@@ -916,7 +961,7 @@ export class CoreNucleus {
         ? 1 - this.shellAlive / this.shellTotal
         : 1;
     const coreDone = 1 - this.hp / Math.max(1, this.maxHp);
-    return Math.min(1, shellDone * 0.85 + coreDone * 0.15);
+    return Math.min(1, shellDone * NUCLEUS_PROGRESS_SHELL_WEIGHT + coreDone * NUCLEUS_PROGRESS_CORE_WEIGHT);
   }
 
   /** Level clear when nucleus dead (or no nucleus and no blocks). */

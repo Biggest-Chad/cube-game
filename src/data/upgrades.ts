@@ -6,6 +6,20 @@
  * Orbit speed total soft-capped at 1.85 via TechTree.
  */
 
+import {
+  ARMOR_HYPERBOLIC_K,
+  ARMOR_MAX_EFFECTIVE_REDUCTION,
+  DRONE_ABSOLUTE_HARD_CAP,
+  DRONE_ALLY_PROTOCOL_COST_FRAGMENTS,
+  TECH_CORE_ENERGY_MULTIPLIER_CAP,
+  TECH_CRIT_CHANCE_CAP,
+  TECH_CRIT_MULT_CAP,
+  TECH_DAMAGE_MULTIPLIER_CAP,
+  TECH_FIRE_RATE_MULTIPLIER_CAP,
+  TECH_FRAGMENT_MULTIPLIER_CAP,
+  TECH_ORBIT_SPEED_MULTIPLIER_CAP,
+} from './constraints';
+
 export type UpgradeBranch =
   | 'ship'
   | 'offense'
@@ -144,17 +158,17 @@ export function normalizeShopTabId(tab: string | undefined | null): ShopTabId | 
 
 /** Soft/hard caps referenced by TechTree recompute. */
 export const STAT_CAPS = {
-  damageMul: 5.0,
-  fireRateMul: 3.0,
-  orbitSpeedMul: 1.95,
+  damageMul: TECH_DAMAGE_MULTIPLIER_CAP,
+  fireRateMul: TECH_FIRE_RATE_MULTIPLIER_CAP,
+  orbitSpeedMul: TECH_ORBIT_SPEED_MULTIPLIER_CAP,
   /** Soft cap — leave headroom for prestige baseline, not infinite farm */
-  fragmentMul: 1.75,
-  coreEnergyMul: 2.5,
-  critChance: 0.45,
-  critMult: 2.4,
-  armorEffective: 0.55,
-  armorK: 100,
-  droneCount: 24,
+  fragmentMul: TECH_FRAGMENT_MULTIPLIER_CAP,
+  coreEnergyMul: TECH_CORE_ENERGY_MULTIPLIER_CAP,
+  critChance: TECH_CRIT_CHANCE_CAP,
+  critMult: TECH_CRIT_MULT_CAP,
+  armorEffective: ARMOR_MAX_EFFECTIVE_REDUCTION,
+  armorK: ARMOR_HYPERBOLIC_K,
+  droneCount: DRONE_ABSOLUTE_HARD_CAP,
 } as const;
 
 function node(
@@ -315,7 +329,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
       id: 'drone_unlock',
       name: 'Ally Protocol',
       description: 'Authorize drone operations · opens first bay purchase',
-      cost: 100,
+      cost: DRONE_ALLY_PROTOCOL_COST_FRAGMENTS,
       effects: { unlockDrones: true, droneCountAdd: 0 },
     },
   ]),

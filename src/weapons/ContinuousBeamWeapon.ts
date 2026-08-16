@@ -20,7 +20,6 @@ interface BeamRibbon {
 
 interface ImpactFlash {
   mesh: THREE.Mesh;
-  light: THREE.PointLight;
   life: number;
 }
 
@@ -133,9 +132,8 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
         })
       );
       mesh.visible = false;
-      const light = new THREE.PointLight(COLORS.magenta, 0, 14, 2);
-      this.group.add(mesh, light);
-      this.impacts.push({ mesh, light, life: 0 });
+      this.group.add(mesh);
+      this.impacts.push({ mesh, life: 0 });
     }
 
     this.particlePos = new Float32Array(PARTICLE_POOL * 3);
@@ -437,9 +435,6 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     const mat = imp.mesh.material as THREE.MeshBasicMaterial;
     mat.opacity = 1;
     mat.color.setHex(depth > 0 ? 0xffaaff : 0xffffff);
-    imp.light.position.copy(point);
-    imp.light.intensity = 42 + Math.sin(this.pulse) * 10;
-    imp.light.color.setHex(depth > 0 ? 0xff44cc : COLORS.magenta);
     // Burst particles at impact
     for (let i = 0; i < 14; i++) {
       this.emitParticle(
@@ -460,10 +455,8 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
       const t = Math.max(0, imp.life / 0.14);
       (imp.mesh.material as THREE.MeshBasicMaterial).opacity = t * 0.9;
       imp.mesh.scale.multiplyScalar(1 + dt * 4);
-      imp.light.intensity = t * 30;
       if (imp.life <= 0) {
         imp.mesh.visible = false;
-        imp.light.intensity = 0;
       }
     }
   }
@@ -542,7 +535,6 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     for (const imp of this.impacts) {
       imp.life = 0;
       imp.mesh.visible = false;
-      imp.light.intensity = 0;
     }
     for (let i = 0; i < PARTICLE_POOL; i++) {
       this.particleLife[i] = 0;

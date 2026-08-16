@@ -26,6 +26,27 @@ export class HUD {
   private nucleusBar!: HTMLElement;
   private nucleusVal!: HTMLElement;
   private nucleusStatus!: HTMLElement;
+  private vitalsEl!: HTMLElement | null;
+
+  private lastFrag = Number.NaN;
+  private lastCore = Number.NaN;
+  private lastHullCeil = Number.NaN;
+  private lastShieldCeil = Number.NaN;
+  private lastHullBar = '';
+  private lastShieldBar = '';
+  private lastVitalsCritical: boolean | null = null;
+  private lastShieldDown: boolean | null = null;
+  private lastLevelText = '';
+  private lastProgressBar = '';
+  private lastBlocksText = '';
+  private lastNucleusActive: boolean | null = null;
+  private lastNucleusBar = '';
+  private lastNucleusVal = '';
+  private lastNucleusStatus = '';
+  private lastNucleusExposed: boolean | null = null;
+  private lastNucleusOverload: boolean | null = null;
+  private lastNucleusDecaying: boolean | null = null;
+  private lastNucleusLaser: boolean | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -167,6 +188,7 @@ export class HUD {
     this.nucleusBar = this.root.querySelector('#hud-nucleus-bar')!;
     this.nucleusVal = this.root.querySelector('#hud-nucleus-val')!;
     this.nucleusStatus = this.root.querySelector('#hud-nucleus-status')!;
+    this.vitalsEl = this.root.querySelector('#hud-vitals');
   }
 
   get elements() {
@@ -250,8 +272,16 @@ export class HUD {
   }
 
   updateCurrency(fragments: number, core: number): void {
-    this.fragEl.textContent = Math.floor(fragments).toLocaleString();
-    this.coreEl.textContent = Math.floor(core).toLocaleString();
+    const frag = Math.floor(fragments);
+    const coreN = Math.floor(core);
+    if (frag !== this.lastFrag) {
+      this.lastFrag = frag;
+      this.fragEl.textContent = frag.toLocaleString();
+    }
+    if (coreN !== this.lastCore) {
+      this.lastCore = coreN;
+      this.coreEl.textContent = coreN.toLocaleString();
+    }
   }
 
   /** Shield + hull bars at bottom of combat HUD. */
@@ -263,23 +293,54 @@ export class HUD {
   }): void {
     const hullPct = Math.max(0, Math.min(100, (v.hull / Math.max(1, v.maxHull)) * 100));
     const shPct = Math.max(0, Math.min(100, (v.shield / Math.max(1, v.maxShield)) * 100));
-    if (this.hullBar) this.hullBar.style.width = `${hullPct.toFixed(1)}%`;
-    if (this.shieldBar) this.shieldBar.style.width = `${shPct.toFixed(1)}%`;
-    if (this.hullVal) {
-      this.hullVal.textContent = `${Math.ceil(v.hull)}`;
+    const hullBar = `${hullPct.toFixed(1)}%`;
+    const shBar = `${shPct.toFixed(1)}%`;
+    const hullCeil = Math.ceil(v.hull);
+    const shieldCeil = Math.ceil(v.shield);
+    const critical = hullPct < 28;
+    const shieldDown = shPct < 1;
+    if (this.hullBar && hullBar !== this.lastHullBar) {
+      this.lastHullBar = hullBar;
+      this.hullBar.style.width = hullBar;
     }
-    if (this.shieldVal) {
-      this.shieldVal.textContent = `${Math.ceil(v.shield)}`;
+    if (this.shieldBar && shBar !== this.lastShieldBar) {
+      this.lastShieldBar = shBar;
+      this.shieldBar.style.width = shBar;
     }
-    const vitals = this.root.querySelector('#hud-vitals');
-    vitals?.classList.toggle('critical', hullPct < 28);
-    vitals?.classList.toggle('shield-down', shPct < 1);
+    if (this.hullVal && hullCeil !== this.lastHullCeil) {
+      this.lastHullCeil = hullCeil;
+      this.hullVal.textContent = `${hullCeil}`;
+    }
+    if (this.shieldVal && shieldCeil !== this.lastShieldCeil) {
+      this.lastShieldCeil = shieldCeil;
+      this.shieldVal.textContent = `${shieldCeil}`;
+    }
+    if (critical !== this.lastVitalsCritical) {
+      this.lastVitalsCritical = critical;
+      this.vitalsEl?.classList.toggle('critical', critical);
+    }
+    if (shieldDown !== this.lastShieldDown) {
+      this.lastShieldDown = shieldDown;
+      this.vitalsEl?.classList.toggle('shield-down', shieldDown);
+    }
   }
 
   updateLevel(id: number, name: string, progress: number, alive: number, total: number): void {
-    this.levelEl.textContent = `L${id} · ${name}`;
-    this.progressEl.style.width = `${Math.min(100, progress * 100).toFixed(1)}%`;
-    this.blocksEl.textContent = `${alive} / ${total} BLOCKS`;
+    const levelText = `L${id} · ${name}`;
+    const progressBar = `${Math.min(100, progress * 100).toFixed(1)}%`;
+    const blocksText = `${alive} / ${total} BLOCKS`;
+    if (levelText !== this.lastLevelText) {
+      this.lastLevelText = levelText;
+      this.levelEl.textContent = levelText;
+    }
+    if (progressBar !== this.lastProgressBar) {
+      this.lastProgressBar = progressBar;
+      this.progressEl.style.width = progressBar;
+    }
+    if (blocksText !== this.lastBlocksText) {
+      this.lastBlocksText = blocksText;
+      this.blocksEl.textContent = blocksText;
+    }
   }
 
   updateNucleus(snap: {
@@ -295,15 +356,31 @@ export class HUD {
   } | null): void {
     if (!this.nucleusWrap) return;
     if (!snap?.active) {
-      this.nucleusWrap.classList.add('panel-hidden');
-      this.nucleusWrap.classList.remove('exposed', 'overload', 'decaying', 'laser');
+      if (this.lastNucleusActive !== false) {
+        this.nucleusWrap.classList.add('panel-hidden');
+        this.nucleusWrap.classList.remove('exposed', 'overload', 'decaying', 'laser');
+        this.lastNucleusActive = false;
+        this.lastNucleusExposed = false;
+        this.lastNucleusOverload = false;
+        this.lastNucleusDecaying = false;
+        this.lastNucleusLaser = false;
+      }
       return;
     }
-    this.nucleusWrap.classList.remove('panel-hidden');
+    if (this.lastNucleusActive !== true) {
+      this.nucleusWrap.classList.remove('panel-hidden');
+      this.lastNucleusActive = true;
+    }
     const pct = Math.max(0, Math.min(100, (snap.hp / Math.max(1, snap.maxHp)) * 100));
-    if (this.nucleusBar) this.nucleusBar.style.width = `${pct.toFixed(1)}%`;
-    if (this.nucleusVal) {
-      this.nucleusVal.textContent = `${Math.ceil(snap.hp)} / ${Math.ceil(snap.maxHp)}`;
+    const bar = `${pct.toFixed(1)}%`;
+    if (this.nucleusBar && bar !== this.lastNucleusBar) {
+      this.lastNucleusBar = bar;
+      this.nucleusBar.style.width = bar;
+    }
+    const val = `${Math.ceil(snap.hp)} / ${Math.ceil(snap.maxHp)}`;
+    if (this.nucleusVal && val !== this.lastNucleusVal) {
+      this.lastNucleusVal = val;
+      this.nucleusVal.textContent = val;
     }
     const laserHot = snap.laserPhase === 'charge' || snap.laserPhase === 'fire';
     const spikeHot = snap.spikePhase === 'telegraph' || snap.spikePhase === 'fire';
@@ -315,11 +392,28 @@ export class HUD {
     else if (snap.overloadActive) status = 'OVERLOAD';
     else if (snap.decaying) status = 'DESTABILIZING';
     else if (snap.exposed) status = 'EXPOSED';
-    if (this.nucleusStatus) this.nucleusStatus.textContent = status;
-    this.nucleusWrap.classList.toggle('exposed', snap.exposed && !snap.overloadActive && !laserHot);
-    this.nucleusWrap.classList.toggle('overload', snap.overloadActive);
-    this.nucleusWrap.classList.toggle('decaying', snap.decaying);
-    this.nucleusWrap.classList.toggle('laser', laserHot || spikeHot);
+    if (this.nucleusStatus && status !== this.lastNucleusStatus) {
+      this.lastNucleusStatus = status;
+      this.nucleusStatus.textContent = status;
+    }
+    const exposed = snap.exposed && !snap.overloadActive && !laserHot;
+    const laser = laserHot || spikeHot;
+    if (exposed !== this.lastNucleusExposed) {
+      this.lastNucleusExposed = exposed;
+      this.nucleusWrap.classList.toggle('exposed', exposed);
+    }
+    if (snap.overloadActive !== this.lastNucleusOverload) {
+      this.lastNucleusOverload = snap.overloadActive;
+      this.nucleusWrap.classList.toggle('overload', snap.overloadActive);
+    }
+    if (snap.decaying !== this.lastNucleusDecaying) {
+      this.lastNucleusDecaying = snap.decaying;
+      this.nucleusWrap.classList.toggle('decaying', snap.decaying);
+    }
+    if (laser !== this.lastNucleusLaser) {
+      this.lastNucleusLaser = laser;
+      this.nucleusWrap.classList.toggle('laser', laser);
+    }
   }
 
   setMuted(m: boolean): void {

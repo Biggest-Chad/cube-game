@@ -5,6 +5,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Display;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -105,6 +106,22 @@ public class MainActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.setNavigationBarContrastEnforced(false);
             window.setStatusBarContrastEnforced(false);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Display display = window.getWindowManager().getDefaultDisplay();
+            Display.Mode[] modes = display.getSupportedModes();
+            Display.Mode best = null;
+            for (Display.Mode m : modes) {
+                float r = m.getRefreshRate();
+                if (r >= 59f && r <= 61f) {
+                    if (best == null || m.getPhysicalWidth() >= best.getPhysicalWidth()) best = m;
+                }
+            }
+            if (best != null) {
+                WindowManager.LayoutParams lp = window.getAttributes();
+                lp.preferredDisplayModeId = best.getModeId();
+                window.setAttributes(lp);
+            }
         }
     }
 

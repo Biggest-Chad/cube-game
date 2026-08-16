@@ -4,6 +4,39 @@
  */
 import * as THREE from 'three';
 import type { WeaponStats } from '../data/weapons';
+import {
+  GUIDED_MISSILE_ARMED_SPEED_MULTIPLIER,
+  GUIDED_MISSILE_ARMED_TURN_GAIN,
+  GUIDED_MISSILE_ARM_DELAY_PER_RANK_SECONDS,
+  GUIDED_MISSILE_ARM_DELAY_SECONDS,
+  GUIDED_MISSILE_ARM_DELAY_SPREAD_SECONDS,
+  GUIDED_MISSILE_BASE_ARMOR_PIERCE,
+  GUIDED_MISSILE_BASE_CRIT_CHANCE,
+  GUIDED_MISSILE_BASE_CRIT_MULT,
+  GUIDED_MISSILE_BASE_DAMAGE,
+  GUIDED_MISSILE_BASE_FIRE_RATE,
+  GUIDED_MISSILE_BASE_PROJECTILE_SPEED,
+  GUIDED_MISSILE_BASE_RANGE,
+  GUIDED_MISSILE_BASE_SPLASH_FALLOFF,
+  GUIDED_MISSILE_BASE_SPLASH_RADIUS,
+  GUIDED_MISSILE_BLOCK_HALF_EXTENT,
+  GUIDED_MISSILE_BURST_SIZE,
+  GUIDED_MISSILE_COASTING_SPEED_MULTIPLIER,
+  GUIDED_MISSILE_COASTING_TURN_GAIN,
+  GUIDED_MISSILE_EXPLOSION_POOL_SIZE,
+  GUIDED_MISSILE_HEAT_COOL_RATE,
+  GUIDED_MISSILE_HEAT_PER_SHOT,
+  GUIDED_MISSILE_HOMING_STRENGTH,
+  GUIDED_MISSILE_HUNTER_PRIORITY_DAMAGE_MULTIPLIER,
+  GUIDED_MISSILE_LIFETIME_SECONDS,
+  GUIDED_MISSILE_MAX_RANGE_FROM_ORIGIN,
+  GUIDED_MISSILE_NUCLEUS_PROXIMITY_PADDING,
+  GUIDED_MISSILE_POOL_SIZE,
+  GUIDED_MISSILE_RAYCAST_LEAD,
+  GUIDED_MISSILE_SPLASH_DAMAGE_FRACTION,
+  GUIDED_MISSILE_TRAIL_SEGMENTS,
+  WEAPON_MINIMUM_FIRE_RATE,
+} from '../data/constraints';
 import { NUCLEUS_HIT_ID, type CubeManager } from '../cube/CubeManager';
 import { BlockType } from '../cube/BlockTypes';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
@@ -29,7 +62,6 @@ interface Missile {
   crit: boolean;
   armorPierce: number;
   targetId: number;
-  glow: THREE.PointLight;
   side: number;
 }
 
@@ -38,18 +70,17 @@ interface Explosion {
   core: THREE.Mesh;
   ring: THREE.Mesh;
   flash: THREE.Mesh;
-  light: THREE.PointLight;
   life: number;
   maxLife: number;
   scale: number;
 }
 
-const POOL = 24;
-const TRAIL_SEGS = 18;
-const EXPLOSION_POOL = 12;
+const POOL = GUIDED_MISSILE_POOL_SIZE;
+const TRAIL_SEGS = GUIDED_MISSILE_TRAIL_SEGMENTS;
+const EXPLOSION_POOL = GUIDED_MISSILE_EXPLOSION_POOL_SIZE;
 /** Lateral coast before seekers arm */
-const ARM_BASE = 0.22;
-const ARM_SPREAD = 0.12;
+const ARM_BASE = GUIDED_MISSILE_ARM_DELAY_SECONDS;
+const ARM_SPREAD = GUIDED_MISSILE_ARM_DELAY_SPREAD_SECONDS;
 
 export class MissileWeapon implements WeaponBehavior {
   readonly family = 'missile';
@@ -71,22 +102,22 @@ export class MissileWeapon implements WeaponBehavior {
 
   constructor() {
     this.stats = {
-      damage: 48,
-      fireRate: 0.85,
-      projectileSpeed: 38,
-      range: 100,
-      splashRadius: 1.1,
-      splashFalloff: 0.5,
-      armorPierce: 0.15,
-      critChance: 0.08,
-      critMult: 2,
-      heatPerShot: 0.18,
+      damage: GUIDED_MISSILE_BASE_DAMAGE,
+      fireRate: GUIDED_MISSILE_BASE_FIRE_RATE,
+      projectileSpeed: GUIDED_MISSILE_BASE_PROJECTILE_SPEED,
+      range: GUIDED_MISSILE_BASE_RANGE,
+      splashRadius: GUIDED_MISSILE_BASE_SPLASH_RADIUS,
+      splashFalloff: GUIDED_MISSILE_BASE_SPLASH_FALLOFF,
+      armorPierce: GUIDED_MISSILE_BASE_ARMOR_PIERCE,
+      critChance: GUIDED_MISSILE_BASE_CRIT_CHANCE,
+      critMult: GUIDED_MISSILE_BASE_CRIT_MULT,
+      heatPerShot: GUIDED_MISSILE_HEAT_PER_SHOT,
       heatCapacity: 1,
-      heatCoolRate: 0.25,
+      heatCoolRate: GUIDED_MISSILE_HEAT_COOL_RATE,
       chargeTime: 0,
       projectileCount: 1,
-      homing: 0.65,
-      burstSize: 2,
+      homing: GUIDED_MISSILE_HOMING_STRENGTH,
+      burstSize: GUIDED_MISSILE_BURST_SIZE,
       flags: new Set(),
     };
 
@@ -118,9 +149,6 @@ export class MissileWeapon implements WeaponBehavior {
       (tr.line.material as THREE.LineBasicMaterial).linewidth = 2;
       this.group.add(tr.line);
 
-      const glow = new THREE.PointLight(0xdd66ff, 0, 14, 2);
-      this.group.add(glow);
-
       this.missiles.push({
         active: false,
         mesh,
@@ -138,7 +166,6 @@ export class MissileWeapon implements WeaponBehavior {
         crit: false,
         armorPierce: 0,
         targetId: -1,
-        glow,
         side: 1,
       });
     }
@@ -163,17 +190,15 @@ export class MissileWeapon implements WeaponBehavior {
         new THREE.SphereGeometry(0.55, 12, 12),
         addMat(0xaa44ff, 0)
       );
-      const light = new THREE.PointLight(0xff88ff, 0, 22, 2);
       core.visible = false;
       ring.visible = false;
       flash.visible = false;
-      this.group.add(core, ring, flash, light);
+      this.group.add(core, ring, flash);
       this.explosions.push({
         active: false,
         core,
         ring,
         flash,
-        light,
         life: 0,
         maxLife: 0.45,
         scale: 1,
@@ -192,7 +217,7 @@ export class MissileWeapon implements WeaponBehavior {
     this.cooldown = Math.max(0, this.cooldown - ctx.dt);
     if (!ctx.firing || this.cooldown > 0 || this.heat >= 0.98) return;
 
-    this.cooldown = 1 / Math.max(0.15, this.stats.fireRate);
+    this.cooldown = 1 / Math.max(WEAPON_MINIMUM_FIRE_RATE, this.stats.fireRate);
     const rolled = rollOutgoing({
       raw: this.stats.damage,
       critChance: this.stats.critChance,
@@ -231,7 +256,6 @@ export class MissileWeapon implements WeaponBehavior {
   }
 
   private pickTarget(cube: CubeManager, from: THREE.Vector3): number {
-    // Prefer solid nucleus when active — missiles home into the core hitbox
     if (cube.nucleus.isActive) {
       if (cube.nucleus.isExposed || this.stats.flags.has('hunter_core')) {
         return NUCLEUS_HIT_ID;
@@ -284,8 +308,8 @@ export class MissileWeapon implements WeaponBehavior {
       .addScaledVector(this.fwd, forwardKick)
       .addScaledVector(this.up, climb);
 
-    m.life = 4.0;
-    m.arm = ARM_BASE + rank * 0.05 + Math.random() * ARM_SPREAD;
+    m.life = GUIDED_MISSILE_LIFETIME_SECONDS;
+    m.arm = ARM_BASE + rank * GUIDED_MISSILE_ARM_DELAY_PER_RANK_SECONDS + Math.random() * ARM_SPREAD;
     m.damage = damage;
     m.splash = this.stats.splashRadius;
     m.crit = crit;
@@ -305,13 +329,11 @@ export class MissileWeapon implements WeaponBehavior {
     m.exhaustGlow.position.copy(m.pos).addScaledVector(this.launchDir, -0.32);
 
     for (const h of m.trailHist) h.copy(m.pos);
-    m.glow.intensity = crit ? 16 : 10;
-    m.glow.position.copy(m.pos);
   }
 
   private sim(dt: number, cube: CubeManager, now: number): void {
-    const turnArmed = this.stats.homing * 5.5;
-    const turnCoasting = this.stats.homing * 0.35;
+    const turnArmed = this.stats.homing * GUIDED_MISSILE_ARMED_TURN_GAIN;
+    const turnCoasting = this.stats.homing * GUIDED_MISSILE_COASTING_TURN_GAIN;
 
     for (const m of this.missiles) {
       if (!m.active) continue;
@@ -325,10 +347,10 @@ export class MissileWeapon implements WeaponBehavior {
 
       const armed = m.arm <= 0;
       if (cube.hasInstance(m.targetId)) {
-        // Home to solid nucleus center when target is a core block — true solid aimpoint
+        // Always home to the isotropic nucleus center for core / nucleus ids
         if (
-          cube.nucleus.isActive &&
-          cube.getBlockType(m.targetId) === BlockType.Core
+          m.targetId === NUCLEUS_HIT_ID ||
+          (cube.nucleus.isActive && cube.getBlockType(m.targetId) === BlockType.Core)
         ) {
           cube.nucleus.getWorldCenter(this.desired);
         } else {
@@ -338,7 +360,9 @@ export class MissileWeapon implements WeaponBehavior {
         const turn = armed ? turnArmed : turnCoasting;
         // While coasting, bias gently toward target without killing lateral path
         m.vel.normalize().lerp(this.desired, Math.min(1, turn * dt)).normalize();
-        const speedMul = armed ? 1.08 : 0.92;
+        const speedMul = armed
+          ? GUIDED_MISSILE_ARMED_SPEED_MULTIPLIER
+          : GUIDED_MISSILE_COASTING_SPEED_MULTIPLIER;
         m.vel.multiplyScalar(this.stats.projectileSpeed * speedMul);
       }
 
@@ -360,9 +384,6 @@ export class MissileWeapon implements WeaponBehavior {
         (m.exhaust.material as THREE.MeshBasicMaterial).opacity = armed ? 0.95 : 0.7;
       }
 
-      m.glow.position.copy(m.pos);
-      m.glow.intensity = (armed ? 9 : 6) + Math.sin(m.life * 20) * 3;
-
       // Long ribbon trail
       for (let i = m.trailHist.length - 1; i > 0; i--) m.trailHist[i].copy(m.trailHist[i - 1]);
       m.trailHist[0].copy(m.pos);
@@ -370,8 +391,10 @@ export class MissileWeapon implements WeaponBehavior {
       (m.trail.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
       m.trail.geometry.computeBoundingSphere();
 
-      // Proximity fuse vs solid nucleus (clear explosion feedback)
-      if (cube.nucleus.isActive && cube.nucleus.containsPoint(m.pos)) {
+      if (
+        cube.nucleus.isActive &&
+        cube.nucleus.containsPoint(m.pos, GUIDED_MISSILE_NUCLEUS_PROXIMITY_PADDING)
+      ) {
         this.impact(m, cube, NUCLEUS_HIT_ID, m.pos.clone(), now);
         continue;
       }
@@ -379,14 +402,19 @@ export class MissileWeapon implements WeaponBehavior {
       const move = this.move.copy(m.pos).sub(prev);
       const dist = move.length();
       if (dist > 1e-5) {
-        // Slightly thicker cast so fast missiles don't tunnel the core sphere
-        const hit = cube.raycast(prev, move.normalize(), dist + 0.75, -1, 0.6);
+        const hit = cube.raycast(
+          prev,
+          move.normalize(),
+          dist + GUIDED_MISSILE_RAYCAST_LEAD,
+          -1,
+          GUIDED_MISSILE_BLOCK_HALF_EXTENT
+        );
         if (hit) {
           this.impact(m, cube, hit.instanceId, hit.point, now);
           continue;
         }
       }
-      if (m.life <= 0 || m.pos.length() > 220) {
+      if (m.life <= 0 || m.pos.length() > GUIDED_MISSILE_MAX_RANGE_FROM_ORIGIN) {
         this.spawnExplosion(m.pos, 0.7, false);
         this.kill(m);
       }
@@ -406,7 +434,7 @@ export class MissileWeapon implements WeaponBehavior {
       (type === BlockType.Core || type === BlockType.DataNode) &&
       (this.stats.flags.has('hunter_lock') || this.stats.flags.has('hunter_core'))
     ) {
-      raw *= 1.25;
+      raw *= GUIDED_MISSILE_HUNTER_PRIORITY_DAMAGE_MULTIPLIER;
     }
     const applied = applyToBlock(
       { raw, armorPierce: m.armorPierce, forceCrit: m.crit, critChance: 0, critMult: 1 },
@@ -429,7 +457,7 @@ export class MissileWeapon implements WeaponBehavior {
       });
     }
     if (m.splash > 0) {
-      for (const h of cube.applySplash(point, m.splash, m.damage * 0.3, now, instanceId)) {
+      for (const h of cube.applySplash(point, m.splash, m.damage * GUIDED_MISSILE_SPLASH_DAMAGE_FRACTION, now, instanceId)) {
         bus.emit('beam-hit', { ...h, style: 'splash' as const });
       }
     }
@@ -452,7 +480,6 @@ export class MissileWeapon implements WeaponBehavior {
     e.core.position.copy(at);
     e.ring.position.copy(at);
     e.flash.position.copy(at);
-    e.light.position.copy(at);
     e.core.scale.setScalar(0.2);
     e.ring.scale.setScalar(0.15);
     e.flash.scale.setScalar(0.3);
@@ -465,8 +492,6 @@ export class MissileWeapon implements WeaponBehavior {
     (e.ring.material as THREE.MeshBasicMaterial).color.setHex(crit ? 0xffaa00 : 0xff44dd);
     (e.flash.material as THREE.MeshBasicMaterial).opacity = 0.85;
     (e.flash.material as THREE.MeshBasicMaterial).color.setHex(0xaa44ff);
-    e.light.intensity = crit ? 40 : 28;
-    e.light.color.setHex(crit ? 0xffcc88 : 0xff66ee);
     // Face ring roughly toward camera-ish (horizontal billboard-ish)
     e.ring.lookAt(at.x + 1, at.y + 2, at.z + 1);
   }
@@ -485,13 +510,11 @@ export class MissileWeapon implements WeaponBehavior {
       (e.core.material as THREE.MeshBasicMaterial).opacity = fade * (t < 0.25 ? 1 : 0.7);
       (e.flash.material as THREE.MeshBasicMaterial).opacity = fade * 0.65;
       (e.ring.material as THREE.MeshBasicMaterial).opacity = fade * 0.9;
-      e.light.intensity = (1 - t) * (e.scale > 1.2 ? 36 : 24);
       if (e.life <= 0) {
         e.active = false;
         e.core.visible = false;
         e.ring.visible = false;
         e.flash.visible = false;
-        e.light.intensity = 0;
       }
     }
   }
@@ -502,7 +525,6 @@ export class MissileWeapon implements WeaponBehavior {
     m.exhaust.visible = false;
     m.exhaustGlow.visible = false;
     m.trail.visible = false;
-    m.glow.intensity = 0;
   }
 
   getHeat(): number {
@@ -518,7 +540,6 @@ export class MissileWeapon implements WeaponBehavior {
       e.core.visible = false;
       e.ring.visible = false;
       e.flash.visible = false;
-      e.light.intensity = 0;
     }
   }
 

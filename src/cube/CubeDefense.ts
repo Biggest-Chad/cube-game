@@ -9,6 +9,37 @@ import { Turret } from './Turret';
 import { EnemyDrone, type EnemyDroneRole } from './EnemyDrone';
 import { bus } from '../core/EventBus';
 import { COLORS } from '../data/constants';
+import {
+  ENEMY_ARC_DEFAULT_HIT_POINTS,
+  ENEMY_ATTACK_DRONE_BASE_HIT_POINTS,
+  ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL,
+  ENEMY_ATTACK_DRONE_SPEED,
+  ENEMY_DRONE_BASE_DAMAGE,
+  ENEMY_DRONE_DAMAGE_PER_LEVEL,
+  ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER,
+  ENEMY_DRONE_REPAIR_FRACTION,
+  ENEMY_DRONE_SOFT_CAP,
+  ENEMY_INTERCEPT_RADIUS,
+  ENEMY_REPAIR_DRONE_BASE_HIT_POINTS,
+  ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL,
+  ENEMY_REPAIR_DRONE_SPEED,
+  ENEMY_WEAPON_TARGET_RADIUS_DRONE,
+  ENEMY_WEAPON_TARGET_RADIUS_TURRET,
+  FLOATING_TURRET_BASE_DAMAGE,
+  FLOATING_TURRET_BASE_HIT_POINTS,
+  FLOATING_TURRET_DAMAGE_PER_LEVEL,
+  FLOATING_TURRET_FIRE_RATE,
+  FLOATING_TURRET_HIT_POINTS_PER_LEVEL,
+  FLOATING_TURRET_PROJECTILE_SPEED,
+  LATTICE_TURRET_BASE_DAMAGE,
+  LATTICE_TURRET_BASE_HIT_POINTS,
+  LATTICE_TURRET_BASE_PROJECTILE_SPEED,
+  LATTICE_TURRET_DAMAGE_PER_LEVEL,
+  LATTICE_TURRET_ELITE_FIRE_RATE,
+  LATTICE_TURRET_FIRE_RATE,
+  LATTICE_TURRET_HIT_POINTS_PER_LEVEL,
+  LATTICE_TURRET_PROJECTILE_SPEED_PER_LEVEL,
+} from '../data/constraints';
 import { CORE } from '../data/core';
 import { RageLaser, type RageLaserPhase } from './RageLaser';
 import { NucleusSpikeBurst, type SpikeBurstPhase } from './NucleusSpikeBurst';
@@ -317,18 +348,22 @@ export class CubeDefense {
   spawnEnemyDrone(role: EnemyDroneRole = 'attack', enraged = false): EnemyDrone | null {
     if (!this.cube) return null;
     // Soft cap to avoid meltdown
-    if (this.enemyDrones.filter((d) => d.alive).length >= 18) return null;
+    if (this.enemyDrones.filter((d) => d.alive).length >= ENEMY_DRONE_SOFT_CAP) return null;
     const he = this.cube.halfExtent;
     const idx = this.enemyDrones.length;
     const isRepair = role === 'repair';
     const d = new EnemyDrone(`ed_${this._idSeq++}`, idx, he, {
-      hp: (isRepair ? 28 : 40) + this.levelId * (isRepair ? 3 : 5),
-      damage: 6 + this.levelId * 0.55,
-      fireRate: (this.schedule.elite ? 1.35 : 1.0) * this.fireRateMul,
-      speed: isRepair ? 4.5 : 6.5,
+      hp:
+        (isRepair ? ENEMY_REPAIR_DRONE_BASE_HIT_POINTS : ENEMY_ATTACK_DRONE_BASE_HIT_POINTS) +
+        this.levelId *
+          (isRepair ? ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL : ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL),
+      damage: ENEMY_DRONE_BASE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL,
+      fireRate:
+        (this.schedule.elite ? ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER : 1.0) * this.fireRateMul,
+      speed: isRepair ? ENEMY_REPAIR_DRONE_SPEED : ENEMY_ATTACK_DRONE_SPEED,
       color: isRepair ? 0x44ff88 : 0xff2244,
       role,
-      repairFrac: 0.07,
+      repairFrac: ENEMY_DRONE_REPAIR_FRACTION,
     });
     if (enraged) d.setEnraged(true);
     // Spawn near cube surface
@@ -376,12 +411,13 @@ export class CubeDefense {
     // Offset slightly outward so model sits on surface
     this._pos.multiplyScalar(1.08);
     // Real HP — destructible like blocks; lattice block also cleared on kill
-    const hp = 55 + levelId * 14;
+    const hp = LATTICE_TURRET_BASE_HIT_POINTS + levelId * LATTICE_TURRET_HIT_POINTS_PER_LEVEL;
     const t = new Turret(`turret_${this._idSeq++}`, this._pos.clone(), {
       hp,
-      damage: 9 + levelId * 0.85,
-      fireRate: this.schedule.elite ? 0.7 : 0.45,
-      projectileSpeed: 16 + levelId * 0.35,
+      damage: LATTICE_TURRET_BASE_DAMAGE + levelId * LATTICE_TURRET_DAMAGE_PER_LEVEL,
+      fireRate: this.schedule.elite ? LATTICE_TURRET_ELITE_FIRE_RATE : LATTICE_TURRET_FIRE_RATE,
+      projectileSpeed:
+        LATTICE_TURRET_BASE_PROJECTILE_SPEED + levelId * LATTICE_TURRET_PROJECTILE_SPEED_PER_LEVEL,
       color: this.schedule.elite ? 0xff66ff : 0xff3355,
     });
     t.group.scale.setScalar(0.55);
@@ -392,10 +428,10 @@ export class CubeDefense {
 
   private spawnFloatingTurret(pos: THREE.Vector3, levelId: number): void {
     const t = new Turret(`turret_${this._idSeq++}`, pos, {
-      hp: 70 + levelId * 16,
-      damage: 10 + levelId * 0.8,
-      fireRate: 0.4,
-      projectileSpeed: 16,
+      hp: FLOATING_TURRET_BASE_HIT_POINTS + levelId * FLOATING_TURRET_HIT_POINTS_PER_LEVEL,
+      damage: FLOATING_TURRET_BASE_DAMAGE + levelId * FLOATING_TURRET_DAMAGE_PER_LEVEL,
+      fireRate: FLOATING_TURRET_FIRE_RATE,
+      projectileSpeed: FLOATING_TURRET_PROJECTILE_SPEED,
       color: 0xff4488,
     });
     this.links.push({ turret: t, instanceId: -1, floating: true });
@@ -435,7 +471,7 @@ export class CubeDefense {
       if (d.alive) {
         out.push({
           position: d.position.clone(),
-          radius: 1.15,
+          radius: ENEMY_WEAPON_TARGET_RADIUS_DRONE,
           id: d.id,
         });
       }
@@ -445,7 +481,7 @@ export class CubeDefense {
       // Prefer live world position of turret model
       out.push({
         position: link.turret.group.position.clone(),
-        radius: 1.05,
+        radius: ENEMY_WEAPON_TARGET_RADIUS_TURRET,
         id: link.turret.id,
       });
     }
@@ -514,7 +550,7 @@ export class CubeDefense {
       out.push({
         id: `arc_${i}`,
         position: { x: a.pos.x, y: a.pos.y, z: a.pos.z },
-        radius: 0.9,
+        radius: ENEMY_INTERCEPT_RADIUS,
       });
     }
     for (const s of this.spikes.getInterceptTargets()) out.push(s);
@@ -529,7 +565,7 @@ export class CubeDefense {
     const a = this.arcs[idx];
     if (!a) return false;
     // Soft HP for arcs so fighters can shoot them down
-    (a as { hp?: number }).hp = ((a as { hp?: number }).hp ?? 28) - amount;
+    (a as { hp?: number }).hp = ((a as { hp?: number }).hp ?? ENEMY_ARC_DEFAULT_HIT_POINTS) - amount;
     if (((a as { hp?: number }).hp ?? 0) <= 0) {
       a.life = 0;
       return true;

@@ -3,6 +3,13 @@
  */
 import * as THREE from 'three';
 import { bus } from '../core/EventBus';
+import {
+  TURRET_DEFAULT_DAMAGE,
+  TURRET_DEFAULT_FIRE_RATE,
+  TURRET_DEFAULT_HIT_POINTS,
+  TURRET_DEFAULT_PROJECTILE_SPEED,
+  TURRET_DEFAULT_RANGE,
+} from '../data/constraints';
 
 export interface TurretProjectile {
   active: boolean;
@@ -23,11 +30,11 @@ export interface TurretConfig {
 }
 
 const DEFAULT: TurretConfig = {
-  hp: 80,
-  damage: 12,
-  fireRate: 0.45,
-  projectileSpeed: 18,
-  range: 55,
+  hp: TURRET_DEFAULT_HIT_POINTS,
+  damage: TURRET_DEFAULT_DAMAGE,
+  fireRate: TURRET_DEFAULT_FIRE_RATE,
+  projectileSpeed: TURRET_DEFAULT_PROJECTILE_SPEED,
+  range: TURRET_DEFAULT_RANGE,
   color: 0xff4488,
 };
 

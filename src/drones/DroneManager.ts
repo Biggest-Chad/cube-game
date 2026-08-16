@@ -12,6 +12,11 @@ import {
 import type { DroneBayController } from '../loadout/DroneBayState';
 import { Drone, type DroneCombatContext } from './Drone';
 import { COLORS } from '../data/constants';
+import {
+  DRONE_BASE_DAMAGE,
+  DRONE_BASE_FIRE_RATE,
+  DRONE_FIGHTER_BLOCK_DAMAGE_FRACTION,
+} from '../data/constraints';
 
 /**
  * Multi-role drone fleet from bay assignments + per-defender shield bubbles.
@@ -224,8 +229,13 @@ export class DroneManager {
     for (const d of this.drones) {
       if (d.role === 'defender' || !d.alive) continue;
       const def = DRONE_ROLES[d.role];
-      const rate = 2.2 * stats.droneFireRateMul * def.fireRateMul;
-      dps += 12 * 0.45 * stats.droneDamageMul * def.blockDamageMul * rate;
+      const rate = DRONE_BASE_FIRE_RATE * stats.droneFireRateMul * def.fireRateMul;
+      dps +=
+        DRONE_BASE_DAMAGE *
+        DRONE_FIGHTER_BLOCK_DAMAGE_FRACTION *
+        stats.droneDamageMul *
+        def.blockDamageMul *
+        rate;
     }
     return dps;
   }

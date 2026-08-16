@@ -111,6 +111,10 @@ body {
   mix-blend-mode: multiply;
 }
 
+@media (hover: none) and (pointer: coarse) {
+  #scanlines { display: none; }
+}
+
 /* —— HUD (landscape combat chrome) —— */
 #hud-root {
   position: absolute;

@@ -1,6 +1,59 @@
 /**
  * Cube Nucleus (Core) — central late-stage / milestone combat pillar.
+ * Numeric sources live in `constraints.ts`.
  */
+
+import {
+  NUCLEUS_ARC_BEAM_DAMAGE,
+  NUCLEUS_ARC_BEAM_SPEED,
+  NUCLEUS_DAMAGE_TRANSFER_TO_SHELL_FRACTION,
+  NUCLEUS_DECAY_MINIMUM_PER_SECOND,
+  NUCLEUS_DECAY_PER_SECOND_OF_MAX,
+  NUCLEUS_EXPOSED_SHELL_RATIO,
+  NUCLEUS_MAX_HP_AVG_HP_WEIGHT,
+  NUCLEUS_MAX_HP_FLAT,
+  NUCLEUS_MAX_HP_LEVEL_WEIGHT,
+  NUCLEUS_MAX_HP_VOLUME_EXPONENT,
+  NUCLEUS_MAX_HP_VOLUME_SIZE_OFFSET,
+  NUCLEUS_MAX_HP_VOLUME_WEIGHT,
+  NUCLEUS_MAX_SHELL_DAMAGE_REDUCTION,
+  NUCLEUS_MIN_DAMAGE_THROUGHPUT,
+  NUCLEUS_OVERLOAD_THRESHOLDS,
+  NUCLEUS_RAGE_ARC_COOLDOWN_SECONDS,
+  NUCLEUS_RAGE_FIRE_RATE_MULTIPLIER,
+  NUCLEUS_RAGE_LASER_CHARGE_SECONDS,
+  NUCLEUS_RAGE_LASER_COOLDOWN_SECONDS,
+  NUCLEUS_RAGE_LASER_DPS,
+  NUCLEUS_RAGE_LASER_DURATION_SECONDS,
+  NUCLEUS_RAGE_LASER_HIT_RADIUS,
+  NUCLEUS_RAGE_LASER_OVERLOAD_DPS,
+  NUCLEUS_RAGE_LASER_RANGE,
+  NUCLEUS_RAGE_LASER_SLEW_WHILE_CHARGING,
+  NUCLEUS_RAGE_LASER_SLEW_WHILE_FIRING,
+  NUCLEUS_RAGE_LASER_SLEW_WHILE_OVERLOAD,
+  NUCLEUS_RAGE_LASER_WARMUP_SECONDS,
+  NUCLEUS_RAGE_OVERLOAD_BEAM_COUNT,
+  NUCLEUS_RAGE_OVERLOAD_DURATION_SECONDS,
+  NUCLEUS_REGEN_REPAIR_DRONE_COUNT,
+  NUCLEUS_REGEN_RESURRECT_FRACTION_MAX,
+  NUCLEUS_REGEN_RESURRECT_FRACTION_MIN,
+  NUCLEUS_REGEN_REVIVE_PER_SECOND_OF_DEAD,
+  NUCLEUS_REGEN_SHELL_HEAL_PER_SECOND,
+  NUCLEUS_SPIKE_DAMAGE,
+  NUCLEUS_SPIKE_HIT_RADIUS,
+  NUCLEUS_SPIKE_LIFETIME_SECONDS,
+  NUCLEUS_SPIKE_OMNI_COUNT,
+  NUCLEUS_SPIKE_SHOCK_DAMAGE,
+  NUCLEUS_SPIKE_SHOCK_DURATION,
+  NUCLEUS_SPIKE_SHOCK_RADIUS,
+  NUCLEUS_SPIKE_SPEED,
+  NUCLEUS_SPIKE_TELEGRAPH_SECONDS,
+  NUCLEUS_SWARM_ENRAGE_DURATION_SECONDS,
+  NUCLEUS_SWARM_ENRAGE_FIRE_MULTIPLIER,
+  NUCLEUS_SWARM_ENRAGE_SPEED_MULTIPLIER,
+  NUCLEUS_SWARM_EXPOSED_BURST_COUNT,
+  NUCLEUS_SWARM_SPAWN_INTERVAL_SECONDS,
+} from './constraints';
 
 export type CoreAttribute = 'none' | 'rage' | 'regeneration' | 'swarm';
 
@@ -9,82 +62,82 @@ export const CORE = {
    * Max shell damage reduction (1 = full immunity when shell intact).
    * Softened from 1.0 so direct nucleus shots always chip (min throughput below).
    */
-  maxShellDr: 0.88,
+  maxShellDr: NUCLEUS_MAX_SHELL_DAMAGE_REDUCTION,
   /** Minimum fraction of raw damage that always reaches the DR stage (then transfer). */
-  minDamageThroughput: 0.12,
+  minDamageThroughput: NUCLEUS_MIN_DAMAGE_THROUGHPUT,
   /** Fraction of post-DR damage redirected to a random shell block. */
-  damageTransferPct: 0.1,
+  damageTransferPct: NUCLEUS_DAMAGE_TRANSFER_TO_SHELL_FRACTION,
   /** Shell remaining ratio below which core is EXPOSED. */
-  exposedShellRatio: 0.1,
+  exposedShellRatio: NUCLEUS_EXPOSED_SHELL_RATIO,
   /** HP/sec lost when no shell remains (scales with max HP). */
-  decayPerSecOfMax: 0.018,
+  decayPerSecOfMax: NUCLEUS_DECAY_PER_SECOND_OF_MAX,
   /** Minimum absolute decay HP/sec when alone. */
-  decayMinPerSec: 6,
+  decayMinPerSec: NUCLEUS_DECAY_MINIMUM_PER_SECOND,
   /** Overload health thresholds (core HP ratio). */
-  overloadThresholds: [0.75, 0.5, 0.25] as const,
+  overloadThresholds: NUCLEUS_OVERLOAD_THRESHOLDS,
 
   /** Standard nucleus: telegraphed omni spike burst on overload (from stage 1). */
-  spikeTelegraphSec: 1.45,
+  spikeTelegraphSec: NUCLEUS_SPIKE_TELEGRAPH_SECONDS,
   /** Omni directions (plus one extra locked on the ship). */
-  spikeOmniCount: 10,
-  spikeSpeed: 10.5,
-  spikeDamage: 16,
-  spikeHitRadius: 0.92,
-  spikeLife: 5.2,
+  spikeOmniCount: NUCLEUS_SPIKE_OMNI_COUNT,
+  spikeSpeed: NUCLEUS_SPIKE_SPEED,
+  spikeDamage: NUCLEUS_SPIKE_DAMAGE,
+  spikeHitRadius: NUCLEUS_SPIKE_HIT_RADIUS,
+  spikeLife: NUCLEUS_SPIKE_LIFETIME_SECONDS,
   /** Close-range shockwave — default orbit (18) is outside this. */
-  spikeShockRadius: 11,
-  spikeShockDamage: 14,
-  spikeShockDuration: 0.4,
+  spikeShockRadius: NUCLEUS_SPIKE_SHOCK_RADIUS,
+  spikeShockDamage: NUCLEUS_SPIKE_SHOCK_DAMAGE,
+  spikeShockDuration: NUCLEUS_SPIKE_SHOCK_DURATION,
   /** Base transfer / DR are pure shell-ratio. */
 
   /** Rage: turret/drone fire rate mult while attribute active. */
-  rageFireRateMul: 1.35,
+  rageFireRateMul: NUCLEUS_RAGE_FIRE_RATE_MULTIPLIER,
   /** Rage exposed: leftover bolt cooldown (overload spray only). */
-  rageArcCooldown: 4.2,
+  rageArcCooldown: NUCLEUS_RAGE_ARC_COOLDOWN_SECONDS,
   /** Rage overload duration. */
-  rageOverloadDuration: 3.2,
+  rageOverloadDuration: NUCLEUS_RAGE_OVERLOAD_DURATION_SECONDS,
   /** Rage arc bolts during overload (secondary to the sweep laser). */
-  rageOverloadBeamCount: 8,
+  rageOverloadBeamCount: NUCLEUS_RAGE_OVERLOAD_BEAM_COUNT,
   /** Arc bolt world speed ≈ base orbital linear feel (pre-upgrade). */
-  arcBeamSpeed: 12,
+  arcBeamSpeed: NUCLEUS_ARC_BEAM_SPEED,
   /** Arc bolt impact damage. */
-  arcBeamDamage: 22,
+  arcBeamDamage: NUCLEUS_ARC_BEAM_DAMAGE,
 
   /** Rage sweep laser — charge, then a slow-tracking continuous beam. */
-  rageLaserChargeSec: 2.4,
-  rageLaserDuration: 5.0,
-  rageLaserCooldown: 3.8,
-  rageLaserWarmup: 0.7,
-  /** Aim slew (rad/s). Slower than base orbit yaw (0.55) so circling dodges it. */
-  rageLaserSlewCharge: 0.2,
-  rageLaserSlewFire: 0.3,
-  rageLaserSlewOverload: 0.42,
-  rageLaserRange: 78,
-  rageLaserHitRadius: 1.18,
-  rageLaserDps: 16,
-  rageLaserOverloadDps: 20,
+  rageLaserChargeSec: NUCLEUS_RAGE_LASER_CHARGE_SECONDS,
+  rageLaserDuration: NUCLEUS_RAGE_LASER_DURATION_SECONDS,
+  rageLaserCooldown: NUCLEUS_RAGE_LASER_COOLDOWN_SECONDS,
+  rageLaserWarmup: NUCLEUS_RAGE_LASER_WARMUP_SECONDS,
+  /** Aim slew (rad/s). Slower than base orbit yaw so circling dodges it. */
+  rageLaserSlewCharge: NUCLEUS_RAGE_LASER_SLEW_WHILE_CHARGING,
+  rageLaserSlewFire: NUCLEUS_RAGE_LASER_SLEW_WHILE_FIRING,
+  rageLaserSlewOverload: NUCLEUS_RAGE_LASER_SLEW_WHILE_OVERLOAD,
+  rageLaserRange: NUCLEUS_RAGE_LASER_RANGE,
+  rageLaserHitRadius: NUCLEUS_RAGE_LASER_HIT_RADIUS,
+  rageLaserDps: NUCLEUS_RAGE_LASER_DPS,
+  rageLaserOverloadDps: NUCLEUS_RAGE_LASER_OVERLOAD_DPS,
 
   /** Regen: shell heal rate as fraction of maxHP / sec while attribute. */
-  regenShellPerSec: 0.008,
+  regenShellPerSec: NUCLEUS_REGEN_SHELL_HEAL_PER_SECOND,
   /** Regen exposed: repair drone count. */
-  regenRepairDroneCount: 4,
+  regenRepairDroneCount: NUCLEUS_REGEN_REPAIR_DRONE_COUNT,
   /** Regen overload: instantly revive this fraction of *dead* blocks (inner first). */
-  regenResurrectFracMin: 0.05,
-  regenResurrectFracMax: 0.1,
+  regenResurrectFracMin: NUCLEUS_REGEN_RESURRECT_FRACTION_MIN,
+  regenResurrectFracMax: NUCLEUS_REGEN_RESURRECT_FRACTION_MAX,
   /**
    * Passive: also revive this fraction of current dead / sec (innermost first).
    * Heal-living still uses regenShellPerSec. Ignore the cube and it grows back.
    */
-  regenRevivePerSecOfDead: 0.012,
+  regenRevivePerSecOfDead: NUCLEUS_REGEN_REVIVE_PER_SECOND_OF_DEAD,
 
   /** Swarm: production interval seconds. */
-  swarmSpawnInterval: 5.5,
+  swarmSpawnInterval: NUCLEUS_SWARM_SPAWN_INTERVAL_SECONDS,
   /** Swarm exposed: burst count. */
-  swarmExposedBurst: 6,
+  swarmExposedBurst: NUCLEUS_SWARM_EXPOSED_BURST_COUNT,
   /** Swarm overload: enraged duration. */
-  swarmEnrageDuration: 5,
-  swarmEnrageSpeedMul: 1.55,
-  swarmEnrageFireMul: 1.7,
+  swarmEnrageDuration: NUCLEUS_SWARM_ENRAGE_DURATION_SECONDS,
+  swarmEnrageSpeedMul: NUCLEUS_SWARM_ENRAGE_SPEED_MULTIPLIER,
+  swarmEnrageFireMul: NUCLEUS_SWARM_ENRAGE_FIRE_MULTIPLIER,
 } as const;
 
 /** Milestone every 5 levels starting at 5 → cycling attributes. */
@@ -112,6 +165,12 @@ export function coreAttributeLabel(attr: CoreAttribute): string {
 export function computeCoreMaxHp(levelId: number, avgHP: number, size: number): number {
   const L = Math.max(1, levelId);
   // Volume-ish soft factor so big cubes stay tanky
-  const volumeFactor = 1 + Math.pow(Math.max(0, size - 6), 1.1) * 0.08;
-  return Math.round((avgHP * 55 + L * 180 + 400) * volumeFactor);
+  const volumeFactor =
+    1 +
+    Math.pow(Math.max(0, size - NUCLEUS_MAX_HP_VOLUME_SIZE_OFFSET), NUCLEUS_MAX_HP_VOLUME_EXPONENT) *
+      NUCLEUS_MAX_HP_VOLUME_WEIGHT;
+  return Math.round(
+    (avgHP * NUCLEUS_MAX_HP_AVG_HP_WEIGHT + L * NUCLEUS_MAX_HP_LEVEL_WEIGHT + NUCLEUS_MAX_HP_FLAT) *
+      volumeFactor
+  );
 }

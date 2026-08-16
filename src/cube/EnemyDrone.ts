@@ -3,6 +3,14 @@
  */
 import * as THREE from 'three';
 import { bus } from '../core/EventBus';
+import {
+  ENEMY_DRONE_DEFAULT_DAMAGE,
+  ENEMY_DRONE_DEFAULT_FIRE_RATE,
+  ENEMY_DRONE_DEFAULT_HIT_POINTS,
+  ENEMY_DRONE_DEFAULT_RANGE,
+  ENEMY_DRONE_DEFAULT_REPAIR_FRACTION,
+  ENEMY_DRONE_DEFAULT_SPEED,
+} from '../data/constraints';
 import type { CubeManager } from './CubeManager';
 
 export type EnemyDroneRole = 'attack' | 'repair';
@@ -23,16 +31,16 @@ export interface EnemyDroneConfig {
 }
 
 const DEFAULT: EnemyDroneConfig = {
-  hp: 45,
-  damage: 8,
-  fireRate: 1.1,
-  speed: 6,
-  range: 28,
+  hp: ENEMY_DRONE_DEFAULT_HIT_POINTS,
+  damage: ENEMY_DRONE_DEFAULT_DAMAGE,
+  fireRate: ENEMY_DRONE_DEFAULT_FIRE_RATE,
+  speed: ENEMY_DRONE_DEFAULT_SPEED,
+  range: ENEMY_DRONE_DEFAULT_RANGE,
   color: 0xff2244,
   role: 'attack',
   speedMul: 1,
   fireMul: 1,
-  repairFrac: 0.06,
+  repairFrac: ENEMY_DRONE_DEFAULT_REPAIR_FRACTION,
 };
 
 export class EnemyDrone {

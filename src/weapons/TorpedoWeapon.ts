@@ -254,7 +254,6 @@ export class TorpedoWeapon implements WeaponBehavior {
       attr.needsUpdate = true;
       t.trail.geometry.computeBoundingSphere();
 
-      // Always solid-collide (including during arm window) so torps never tunnel
       if (cube.nucleus.isActive && cube.nucleus.containsPoint(t.pos)) {
         this.detonate(t, cube, t.pos.clone(), NUCLEUS_HIT_ID, now);
         continue;

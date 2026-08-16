@@ -8,6 +8,15 @@ import type { PlayerStats } from '../progression/TechTree';
 import type { Ship } from './Ship';
 import { MainBeamWeapon } from '../weapons/MainBeamWeapon';
 import { COMBAT } from '../data/constants';
+import {
+  MAIN_GUN_AIM_BLOCK_HALF_EXTENT,
+  MAIN_GUN_AIM_STICK_CONE_RADIANS,
+  MAIN_GUN_CONE_ASSIST_INNER_RADIANS,
+  MAIN_GUN_CONE_ASSIST_INNER_SAMPLES,
+  MAIN_GUN_CONE_ASSIST_OUTER_RADIANS,
+  MAIN_GUN_CONE_ASSIST_OUTER_SAMPLES,
+  MAIN_GUN_ENEMY_LOCK_ANGULAR_SLACK,
+} from '../data/constraints';
 import { getWeaponDef, computeWeaponStats } from '../data/weapons';
 
 export class Weapon {
@@ -96,7 +105,7 @@ export class Weapon {
     this._up.crossVectors(this._right, this._fwd).normalize();
 
     // Slightly wider stick cone for easier surface coverage (~32°)
-    const maxRad = 0.56;
+    const maxRad = MAIN_GUN_AIM_STICK_CONE_RADIANS;
     this._dir
       .copy(this._fwd)
       .addScaledVector(this._right, aimX * maxRad)
@@ -113,7 +122,7 @@ export class Weapon {
         if (dist < 1e-3 || dist > COMBAT.beamRange) continue;
         to.multiplyScalar(1 / dist);
         const ang = 1 - Math.max(-1, Math.min(1, to.dot(this._dir)));
-        if (ang > 0.18) continue; // outside ~soft cone
+        if (ang > MAIN_GUN_ENEMY_LOCK_ANGULAR_SLACK) continue; // outside ~soft cone
         const score = dist + ang * 40;
         if (score < bestScore) {
           bestScore = score;
@@ -129,13 +138,19 @@ export class Weapon {
     }
 
     // Primary raycast with generous half-extent (cube raycast uses expanded boxes for aim)
-    let hit = cube.raycast(this._origin, this._dir, COMBAT.beamRange, -1, 0.62);
+    let hit = cube.raycast(
+      this._origin,
+      this._dir,
+      COMBAT.beamRange,
+      -1,
+      MAIN_GUN_AIM_BLOCK_HALF_EXTENT
+    );
     // Soft assist: if miss, search a small cone for nearest surface hit
     if (!hit) {
-      hit = this.coneAssist(cube, 0.12, 4);
+      hit = this.coneAssist(cube, MAIN_GUN_CONE_ASSIST_INNER_RADIANS, MAIN_GUN_CONE_ASSIST_INNER_SAMPLES);
     }
     if (!hit) {
-      hit = this.coneAssist(cube, 0.22, 6);
+      hit = this.coneAssist(cube, MAIN_GUN_CONE_ASSIST_OUTER_RADIANS, MAIN_GUN_CONE_ASSIST_OUTER_SAMPLES);
     }
 
     if (hit) {
@@ -168,7 +183,13 @@ export class Weapon {
         .addScaledVector(this._right, ox)
         .addScaledVector(this._up, oy)
         .normalize();
-      const h = cube.raycast(this._origin, this._tmp, COMBAT.beamRange, -1, 0.62);
+      const h = cube.raycast(
+        this._origin,
+        this._tmp,
+        COMBAT.beamRange,
+        -1,
+        MAIN_GUN_AIM_BLOCK_HALF_EXTENT
+      );
       if (!h) continue;
       // Prefer closer hits, slight preference for central sample
       const score = h.distance + Math.hypot(ox, oy) * 8;

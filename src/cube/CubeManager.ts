@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { CHUNK_SIZE } from '../data/constants';
+import {
+  BLOCK_FORGIVING_HALF_EXTENT,
+  BLOCK_TRUE_HALF_EXTENT,
+  NUCLEUS_SHELL_OCCLUSION_EPSILON,
+  PERFORMANCE_RAYCAST_HASH_CELL_SIZE,
+} from '../data/constraints';
 import type { LevelDefinition } from '../data/levels';
 import { bus } from '../core/EventBus';
 import { BLOCK_DEFS, BlockType, colorForType } from './BlockTypes';
@@ -20,8 +26,15 @@ const _nucPt = new THREE.Vector3();
 const _ray = new THREE.Ray();
 const _bestPoint = new THREE.Vector3();
 const _hitNormal = new THREE.Vector3();
+const _trueHitPt = new THREE.Vector3();
+const _trueBestPoint = new THREE.Vector3();
 const _white = new THREE.Color(0xffffff);
 const _sphere = new THREE.Sphere();
+const _raycastSeenIds = new Set<number>();
+const _raycastCandidates: number[] = [];
+
+/** Brute-force the instance loop below this count (L1-safe; hash optional). */
+const RAYCAST_HASH_BRUTE_LIMIT = 64;
 
 /** Sentinel instance id for the living nucleus (not a lattice voxel). */
 export const NUCLEUS_HIT_ID = -2;
@@ -82,6 +95,11 @@ export class CubeManager {
   private coreRouting = true;
   private deadShells: DeadShell[] = [];
   private reviveAccum = 0;
+  /** World-space instance-center hash for raycast broadphase. */
+  private raycastHash = new Map<string, number[]>();
+  private raycastHashCount = 0;
+  private raycastHashDirty = true;
+  private raycastHashMW = new THREE.Matrix4();
 
   constructor() {
     // Per-instance color carries hue; Standard keeps cube lighting/readability
@@ -197,6 +215,7 @@ export class CubeManager {
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     this.aliveBlocks = id;
+    this.rebuildRaycastHash();
   }
 
   private updateInstanceVisual(instanceId: number): void {
@@ -257,6 +276,8 @@ export class CubeManager {
       this.mesh.instanceMatrix.needsUpdate = true;
       if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
+    // Swap-remove remaps the last id onto this slot — rebuild both mappings.
+    this.rebuildRaycastHash();
   }
 
   /** Wipe remaining instances without N GPU uploads (one flush at the end). */
@@ -265,16 +286,184 @@ export class CubeManager {
   }
 
   /**
+   * Bin live instance centers in world space.
+   * Cell = floor(worldPos / PERFORMANCE_RAYCAST_HASH_CELL_SIZE).
+   */
+  private rebuildRaycastHash(): void {
+    this.raycastHash.clear();
+    this.raycastHashCount = 0;
+    this.raycastHashDirty = false;
+    if (!this.mesh || this.mesh.count <= 0) {
+      this.raycastHashMW.identity();
+      return;
+    }
+    this.group.updateWorldMatrix(true, false);
+    const mw = this.group.matrixWorld;
+    this.raycastHashMW.copy(mw);
+    const cell = PERFORMANCE_RAYCAST_HASH_CELL_SIZE;
+    const n = this.mesh.count;
+    for (let id = 0; id < n; id++) {
+      this.mesh.getMatrixAt(id, _matrix);
+      _pos.setFromMatrixPosition(_matrix);
+      _pos.applyMatrix4(mw);
+      const key = `${Math.floor(_pos.x / cell)},${Math.floor(_pos.y / cell)},${Math.floor(_pos.z / cell)}`;
+      let bucket = this.raycastHash.get(key);
+      if (!bucket) {
+        bucket = [];
+        this.raycastHash.set(key, bucket);
+      }
+      bucket.push(id);
+    }
+    this.raycastHashCount = n;
+  }
+
+  /** Rebuild if dirty, count-mismatched, or the cube group moved. */
+  private ensureRaycastHash(): boolean {
+    if (!this.mesh || this.mesh.count <= 0) return false;
+    if (
+      this.raycastHashDirty ||
+      this.raycastHashCount !== this.mesh.count ||
+      !this.raycastHashMW.equals(this.group.matrixWorld)
+    ) {
+      this.rebuildRaycastHash();
+    }
+    return this.raycastHash.size > 0 && this.raycastHashCount === this.mesh.count;
+  }
+
+  /**
+   * 3D DDA along origin → origin+dir*maxDist, plus a 1-cell pad so fat
+   * half-extents (0.62) whose centers sit in a neighbor cell still test.
+   */
+  private collectRaycastCandidates(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    maxDist: number
+  ): void {
+    _raycastCandidates.length = 0;
+    _raycastSeenIds.clear();
+    if (this.raycastHash.size === 0) return;
+
+    const cell = PERFORMANCE_RAYCAST_HASH_CELL_SIZE;
+    this.group.getWorldPosition(_pos);
+    const ext = this.halfExtent * 1.78 + 1.4 + cell * 2;
+    const minX = _pos.x - ext;
+    const minY = _pos.y - ext;
+    const minZ = _pos.z - ext;
+    const maxX = _pos.x + ext;
+    const maxY = _pos.y + ext;
+    const maxZ = _pos.z + ext;
+
+    let t0 = 0;
+    let t1 = maxDist;
+    const slab = (o: number, d: number, mn: number, mx: number): boolean => {
+      if (Math.abs(d) < 1e-12) return o >= mn && o <= mx;
+      const inv = 1 / d;
+      let near = (mn - o) * inv;
+      let far = (mx - o) * inv;
+      if (near > far) {
+        const tmp = near;
+        near = far;
+        far = tmp;
+      }
+      t0 = Math.max(t0, near);
+      t1 = Math.min(t1, far);
+      return t0 <= t1;
+    };
+    if (
+      !slab(origin.x, dir.x, minX, maxX) ||
+      !slab(origin.y, dir.y, minY, maxY) ||
+      !slab(origin.z, dir.z, minZ, maxZ)
+    ) {
+      return;
+    }
+
+    const ox = origin.x + dir.x * t0;
+    const oy = origin.y + dir.y * t0;
+    const oz = origin.z + dir.z * t0;
+    const span = t1 - t0;
+    const ex = ox + dir.x * span;
+    const ey = oy + dir.y * span;
+    const ez = oz + dir.z * span;
+
+    let ix = Math.floor(ox / cell);
+    let iy = Math.floor(oy / cell);
+    let iz = Math.floor(oz / cell);
+    const ixe = Math.floor(ex / cell);
+    const iye = Math.floor(ey / cell);
+    const ize = Math.floor(ez / cell);
+
+    const stepX = dir.x > 0 ? 1 : dir.x < 0 ? -1 : 0;
+    const stepY = dir.y > 0 ? 1 : dir.y < 0 ? -1 : 0;
+    const stepZ = dir.z > 0 ? 1 : dir.z < 0 ? -1 : 0;
+
+    const tDeltaX = stepX !== 0 ? Math.abs(cell / dir.x) : Infinity;
+    const tDeltaY = stepY !== 0 ? Math.abs(cell / dir.y) : Infinity;
+    const tDeltaZ = stepZ !== 0 ? Math.abs(cell / dir.z) : Infinity;
+
+    let tMaxX =
+      stepX > 0 ? ((ix + 1) * cell - ox) / dir.x : stepX < 0 ? (ix * cell - ox) / dir.x : Infinity;
+    let tMaxY =
+      stepY > 0 ? ((iy + 1) * cell - oy) / dir.y : stepY < 0 ? (iy * cell - oy) / dir.y : Infinity;
+    let tMaxZ =
+      stepZ > 0 ? ((iz + 1) * cell - oz) / dir.z : stepZ < 0 ? (iz * cell - oz) / dir.z : Infinity;
+
+    const takeCell = (cx: number, cy: number, cz: number): void => {
+      const bucket = this.raycastHash.get(`${cx},${cy},${cz}`);
+      if (!bucket) return;
+      for (let i = 0; i < bucket.length; i++) {
+        const id = bucket[i];
+        if (_raycastSeenIds.has(id)) continue;
+        _raycastSeenIds.add(id);
+        _raycastCandidates.push(id);
+      }
+    };
+
+    const visit = (cx: number, cy: number, cz: number): void => {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            takeCell(cx + dx, cy + dy, cz + dz);
+          }
+        }
+      }
+    };
+
+    const maxSteps =
+      1 + Math.abs(ixe - ix) + Math.abs(iye - iy) + Math.abs(ize - iz);
+    const cap = Math.min(maxSteps, 512);
+    visit(ix, iy, iz);
+    for (let s = 0; s < cap; s++) {
+      if (ix === ixe && iy === iye && iz === ize) break;
+      if (tMaxX < tMaxY) {
+        if (tMaxX < tMaxZ) {
+          ix += stepX;
+          tMaxX += tDeltaX;
+        } else {
+          iz += stepZ;
+          tMaxZ += tDeltaZ;
+        }
+      } else if (tMaxY < tMaxZ) {
+        iy += stepY;
+        tMaxY += tDeltaY;
+      } else {
+        iz += stepZ;
+        tMaxZ += tDeltaZ;
+      }
+      visit(ix, iy, iz);
+    }
+  }
+
+  /**
    * Raycast against shell blocks + solid nucleus hitbox.
-   * Nucleus is a real collision sphere so projectiles cannot tunnel through the core VFX.
-   * @param halfExtent Block AABB half-size for hit tests (default 0.52 = mild forgiveness).
+   * Only a true 0.5 voxel in front of the sphere occludes the nucleus;
+   * fat aim-assist AABBs do not.
    */
   raycast(
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     maxDist: number,
     ignoreId = -1,
-    halfExtent = 0.52
+    halfExtent = BLOCK_FORGIVING_HALF_EXTENT
   ): {
     instanceId: number;
     point: THREE.Vector3;
@@ -288,23 +477,20 @@ export class CubeManager {
     if (dirLen < 1e-12) return null;
     _dirN.copy(direction);
     if (Math.abs(_dirN.lengthSq() - 1) > 1e-6) _dirN.normalize();
-    let bestDist = maxDist;
-    let bestId = -1;
-    let hasHit = false;
-    let nucleusSolid = false;
     const half = halfExtent;
+    const trueHalf = BLOCK_TRUE_HALF_EXTENT;
 
-    // —— Solid nucleus sphere (full isotropic 3D; wins when closer than shell) ——
+    let nucDist: number | null = null;
     if (this.nucleus.isActive && ignoreId !== NUCLEUS_HIT_ID) {
-      const nucDist = this.nucleus.raycastSolid(origin, _dirN, maxDist, _nucPt);
-      if (nucDist != null && nucDist <= bestDist) {
-        bestDist = nucDist;
-        bestId = NUCLEUS_HIT_ID;
-        _bestPoint.copy(_nucPt);
-        hasHit = true;
-        nucleusSolid = true;
-      }
+      nucDist = this.nucleus.raycastSolid(origin, _dirN, maxDist, _nucPt);
     }
+
+    let fatDist = maxDist;
+    let fatId = -1;
+    let fatHit = false;
+    let trueDist = maxDist;
+    let trueId = -1;
+    let trueHit = false;
 
     this.group.updateWorldMatrix(true, false);
     const mw = this.group.matrixWorld;
@@ -315,30 +501,87 @@ export class CubeManager {
       _ray.origin.copy(origin);
       _ray.direction.copy(_dirN);
       if (_ray.intersectsSphere(_sphere)) {
-      for (let id = 0; id < this.mesh.count; id++) {
-        if (id === ignoreId) continue;
+        const consider = (id: number): void => {
+          if (id === ignoreId) return;
 
-        this.mesh.getMatrixAt(id, _matrix);
-        _pos.setFromMatrixPosition(_matrix);
-        _pos.applyMatrix4(mw);
-        _box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
-        _box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
-        const hit = _ray.intersectBox(_box, _hitPt);
-        if (!hit) continue;
-        const d = origin.distanceTo(hit);
-        if (d < bestDist && d >= 0) {
-          if (d < 1e-5 && bestId >= 0 && !nucleusSolid) continue;
-          bestDist = d;
-          bestId = id;
-          _bestPoint.copy(hit);
-          hasHit = true;
-          nucleusSolid = false;
+          this.mesh!.getMatrixAt(id, _matrix);
+          _pos.setFromMatrixPosition(_matrix);
+          _pos.applyMatrix4(mw);
+
+          _box.min.set(_pos.x - trueHalf, _pos.y - trueHalf, _pos.z - trueHalf);
+          _box.max.set(_pos.x + trueHalf, _pos.y + trueHalf, _pos.z + trueHalf);
+          const truePt = _ray.intersectBox(_box, _trueHitPt);
+          if (truePt) {
+            const d = origin.distanceTo(truePt);
+            if (d >= 0 && d < trueDist) {
+              trueDist = d;
+              trueId = id;
+              trueHit = true;
+              // Keep a dedicated copy — later intersectBox calls reuse _trueHitPt.
+              _trueBestPoint.copy(truePt);
+            }
+          }
+
+          if (half > trueHalf + 1e-6) {
+            _box.min.set(_pos.x - half, _pos.y - half, _pos.z - half);
+            _box.max.set(_pos.x + half, _pos.y + half, _pos.z + half);
+            const fatPt = _ray.intersectBox(_box, _hitPt);
+            if (fatPt) {
+              const d = origin.distanceTo(fatPt);
+              if (d >= 0 && d < fatDist) {
+                if (d < 1e-5 && fatId >= 0) return;
+                fatDist = d;
+                fatId = id;
+                fatHit = true;
+                _bestPoint.copy(fatPt);
+              }
+            }
+          } else if (trueHit && trueId === id && trueDist < fatDist) {
+            fatDist = trueDist;
+            fatId = id;
+            fatHit = true;
+            _bestPoint.copy(_trueBestPoint);
+          }
+        };
+
+        const hashReady = this.ensureRaycastHash();
+        const useHash = hashReady && this.mesh.count >= RAYCAST_HASH_BRUTE_LIMIT;
+        if (useHash) {
+          this.collectRaycastCandidates(origin, _dirN, maxDist);
+          for (let i = 0; i < _raycastCandidates.length; i++) {
+            consider(_raycastCandidates[i]);
+          }
+        } else {
+          for (let id = 0; id < this.mesh.count; id++) {
+            consider(id);
+          }
         }
-      }
       }
     }
 
-    if (!hasHit || !isLiveTargetId(bestId)) return null;
+    // Prefer the isotropic nucleus unless a real (0.5) voxel sits clearly in front.
+    let nucleusSolid = false;
+    let bestId = -1;
+    let bestDist = maxDist;
+    if (
+      nucDist != null &&
+      (!trueHit || nucDist <= trueDist + NUCLEUS_SHELL_OCCLUSION_EPSILON)
+    ) {
+      nucleusSolid = true;
+      bestId = NUCLEUS_HIT_ID;
+      bestDist = nucDist;
+      _bestPoint.copy(_nucPt);
+    } else if (trueHit) {
+      bestId = trueId;
+      bestDist = trueDist;
+      _bestPoint.copy(_trueBestPoint);
+    } else if (fatHit) {
+      bestId = fatId;
+      bestDist = fatDist;
+    }
+
+    if (bestId < 0 && !nucleusSolid) return null;
+    if (!isLiveTargetId(bestId)) return null;
 
     if (nucleusSolid) {
       this.nucleus.getWorldCenter(_pos);
@@ -796,6 +1039,7 @@ export class CubeManager {
     this.mesh.count = id + 1;
     this.aliveBlocks = this.mesh.count;
     this.flashMap.set(id, 1);
+    this.rebuildRaycastHash();
     bus.emit('block-resurrected', {
       type: grave.type,
       x: grave.x,
@@ -1063,10 +1307,12 @@ export class CubeManager {
     _quat.identity();
     _matrix.compose(pos, _quat, _scale);
     this.mesh.setMatrixAt(id, _matrix);
+    this.raycastHashDirty = true;
   }
 
   markInstanceMatrixDirty(): void {
     if (this.mesh) this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.raycastHashDirty) this.rebuildRaycastHash();
   }
 
   /**
@@ -1108,6 +1354,7 @@ export class CubeManager {
       this.mesh.setMatrixAt(id, _matrix);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.rebuildRaycastHash();
     // Do NOT reset group.quaternion/rotation — menu & cinematic own the group transform
   }
 
@@ -1133,6 +1380,7 @@ export class CubeManager {
       this.mesh.setMatrixAt(s.id, _matrix);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.rebuildRaycastHash();
   }
 
   /** Idle damage: destroy approximate fraction of remaining blocks */
@@ -1154,6 +1402,9 @@ export class CubeManager {
   }
 
   private disposeMesh(): void {
+    this.raycastHash.clear();
+    this.raycastHashCount = 0;
+    this.raycastHashDirty = true;
     if (this.mesh) {
       this.mesh.geometry.dispose();
       this.group.remove(this.mesh);

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { COLORS, ORBIT } from '../data/constants';
 import type { OrbitalCamera } from './OrbitalCamera';
-import { SHIP_HEADLIGHTS, SHIP_MUZZLE, SHIP_THRUSTERS } from './ShipMounts';
+import { SHIP_MUZZLE, SHIP_THRUSTERS } from './ShipMounts';
 
 /**
  * Aggressive cinematic interceptor — dagger silhouette, forward-swept wings,
@@ -12,10 +12,6 @@ export class Ship {
   readonly group = new THREE.Group();
   private body: THREE.Group;
   private engineGlow: THREE.Mesh[] = [];
-  private headLightL!: THREE.SpotLight;
-  private headLightR!: THREE.SpotLight;
-  private headTarget = new THREE.Object3D();
-  private fillLight!: THREE.PointLight;
   /** Local-space muzzle tip (nose cannon aperture). */
   private muzzleLocal = SHIP_MUZZLE.clone();
   private _muzzleWorld = new THREE.Vector3();
@@ -24,12 +20,10 @@ export class Ship {
   private _targetQuat = new THREE.Quaternion();
   private _up = new THREE.Vector3(0, 1, 0);
   private _m = new THREE.Matrix4();
-  private _localOrigin = new THREE.Vector3();
   private thrusterPulse = 0;
   private motionIntensity = 0;
   /** Local-space thruster exhaust origins (rear of ship). */
   private thrusterLocals: THREE.Vector3[] = [];
-  private thrusterLights: THREE.PointLight[] = [];
   private plumeMeshes: THREE.Mesh[] = [];
   private accentMats: THREE.MeshStandardMaterial[] = [];
   private runningLights: THREE.Mesh[] = [];
@@ -488,28 +482,7 @@ export class Ship {
   }
 
   private setupLights(): void {
-    this.headTarget.position.set(0, 0, -40);
-    this.group.add(this.headTarget);
-
-    this.headLightL = new THREE.SpotLight(0xfff0d0, 52, 58, Math.PI / 7, 0.45, 1.15);
-    this.headLightR = new THREE.SpotLight(0xfff0d0, 52, 58, Math.PI / 7, 0.45, 1.15);
-    for (const [light, pos] of [
-      [this.headLightL, SHIP_HEADLIGHTS[0]],
-      [this.headLightR, SHIP_HEADLIGHTS[1]],
-    ] as const) {
-      light.position.copy(pos);
-      light.target = this.headTarget;
-      this.group.add(light);
-    }
-
-    this.fillLight = new THREE.PointLight(0x66ccff, 1.0, 12, 2);
-    this.fillLight.position.set(0, 0.25, 0);
-    this.group.add(this.fillLight);
-
-    const accent = new THREE.SpotLight(COLORS.cyan, 10, 32, Math.PI / 14, 0.45, 1.3);
-    accent.position.set(0, 0, -1.5);
-    accent.target = this.headTarget;
-    this.group.add(accent);
+    // No SpotLights/PointLights — they lit the PBR cube. Emissive/additive glow meshes stay.
   }
 
   /**
@@ -530,14 +503,7 @@ export class Ship {
   }
 
   private setupThrusterLights(): void {
-    for (let i = 0; i < 3; i++) {
-      const L = new THREE.PointLight(i === 2 ? 0xff44bb : 0xaa44ff, 0, 6, 2);
-      L.position.copy(
-        this.thrusterLocals[i] ?? new THREE.Vector3(0, 0, 1.2)
-      );
-      this.group.add(L);
-      this.thrusterLights.push(L);
-    }
+    // No thruster PointLights — plume/engine glow meshes remain.
   }
 
   /**
@@ -581,12 +547,6 @@ export class Ship {
     const rotK = 1 - Math.exp(-ORBIT.shipRotLag * dt);
     this.group.quaternion.slerp(this._targetQuat, rotK);
 
-    this._localOrigin.set(0, 0, 0);
-    this.group.worldToLocal(this._localOrigin);
-    this.headTarget.position.copy(this._localOrigin);
-    this.headLightL.target.updateMatrixWorld();
-    this.headLightR.target.updateMatrixWorld();
-
     // Motion intensity: turn rate + subtle idle cruise
     const targetMotion = THREE.MathUtils.clamp(camera.turnRate * 1.8 + 0.12, 0.08, 1.4);
     const mK = 1 - Math.exp(-6 * dt);
@@ -613,9 +573,6 @@ export class Ship {
         p.material.opacity = 0.3 + boost * 0.6 + flicker * 0.18;
       }
     }
-    for (const L of this.thrusterLights) {
-      L.intensity = (0.55 + boost * 5.5) * flicker;
-    }
     // Accent strips + nav lights breathe with thrusters
     for (const mat of this.accentMats) {
       mat.emissiveIntensity = 0.55 + flicker * 0.35 + boost * 0.45;
@@ -625,10 +582,6 @@ export class Ship {
         n.material.opacity = 0.35 + flicker * 0.45 + boost * 0.25;
       }
     }
-    if (this.fillLight) {
-      this.fillLight.intensity = 0.35 + boost * 0.55;
-    }
-
     // Exhaust particles while moving / turning
     if (particles && this.group.visible && boost > 0.15) {
       const rate = 18 + boost * 45;

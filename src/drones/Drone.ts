@@ -1,5 +1,20 @@
 import * as THREE from 'three';
-import { COLORS, COMBAT } from '../data/constants';
+import { COLORS } from '../data/constants';
+import {
+  DRONE_BASE_DAMAGE,
+  DRONE_BASE_FIRE_RATE,
+  DRONE_BOMBER_PROJECTILE_SPEED,
+  DRONE_BOMBER_SPLASH_DAMAGE_FRACTION,
+  DRONE_BOMBER_WARHEAD_DAMAGE_FRACTION,
+  DRONE_DEFENDER_ANTI_DRONE_DAMAGE_FRACTION,
+  DRONE_DEFENDER_POINT_DEFENSE_DAMAGE_FRACTION,
+  DRONE_FIGHTER_ANTI_DRONE_DAMAGE_FRACTION,
+  DRONE_FIGHTER_BLOCK_DAMAGE_FRACTION,
+  DRONE_FIGHTER_POINT_DEFENSE_DAMAGE_FRACTION,
+  DRONE_HIDDEN_HEAT_GAIN_PER_SECOND,
+  DRONE_MINIMUM_FIRE_RATE,
+  DRONE_VISIBLE_HEAT_BLEED_PER_SECOND,
+} from '../data/constraints';
 import type { CubeManager } from '../cube/CubeManager';
 import { BlockType } from '../cube/BlockTypes';
 import { bus } from '../core/EventBus';
@@ -85,7 +100,6 @@ export class Drone {
   private spin = 0;
   private index: number;
   private roleColor: number;
-  private lamp!: THREE.PointLight;
 
   constructor(index: number, role: DroneRole = 'fighter') {
     this.index = index;
@@ -120,10 +134,6 @@ export class Drone {
       this.bombMesh.visible = false;
       this.group.add(this.bombMesh);
     }
-
-    this.lamp = new THREE.PointLight(this.roleColor, 0.85, 8, 2);
-    this.lamp.position.set(0, 0.12, -0.12);
-    this.group.add(this.lamp);
   }
 
   private buildMesh(): void {
@@ -278,7 +288,6 @@ export class Drone {
 
     this.spin += dt * (8 + (1 - this.heat) * 4);
     if (this.rotor) this.rotor.rotation.z = this.spin;
-    this.lamp.intensity = 0.6 + Math.sin(now * 4 + this.index) * 0.25;
 
     if (this.beamLife > 0) {
       this.beamLife -= dt;
@@ -295,8 +304,9 @@ export class Drone {
         this.group.worldToLocal(this.bombPos.clone())
       );
       // Hit check vs cube centerish — raycast
+      const bombPrev = this.bombPos.clone().addScaledVector(this.bombVel, -dt);
       const hit = cube.raycast(
-        this.bombPos.clone().addScaledVector(this.bombVel, -dt),
+        bombPrev,
         this.bombVel.clone().normalize(),
         this.bombVel.length() * dt + 0.6,
         -1,
@@ -305,7 +315,10 @@ export class Drone {
       if (hit || this.bombPos.length() > half * 3.5) {
         if (hit) {
           const raw =
-            COMBAT.baseDamage * 1.8 * stats.droneDamageMul * def.blockDamageMul;
+            DRONE_BASE_DAMAGE *
+            DRONE_BOMBER_WARHEAD_DAMAGE_FRACTION *
+            stats.droneDamageMul *
+            def.blockDamageMul;
           const type = cube.getBlockType(hit.instanceId);
           const applied = applyToBlock(
             { raw, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
@@ -318,7 +331,7 @@ export class Drone {
               cube.applySplash(
                 new THREE.Vector3(result.x, result.y, result.z),
                 def.splashRadius,
-                applied.finalDamage * 0.45,
+                applied.finalDamage * DRONE_BOMBER_SPLASH_DAMAGE_FRACTION,
                 now,
                 hit.instanceId
               );
@@ -330,15 +343,15 @@ export class Drone {
       }
     }
 
-    if (hidden) this.heat = Math.min(1, this.heat + dt * 0.08);
-    else this.heat = Math.max(0, this.heat - dt * 0.15);
+    if (hidden) this.heat = Math.min(1, this.heat + dt * DRONE_HIDDEN_HEAT_GAIN_PER_SECOND);
+    else this.heat = Math.max(0, this.heat - dt * DRONE_VISIBLE_HEAT_BLEED_PER_SECOND);
 
     this.cooldown = Math.max(0, this.cooldown - dt);
     if (this.cooldown > 0 || this.heat > 0.95) return;
 
     const rate =
-      2.2 * stats.droneFireRateMul * def.fireRateMul * (1 - this.heat * 0.5);
-    this.cooldown = 1 / Math.max(0.25, rate);
+      DRONE_BASE_FIRE_RATE * stats.droneFireRateMul * def.fireRateMul * (1 - this.heat * 0.5);
+    this.cooldown = 1 / Math.max(DRONE_MINIMUM_FIRE_RATE, rate);
 
     // —— Defender: point defense only ——
     if (this.role === 'defender') {
@@ -349,7 +362,10 @@ export class Drone {
           this.showBeam(this.group.position, this._target);
           combat.onInterceptHit(
             t.id,
-            COMBAT.baseDamage * 0.35 * stats.droneDamageMul * def.pointDefenseMul
+            DRONE_BASE_DAMAGE *
+              DRONE_DEFENDER_POINT_DEFENSE_DAMAGE_FRACTION *
+              stats.droneDamageMul *
+              def.pointDefenseMul
           );
           return;
         }
@@ -361,7 +377,10 @@ export class Drone {
           this.showBeam(this.group.position, this._target);
           combat.onEnemyHit(
             e.id,
-            COMBAT.baseDamage * 0.4 * stats.droneDamageMul * def.antiDroneMul
+            DRONE_BASE_DAMAGE *
+              DRONE_DEFENDER_ANTI_DRONE_DAMAGE_FRACTION *
+              stats.droneDamageMul *
+              def.antiDroneMul
           );
         }
       }
@@ -378,7 +397,10 @@ export class Drone {
           this.showBeam(this.group.position, this._target);
           combat.onEnemyHit(
             enemy.id,
-            COMBAT.baseDamage * 0.55 * stats.droneDamageMul * def.antiDroneMul
+            DRONE_BASE_DAMAGE *
+              DRONE_FIGHTER_ANTI_DRONE_DAMAGE_FRACTION *
+              stats.droneDamageMul *
+              def.antiDroneMul
           );
           return;
         }
@@ -391,7 +413,10 @@ export class Drone {
           this.showBeam(this.group.position, this._target);
           combat.onInterceptHit(
             t.id,
-            COMBAT.baseDamage * 0.5 * stats.droneDamageMul * def.pointDefenseMul
+            DRONE_BASE_DAMAGE *
+              DRONE_FIGHTER_POINT_DEFENSE_DAMAGE_FRACTION *
+              stats.droneDamageMul *
+              def.pointDefenseMul
           );
           return;
         }
@@ -402,7 +427,11 @@ export class Drone {
       this.markFireLook(this._target);
       this.showBeam(this.group.position, this._target);
       const type = cube.getBlockType(peel);
-      const raw = COMBAT.baseDamage * 0.35 * stats.droneDamageMul * def.blockDamageMul;
+      const raw =
+        DRONE_BASE_DAMAGE *
+        DRONE_FIGHTER_BLOCK_DAMAGE_FRACTION *
+        stats.droneDamageMul *
+        def.blockDamageMul;
       const applied = applyToBlock(
         { raw, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
         type
@@ -419,7 +448,7 @@ export class Drone {
     cube.getBlockWorldPos(peel, this._target);
     this.markFireLook(this._target);
     this.bombPos.copy(this.group.position);
-    this.bombVel.copy(this._target).sub(this.bombPos).normalize().multiplyScalar(18);
+    this.bombVel.copy(this._target).sub(this.bombPos).normalize().multiplyScalar(DRONE_BOMBER_PROJECTILE_SPEED);
     this.bombActive = true;
     this.bombMesh.visible = true;
     this.bombMesh.position.set(0, 0, 0);

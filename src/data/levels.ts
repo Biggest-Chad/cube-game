@@ -1,4 +1,17 @@
 import type { ArenaId } from './arenas';
+import {
+  LEVEL_DEFAULT_CORE_ENERGY_BASE,
+  LEVEL_DEFAULT_CORE_ENERGY_MIDGAME_BONUS,
+  LEVEL_DEFAULT_CORE_ENERGY_MIDGAME_FROM_ID,
+  LEVEL_DEFAULT_CORE_ENERGY_PER_ID,
+  LEVEL_DEFAULT_CORE_HP_AVG_WEIGHT,
+  LEVEL_DEFAULT_CORE_HP_FLAT,
+  LEVEL_DEFAULT_CORE_HP_PER_ID,
+  LEVEL_DEFAULT_FRAG_BASE,
+  LEVEL_DEFAULT_FRAG_GLOBAL_SCALE,
+  LEVEL_DEFAULT_FRAG_PER_ID,
+  LEVEL_DEFAULT_FRAG_SQRT_WEIGHT,
+} from './constraints';
 
 export interface LevelDefinition {
   id: number;
@@ -61,7 +74,10 @@ function makeLevel(
   };
   const s = scoreOf(base);
   // Steeper soft-cap: clear rewards grow slowly so prestige sinks stay relevant
-  const defaultFrags = Math.round((28 + Math.sqrt(s) * 0.35 + id * 5.5) * 0.55);
+  const defaultFrags = Math.round(
+    (LEVEL_DEFAULT_FRAG_BASE + Math.sqrt(s) * LEVEL_DEFAULT_FRAG_SQRT_WEIGHT + id * LEVEL_DEFAULT_FRAG_PER_ID) *
+      LEVEL_DEFAULT_FRAG_GLOBAL_SCALE
+  );
   return {
     id,
     name,
@@ -73,11 +89,17 @@ function makeLevel(
     siege: extras.siege ?? Math.min(0.28, Math.max(0, (id - 10) * 0.012 + specialPercent * 0.08)),
     // Every sector has a shared nucleus (clear condition + combat pillar)
     hasCore: extras.hasCore ?? true,
-    coreHP: extras.coreHP ?? Math.round(avgHP * 55 + id * 180 + 400),
+    coreHP:
+      extras.coreHP ??
+      Math.round(avgHP * LEVEL_DEFAULT_CORE_HP_AVG_WEIGHT + id * LEVEL_DEFAULT_CORE_HP_PER_ID + LEVEL_DEFAULT_CORE_HP_FLAT),
     rewardFragments: extras.rewardFragments ?? defaultFrags,
     rewardCoreEnergy:
       extras.rewardCoreEnergy ??
-      Math.round(8 + id * 3 + (id >= 5 ? 12 : 0)),
+      Math.round(
+        LEVEL_DEFAULT_CORE_ENERGY_BASE +
+          id * LEVEL_DEFAULT_CORE_ENERGY_PER_ID +
+          (id >= LEVEL_DEFAULT_CORE_ENERGY_MIDGAME_FROM_ID ? LEVEL_DEFAULT_CORE_ENERGY_MIDGAME_BONUS : 0)
+      ),
   };
 }
 

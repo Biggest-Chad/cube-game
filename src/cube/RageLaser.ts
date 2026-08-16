@@ -28,7 +28,6 @@ export class RageLaser {
   private mid!: THREE.Mesh;
   private outer!: THREE.Mesh;
   private corona!: THREE.Mesh;
-  private muzzle!: THREE.PointLight;
   private ticks: THREE.Mesh[] = [];
   private readonly cyl = new THREE.CylinderGeometry(1, 1, 1, 12, 1, true);
   private readonly sph = new THREE.SphereGeometry(1, 12, 10);
@@ -48,8 +47,7 @@ export class RageLaser {
         depthWrite: false,
       })
     );
-    this.muzzle = new THREE.PointLight(0xff4410, 0, 28, 2);
-    this.group.add(this.outer, this.mid, this.core, this.telegraph, this.corona, this.muzzle);
+    this.group.add(this.outer, this.mid, this.core, this.telegraph, this.corona);
 
     for (let i = 0; i < 6; i++) {
       const tick = new THREE.Mesh(
@@ -195,7 +193,6 @@ export class RageLaser {
     this.hitAccum = 0;
     this.announcedCharge = false;
     this.group.visible = false;
-    this.muzzle.intensity = 0;
   }
 
   private slew(radPerSec: number, dt: number): void {
@@ -238,7 +235,6 @@ export class RageLaser {
     const warming = this.phase === 'warmup';
     if (!charging && !firing && !warming) {
       this.group.visible = false;
-      this.muzzle.intensity = 0;
       return;
     }
     this.group.visible = true;
@@ -267,10 +263,6 @@ export class RageLaser {
     const coronaR = firing ? 0.85 + Math.sin(t * 18) * 0.12 : 0.25 + charge01 * 0.55;
     this.corona.scale.setScalar(coronaR);
     this.setOpacity(this.corona, firing ? 0.7 : 0.15 + charge01 * 0.5);
-
-    this.muzzle.position.copy(this.origin);
-    this.muzzle.intensity = firing ? 14 : charge01 * 5;
-    this.muzzle.distance = firing ? 36 : 22;
 
     for (let i = 0; i < this.ticks.length; i++) {
       const tick = this.ticks[i];

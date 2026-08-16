@@ -1,4 +1,11 @@
 import { STAT_CAPS } from '../data/upgrades';
+import {
+  SHIP_BASE_ARMOR_RATING,
+  SHIP_BASE_HULL_HIT_POINTS,
+  SHIP_BASE_MAX_SHIELD,
+  SHIP_SHIELD_RECHARGE_DELAY_SECONDS,
+  SHIP_SHIELD_RECHARGE_PER_SECOND,
+} from '../data/constraints';
 import type { PlayerStats } from '../progression/TechTree';
 
 export interface DamageIntakeResult {
@@ -20,11 +27,11 @@ export interface ShipVitalsSnapshot {
   timeSinceDamage: number;
 }
 
-const BASE_HULL = 100;
-const BASE_SHIELD = 40;
-const BASE_ARMOR = 0;
-const BASE_SHIELD_REGEN = 6;
-const SHIELD_REGEN_DELAY = 3;
+const BASE_HULL = SHIP_BASE_HULL_HIT_POINTS;
+const BASE_SHIELD = SHIP_BASE_MAX_SHIELD;
+const BASE_ARMOR = SHIP_BASE_ARMOR_RATING;
+const BASE_SHIELD_REGEN = SHIP_SHIELD_RECHARGE_PER_SECOND;
+const SHIELD_REGEN_DELAY = SHIP_SHIELD_RECHARGE_DELAY_SECONDS;
 
 /**
  * Layered survivability: Shield → Armor DR → Hull.

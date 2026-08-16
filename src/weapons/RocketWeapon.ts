@@ -31,7 +31,6 @@ interface Rocket {
   splash: number;
   crit: boolean;
   armorPierce: number;
-  glow: THREE.PointLight;
   wing: number;
 }
 
@@ -40,7 +39,6 @@ interface Boom {
   core: THREE.Mesh;
   ring: THREE.Mesh;
   flash: THREE.Mesh;
-  light: THREE.PointLight;
   life: number;
   maxLife: number;
   scale: number;
@@ -115,9 +113,6 @@ export class RocketWeapon implements WeaponBehavior {
       const tr = makeTrail(0xff8844, TRAIL_SEGS, 0.9);
       this.group.add(tr.line);
 
-      const glow = new THREE.PointLight(0xff6622, 0, 12, 2);
-      this.group.add(glow);
-
       this.rockets.push({
         active: false,
         mesh,
@@ -136,7 +131,6 @@ export class RocketWeapon implements WeaponBehavior {
         splash: 0,
         crit: false,
         armorPierce: 0,
-        glow,
         wing: 1,
       });
     }
@@ -155,17 +149,15 @@ export class RocketWeapon implements WeaponBehavior {
         })
       );
       const flash = new THREE.Mesh(new THREE.SphereGeometry(0.7, 12, 12), addMat(0xff4400, 0));
-      const light = new THREE.PointLight(0xff8844, 0, 28, 2);
       core.visible = false;
       ring.visible = false;
       flash.visible = false;
-      this.group.add(core, ring, flash, light);
+      this.group.add(core, ring, flash);
       this.booms.push({
         active: false,
         core,
         ring,
         flash,
-        light,
         life: 0,
         maxLife: 0.5,
         scale: 1,
@@ -267,8 +259,6 @@ export class RocketWeapon implements WeaponBehavior {
     this.dropDir.copy(r.vel).normalize();
     orientZForward(r.mesh, this.dropDir);
     for (const h of r.trailHist) h.copy(r.pos);
-    r.glow.intensity = 1.5;
-    r.glow.position.copy(r.pos);
     // Scale pop on release
     r.mesh.scale.setScalar(0.85);
   }
@@ -293,7 +283,6 @@ export class RocketWeapon implements WeaponBehavior {
           r.exhaust.visible = true;
           r.exhaustGlow.visible = true;
           r.trail.visible = true;
-          r.glow.intensity = r.crit ? 16 : 11;
           r.mesh.scale.setScalar(1.05);
           bus.emit('weapon-fire', { family: 'rocket_ignite', slot: -1 });
         }
@@ -316,7 +305,6 @@ export class RocketWeapon implements WeaponBehavior {
       r.pos.addScaledVector(r.vel, dt);
       r.mesh.position.copy(r.pos);
       if (r.vel.lengthSq() > 1e-6) orientZForward(r.mesh, r.vel);
-      r.glow.position.copy(r.pos);
 
       const lit = r.phase !== 'drop';
       if (lit) {
@@ -332,15 +320,12 @@ export class RocketWeapon implements WeaponBehavior {
           r.phase === 'boost' ? 0.95 : 0.75;
         (r.exhaustGlow.material as THREE.MeshBasicMaterial).opacity =
           r.phase === 'boost' ? 0.9 : 0.55;
-        r.glow.intensity = (r.phase === 'boost' ? 14 : 7) + Math.sin(r.life * 18) * 2.5;
 
         for (let i = r.trailHist.length - 1; i > 0; i--) r.trailHist[i].copy(r.trailHist[i - 1]);
         r.trailHist[0].copy(r.pos);
         for (let i = 0; i < r.trailHist.length; i++) r.trailSet(i, r.trailHist[i]);
         (r.trail.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
         r.trail.geometry.computeBoundingSphere();
-      } else {
-        r.glow.intensity = 1.2 + Math.sin(now * 20) * 0.4;
       }
 
       // Settle scale after release pop
@@ -349,8 +334,11 @@ export class RocketWeapon implements WeaponBehavior {
         r.mesh.scale.setScalar(s);
       }
 
-      // Solid nucleus proximity fuse after ignition
-      if (r.phase !== 'drop' && cube.nucleus.isActive && cube.nucleus.containsPoint(r.pos)) {
+      if (
+        r.phase !== 'drop' &&
+        cube.nucleus.isActive &&
+        cube.nucleus.containsPoint(r.pos)
+      ) {
         this.detonate(r, cube, NUCLEUS_HIT_ID, r.pos.clone(), now);
         continue;
       }
@@ -424,7 +412,6 @@ export class RocketWeapon implements WeaponBehavior {
     e.core.position.copy(at);
     e.ring.position.copy(at);
     e.flash.position.copy(at);
-    e.light.position.copy(at);
     e.core.scale.setScalar(0.25);
     e.ring.scale.setScalar(0.2);
     e.flash.scale.setScalar(0.35);
@@ -436,7 +423,6 @@ export class RocketWeapon implements WeaponBehavior {
     (e.ring.material as THREE.MeshBasicMaterial).opacity = 0.95;
     (e.ring.material as THREE.MeshBasicMaterial).color.setHex(crit ? 0xffaa00 : 0xff6622);
     (e.flash.material as THREE.MeshBasicMaterial).opacity = 0.85;
-    e.light.intensity = crit ? 45 : 32;
     e.ring.lookAt(at.x + 1, at.y + 2, at.z + 0.5);
   }
 
@@ -454,13 +440,11 @@ export class RocketWeapon implements WeaponBehavior {
       (e.core.material as THREE.MeshBasicMaterial).opacity = fade * (t < 0.2 ? 1 : 0.65);
       (e.flash.material as THREE.MeshBasicMaterial).opacity = fade * 0.7;
       (e.ring.material as THREE.MeshBasicMaterial).opacity = fade * 0.9;
-      e.light.intensity = (1 - t) * (e.scale > 1.3 ? 40 : 26);
       if (e.life <= 0) {
         e.active = false;
         e.core.visible = false;
         e.ring.visible = false;
         e.flash.visible = false;
-        e.light.intensity = 0;
       }
     }
   }
@@ -471,7 +455,6 @@ export class RocketWeapon implements WeaponBehavior {
     r.exhaust.visible = false;
     r.exhaustGlow.visible = false;
     r.trail.visible = false;
-    r.glow.intensity = 0;
     r.mesh.scale.setScalar(1);
   }
 
@@ -488,7 +471,6 @@ export class RocketWeapon implements WeaponBehavior {
       e.core.visible = false;
       e.ring.visible = false;
       e.flash.visible = false;
-      e.light.intensity = 0;
     }
   }
 

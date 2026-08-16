@@ -2,7 +2,57 @@
  * Drone fleet — bay slots + Fighter / Bomber / Defender inventory.
  *
  * Loop: unlock bays → buy type units → drag into bay slots.
+ * Numeric sources live in `constraints.ts`.
  */
+
+import {
+  BOMBER_ANTI_DRONE_MULTIPLIER,
+  BOMBER_ARMOR_PIERCE,
+  BOMBER_BASE_HIT_POINTS,
+  BOMBER_BLOCK_DAMAGE_MULTIPLIER,
+  BOMBER_FIRE_RATE_MULTIPLIER,
+  BOMBER_FRONTAL_SHIELD,
+  BOMBER_ORBIT_RADIUS_BIAS,
+  BOMBER_POINT_DEFENSE_MULTIPLIER,
+  BOMBER_SPLASH_RADIUS,
+  BOMBER_TYPE_UNLOCK_COST_FRAGMENTS,
+  BOMBER_UNIT_COST_FRAGMENTS,
+  BOMBER_UNLOCK_LEVEL,
+  DEFENDER_ANTI_DRONE_MULTIPLIER,
+  DEFENDER_ARMOR_PIERCE,
+  DEFENDER_BASE_HIT_POINTS,
+  DEFENDER_BLOCK_DAMAGE_MULTIPLIER,
+  DEFENDER_FIRE_RATE_MULTIPLIER,
+  DEFENDER_FRONTAL_SHIELD,
+  DEFENDER_ORBIT_RADIUS_BIAS,
+  DEFENDER_POINT_DEFENSE_MULTIPLIER,
+  DEFENDER_SPLASH_RADIUS,
+  DEFENDER_TYPE_UNLOCK_COST_FRAGMENTS,
+  DEFENDER_UNIT_COST_FRAGMENTS,
+  DEFENDER_UNLOCK_LEVEL,
+  DRONE_ALLY_PROTOCOL_COST_FRAGMENTS,
+  DRONE_BAY_MAXIMUM,
+  DRONE_BAY_STARTING_COUNT,
+  DRONE_BAY_UNLOCK_COST_BASE,
+  DRONE_BAY_UNLOCK_COST_GROWTH,
+  DRONE_LEGACY_COST_BASE,
+  DRONE_LEGACY_COST_GROWTH,
+  DRONE_RESPAWN_SECONDS,
+  DRONE_SHIELD_REGEN_DELAY_SECONDS,
+  DRONE_SHIELD_REGEN_PER_SECOND,
+  FIGHTER_ANTI_DRONE_MULTIPLIER,
+  FIGHTER_ARMOR_PIERCE,
+  FIGHTER_BASE_HIT_POINTS,
+  FIGHTER_BLOCK_DAMAGE_MULTIPLIER,
+  FIGHTER_FIRE_RATE_MULTIPLIER,
+  FIGHTER_FRONTAL_SHIELD,
+  FIGHTER_ORBIT_RADIUS_BIAS,
+  FIGHTER_POINT_DEFENSE_MULTIPLIER,
+  FIGHTER_SPLASH_RADIUS,
+  FIGHTER_TYPE_UNLOCK_COST_FRAGMENTS,
+  FIGHTER_UNIT_COST_FRAGMENTS,
+  FIGHTER_UNLOCK_LEVEL,
+} from './constraints';
 
 export type DroneRole = 'fighter' | 'bomber' | 'defender';
 
@@ -33,78 +83,80 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     name: 'Fighter',
     description:
       'Agile interceptor. Hunts enemy drones & large projectiles. Light block damage.',
-    blockDamageMul: 0.65625,
-    splashRadius: 0,
-    armorPierce: 0,
-    antiDroneMul: 2.25,
-    pointDefenseMul: 1.2,
-    frontalShield: 0,
-    fireRateMul: 1.4,
-    orbitRadiusBias: 0,
-    baseHp: 40,
+    blockDamageMul: FIGHTER_BLOCK_DAMAGE_MULTIPLIER,
+    splashRadius: FIGHTER_SPLASH_RADIUS,
+    armorPierce: FIGHTER_ARMOR_PIERCE,
+    antiDroneMul: FIGHTER_ANTI_DRONE_MULTIPLIER,
+    pointDefenseMul: FIGHTER_POINT_DEFENSE_MULTIPLIER,
+    frontalShield: FIGHTER_FRONTAL_SHIELD,
+    fireRateMul: FIGHTER_FIRE_RATE_MULTIPLIER,
+    orbitRadiusBias: FIGHTER_ORBIT_RADIUS_BIAS,
+    baseHp: FIGHTER_BASE_HIT_POINTS,
     color: 0xffd060,
     colorCss: '#ffd060',
-    unitCost: 90,
-    unlockCost: 0,
-    unlockLevel: 1,
+    unitCost: FIGHTER_UNIT_COST_FRAGMENTS,
+    unlockCost: FIGHTER_TYPE_UNLOCK_COST_FRAGMENTS,
+    unlockLevel: FIGHTER_UNLOCK_LEVEL,
   },
   bomber: {
     id: 'bomber',
     name: 'Bomber',
     description:
       'Heavy stand-off craft. Slow plasma bombs with splash. Prefers exposed nucleus.',
-    blockDamageMul: 1.65,
-    splashRadius: 1.6,
-    armorPierce: 0.2,
-    antiDroneMul: 0.15,
-    pointDefenseMul: 0,
-    frontalShield: 0,
-    fireRateMul: 0.38,
-    orbitRadiusBias: 4.5,
-    baseHp: 70,
+    blockDamageMul: BOMBER_BLOCK_DAMAGE_MULTIPLIER,
+    splashRadius: BOMBER_SPLASH_RADIUS,
+    armorPierce: BOMBER_ARMOR_PIERCE,
+    antiDroneMul: BOMBER_ANTI_DRONE_MULTIPLIER,
+    pointDefenseMul: BOMBER_POINT_DEFENSE_MULTIPLIER,
+    frontalShield: BOMBER_FRONTAL_SHIELD,
+    fireRateMul: BOMBER_FIRE_RATE_MULTIPLIER,
+    orbitRadiusBias: BOMBER_ORBIT_RADIUS_BIAS,
+    baseHp: BOMBER_BASE_HIT_POINTS,
     color: 0xff6622,
     colorCss: '#ff6622',
-    unitCost: 150,
-    unlockCost: 135,
-    unlockLevel: 4,
+    unitCost: BOMBER_UNIT_COST_FRAGMENTS,
+    unlockCost: BOMBER_TYPE_UNLOCK_COST_FRAGMENTS,
+    unlockLevel: BOMBER_UNLOCK_LEVEL,
   },
   defender: {
     id: 'defender',
     name: 'Defender',
     description:
       'Escort with a tight personal shield bubble + point defense. Does not mine the cube.',
-    blockDamageMul: 0,
-    splashRadius: 0,
-    armorPierce: 0,
-    antiDroneMul: 0.9,
-    pointDefenseMul: 1.5,
-    frontalShield: 22,
-    fireRateMul: 1.1,
-    orbitRadiusBias: -2.5,
-    baseHp: 55,
+    blockDamageMul: DEFENDER_BLOCK_DAMAGE_MULTIPLIER,
+    splashRadius: DEFENDER_SPLASH_RADIUS,
+    armorPierce: DEFENDER_ARMOR_PIERCE,
+    antiDroneMul: DEFENDER_ANTI_DRONE_MULTIPLIER,
+    pointDefenseMul: DEFENDER_POINT_DEFENSE_MULTIPLIER,
+    frontalShield: DEFENDER_FRONTAL_SHIELD,
+    fireRateMul: DEFENDER_FIRE_RATE_MULTIPLIER,
+    orbitRadiusBias: DEFENDER_ORBIT_RADIUS_BIAS,
+    baseHp: DEFENDER_BASE_HIT_POINTS,
     color: 0x00ffaa,
     colorCss: '#00ffaa',
-    unitCost: 165,
-    unlockCost: 180,
-    unlockLevel: 6,
+    unitCost: DEFENDER_UNIT_COST_FRAGMENTS,
+    unlockCost: DEFENDER_TYPE_UNLOCK_COST_FRAGMENTS,
+    unlockLevel: DEFENDER_UNLOCK_LEVEL,
   },
 };
 
 /** +50% over the original 12-bay hull. */
-export const DRONE_BAY_MAX = 18;
-export const DRONE_BAY_START = 0;
+export const DRONE_BAY_MAX = DRONE_BAY_MAXIMUM;
+export const DRONE_BAY_START = DRONE_BAY_STARTING_COUNT;
 /** Ally Protocol — first drone purchase. */
-export const FIRST_DRONE_COST = 100;
+export const FIRST_DRONE_COST = DRONE_ALLY_PROTOCOL_COST_FRAGMENTS;
 /** Frag cost for bay slot n (0-indexed next purchase). ~25% below the old 150×1.48^n curve. */
 export function droneBayUnlockCost(ownedBays: number): number {
-  return Math.round(113 * Math.pow(1.48, Math.max(0, ownedBays)));
+  return Math.round(
+    DRONE_BAY_UNLOCK_COST_BASE * Math.pow(DRONE_BAY_UNLOCK_COST_GROWTH, Math.max(0, ownedBays))
+  );
 }
 
 export const DRONE_HARD_CAP = DRONE_BAY_MAX;
 
 export const DRONE_COST = {
-  base: 34,
-  growth: 1.42,
+  base: DRONE_LEGACY_COST_BASE,
+  growth: DRONE_LEGACY_COST_GROWTH,
 } as const;
 
 /** FRAG needed to field a second active drone (bay and/or another fighter). */
@@ -135,9 +187,9 @@ export function droneRoleAssignCost(_role: DroneRole, _roleCount: number): numbe
   return 0;
 }
 
-export const DRONE_BASE_RESPAWN = 8;
-export const DRONE_BASE_SHIELD_REGEN_DELAY = 4;
-export const DRONE_BASE_SHIELD_REGEN_PER_SEC = 6;
+export const DRONE_BASE_RESPAWN = DRONE_RESPAWN_SECONDS;
+export const DRONE_BASE_SHIELD_REGEN_DELAY = DRONE_SHIELD_REGEN_DELAY_SECONDS;
+export const DRONE_BASE_SHIELD_REGEN_PER_SEC = DRONE_SHIELD_REGEN_PER_SECOND;
 
 /**
  * Full drone meta state for save + shop.

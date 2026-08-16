@@ -4,6 +4,14 @@
  */
 import * as THREE from 'three';
 import { COLORS, COMBAT, PERF } from '../data/constants';
+import {
+  MAIN_GUN_BASE_ARMOR_PIERCE,
+  MAIN_GUN_BOLT_BLOCK_HALF_EXTENT,
+  MAIN_GUN_BOLT_ENEMY_SWEEP_PADDING,
+  MAIN_GUN_BOLT_RAYCAST_LEAD,
+  MAIN_GUN_HEAT_COOL_RATE,
+  MAIN_GUN_HEAT_PER_SHOT,
+} from '../data/constraints';
 import type { CubeManager } from '../cube/CubeManager';
 import { BlockType } from '../cube/BlockTypes';
 import { bus } from '../core/EventBus';
@@ -106,12 +114,12 @@ export class MainBeamWeapon implements WeaponBehavior {
       range: COMBAT.beamRange,
       splashRadius: 0,
       splashFalloff: 0.5,
-      armorPierce: 0.05,
+      armorPierce: MAIN_GUN_BASE_ARMOR_PIERCE,
       critChance: 0,
       critMult: 2,
-      heatPerShot: 0.05,
+      heatPerShot: MAIN_GUN_HEAT_PER_SHOT,
       heatCapacity: 1,
-      heatCoolRate: 0.35,
+      heatCoolRate: MAIN_GUN_HEAT_COOL_RATE,
       chargeTime: 0,
       projectileCount: 1,
       homing: 0,
@@ -390,7 +398,7 @@ export class MainBeamWeapon implements WeaponBehavior {
             const dx = cx - et.position.x;
             const dy = cy - et.position.y;
             const dz = cz - et.position.z;
-            if (dx * dx + dy * dy + dz * dz <= (et.radius + 0.35) ** 2) {
+            if (dx * dx + dy * dy + dz * dz <= (et.radius + MAIN_GUN_BOLT_ENEMY_SWEEP_PADDING) ** 2) {
               ctx.onEnemyHit(et.id, b.damage);
               b.active = false;
               b.root.visible = false;
@@ -416,9 +424,9 @@ export class MainBeamWeapon implements WeaponBehavior {
         const hit = cube.raycast(
           this.tmp.set(prevX, prevY, prevZ),
           move.normalize(),
-          dist + 0.75,
+          dist + MAIN_GUN_BOLT_RAYCAST_LEAD,
           b.lastHitId,
-          0.58
+          MAIN_GUN_BOLT_BLOCK_HALF_EXTENT
         );
         if (hit) {
           this.resolveHit(b, cube, hit.instanceId, hit.point, now);

@@ -3,17 +3,26 @@
  * Armor uses hyperbolic DR; crit chance/mult are hard-capped.
  */
 import { BlockType, armorClassOf, type ArmorClass } from '../cube/BlockTypes';
+import {
+  ARMOR_HYPERBOLIC_K,
+  ARMOR_MAX_EFFECTIVE_REDUCTION,
+  ARMOR_RATING_HEAVY,
+  ARMOR_RATING_LIGHT,
+  ARMOR_RATING_SIEGE,
+  CRIT_CHANCE_HARD_CAP,
+  CRIT_MULT_HARD_CAP,
+} from '../data/constraints';
 
 export type { ArmorClass };
 
 /** Hyperbolic armor constant: effective = rating / (rating + K) */
-export const ARMOR_K = 100;
+export const ARMOR_K = ARMOR_HYPERBOLIC_K;
 
 /** Hard caps (plan §1) */
 export const CAPS = {
-  armorEffective: 0.55,
-  critChance: 0.4,
-  critMult: 2.25,
+  armorEffective: ARMOR_MAX_EFFECTIVE_REDUCTION,
+  critChance: CRIT_CHANCE_HARD_CAP,
+  critMult: CRIT_MULT_HARD_CAP,
   shieldAbsorb: 1.0,
 } as const;
 
@@ -63,11 +72,11 @@ export function armorClassForBlock(type: BlockType): ArmorClass {
 export function armorRatingForClass(ac: ArmorClass): number {
   switch (ac) {
     case 'siege':
-      return 180;
+      return ARMOR_RATING_SIEGE;
     case 'heavy':
-      return 90;
+      return ARMOR_RATING_HEAVY;
     case 'light':
-      return 35;
+      return ARMOR_RATING_LIGHT;
     default:
       return 0;
   }

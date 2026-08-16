@@ -1,4 +1,5 @@
 import { COMBAT } from '../data/constants';
+import { SHIP_BASE_HULL_HIT_POINTS, SHIP_BASE_MAX_SHIELD } from '../data/constraints';
 import {
   EVOLVE_UI_PREVIEW_RATIO,
   canEvolve,
@@ -58,8 +59,8 @@ export interface StatsSnapshot {
   fireRateMul: number;
 }
 
-const BASE_HULL = 100;
-const BASE_SHIELD = 40;
+const BASE_HULL = SHIP_BASE_HULL_HIT_POINTS;
+const BASE_SHIELD = SHIP_BASE_MAX_SHIELD;
 
 export function buildStatsSnapshot(
   stats: PlayerStats,

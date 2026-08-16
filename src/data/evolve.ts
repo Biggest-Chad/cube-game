@@ -1,7 +1,30 @@
 /**
  * Evolve (Ascension) — permanent hull baselines + combat shop retrain loop.
  * Brand: EVOLVE / Ascension Tier, not generic "prestige".
+ * Numeric sources live in `constraints.ts`.
  */
+
+import {
+  EVOLVE_BASELINE_DAMAGE_SOFT_CAP,
+  EVOLVE_CORE_GRANT_BASE,
+  EVOLVE_CORE_GRANT_PER_TIER,
+  EVOLVE_COST_PER_TIER,
+  EVOLVE_MIN_LEVEL_BASE,
+  EVOLVE_MIN_LEVEL_PER_ASCENSION,
+  EVOLVE_TIER_1_2_DAMAGE_MULTIPLIER,
+  EVOLVE_TIER_1_2_DRONE_DAMAGE_MULTIPLIER,
+  EVOLVE_TIER_1_2_HULL_MULTIPLIER,
+  EVOLVE_TIER_1_2_IDLE_RATE_MULTIPLIER,
+  EVOLVE_TIER_1_2_ORBIT_SPEED_MULTIPLIER,
+  EVOLVE_TIER_1_2_SHIELD_MULTIPLIER,
+  EVOLVE_TIER_3_PLUS_DAMAGE_MULTIPLIER,
+  EVOLVE_TIER_3_PLUS_DRONE_DAMAGE_MULTIPLIER,
+  EVOLVE_TIER_3_PLUS_HULL_MULTIPLIER,
+  EVOLVE_TIER_3_PLUS_IDLE_RATE_MULTIPLIER,
+  EVOLVE_TIER_3_PLUS_ORBIT_SPEED_MULTIPLIER,
+  EVOLVE_TIER_3_PLUS_SHIELD_MULTIPLIER,
+  EVOLVE_UI_PREVIEW_RATIO,
+} from './constraints';
 
 export interface AscensionBaseline {
   damageMul: number;
@@ -33,35 +56,35 @@ export interface TierBonus {
 
 /** Tier 1–2 table from design; 3+ soft-step. */
 const TIER_1_2: TierBonus = {
-  damageMul: 1.08,
-  hullMul: 1.1,
-  shieldMul: 1.1,
-  droneDamageMul: 1.08,
-  orbitSpeedMul: 1.04,
-  idleRateMul: 1.05,
+  damageMul: EVOLVE_TIER_1_2_DAMAGE_MULTIPLIER,
+  hullMul: EVOLVE_TIER_1_2_HULL_MULTIPLIER,
+  shieldMul: EVOLVE_TIER_1_2_SHIELD_MULTIPLIER,
+  droneDamageMul: EVOLVE_TIER_1_2_DRONE_DAMAGE_MULTIPLIER,
+  orbitSpeedMul: EVOLVE_TIER_1_2_ORBIT_SPEED_MULTIPLIER,
+  idleRateMul: EVOLVE_TIER_1_2_IDLE_RATE_MULTIPLIER,
 };
 
 const TIER_3_PLUS: TierBonus = {
-  damageMul: 1.07,
-  hullMul: 1.08,
-  shieldMul: 1.08,
-  droneDamageMul: 1.07,
-  orbitSpeedMul: 1.03,
-  idleRateMul: 1.04,
+  damageMul: EVOLVE_TIER_3_PLUS_DAMAGE_MULTIPLIER,
+  hullMul: EVOLVE_TIER_3_PLUS_HULL_MULTIPLIER,
+  shieldMul: EVOLVE_TIER_3_PLUS_SHIELD_MULTIPLIER,
+  droneDamageMul: EVOLVE_TIER_3_PLUS_DRONE_DAMAGE_MULTIPLIER,
+  orbitSpeedMul: EVOLVE_TIER_3_PLUS_ORBIT_SPEED_MULTIPLIER,
+  idleRateMul: EVOLVE_TIER_3_PLUS_IDLE_RATE_MULTIPLIER,
 };
 
 /** Soft cap on stacked damage baseline. */
-export const BASELINE_DAMAGE_SOFT_CAP = 1.8;
+export const BASELINE_DAMAGE_SOFT_CAP = EVOLVE_BASELINE_DAMAGE_SOFT_CAP;
 
-/** evolveCost(tier) = 100_000 * (tier + 1) — cost to go from `tier` → tier+1. */
+/** evolveCost(tier) = EVOLVE_COST_PER_TIER * (tier + 1) — cost to go from `tier` → tier+1. */
 export function evolveCost(currentAscension: number): number {
   const t = Math.max(0, Math.floor(currentAscension));
-  return 100_000 * (t + 1);
+  return EVOLVE_COST_PER_TIER * (t + 1);
 }
 
-/** Soft gate: highestLevel >= 8 + ascension * 3 */
+/** Soft gate: highestLevel >= EVOLVE_MIN_LEVEL_BASE + ascension * EVOLVE_MIN_LEVEL_PER_ASCENSION */
 export function evolveMinLevel(currentAscension: number): number {
-  return 8 + Math.max(0, Math.floor(currentAscension)) * 3;
+  return EVOLVE_MIN_LEVEL_BASE + Math.max(0, Math.floor(currentAscension)) * EVOLVE_MIN_LEVEL_PER_ASCENSION;
 }
 
 /**
@@ -69,7 +92,7 @@ export function evolveMinLevel(currentAscension: number): number {
  * Tuned so Ascension 1 grant covers HP2 (160 Core).
  */
 export function evolveCoreGrant(newTier: number): number {
-  return 100 + 60 * Math.max(1, Math.floor(newTier));
+  return EVOLVE_CORE_GRANT_BASE + EVOLVE_CORE_GRANT_PER_TIER * Math.max(1, Math.floor(newTier));
 }
 
 export function tierBonus(forTier: number): TierBonus {
@@ -133,4 +156,4 @@ export function canEvolve(
 }
 
 /** Preview percent of next cost at which shop shows Evolve panel (0.5 = 50%). */
-export const EVOLVE_UI_PREVIEW_RATIO = 0.5;
+export { EVOLVE_UI_PREVIEW_RATIO };
