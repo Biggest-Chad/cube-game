@@ -1,6 +1,6 @@
 /**
- * Four decorative military pads. Searchlights always light the cube.
- * Weapons are optional loadout (SAM / plasma / CIWS).
+ * Four military pads. Each mounts a real SpotLight that searches the cube.
+ * Weapons are optional loadout (SAM / plasma / CIWS). CIWS is point defense.
  */
 import * as THREE from 'three';
 import {
@@ -16,10 +16,14 @@ import {
   GROUND_SAM_SPEED,
   GROUND_SEARCHLIGHT_ANGLE,
   GROUND_SEARCHLIGHT_COLOR,
+  GROUND_SEARCHLIGHT_DECAY,
   GROUND_SEARCHLIGHT_DISTANCE,
   GROUND_SEARCHLIGHT_INTENSITY,
   GROUND_SEARCHLIGHT_PENUMBRA,
-  GROUND_SEARCHLIGHT_SWEEP_RADIANS,
+  GROUND_SEARCHLIGHT_RETARGET_MAX_SECONDS,
+  GROUND_SEARCHLIGHT_RETARGET_MIN_SECONDS,
+  GROUND_SEARCHLIGHT_SLEW_MAX,
+  GROUND_SEARCHLIGHT_SLEW_MIN,
   GROUND_STATION_COUNT,
   GROUND_STATION_PAD_HEIGHT,
   GROUND_STATION_RING_RADIUS,
@@ -34,14 +38,20 @@ import { BlockType } from '../cube/BlockTypes';
 import { applyToBlock } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
 import type { PlayerStats } from '../progression/TechTree';
+import type { InterceptTarget } from '../drones/DroneAI';
 
 interface Station {
   root: THREE.Group;
   turret: THREE.Group;
+  housing: THREE.Group;
   muzzle: THREE.Vector3;
   light: THREE.SpotLight;
-  cone: THREE.Mesh;
+  beam: THREE.Mesh;
   lightTarget: THREE.Object3D;
+  aim: THREE.Vector3;
+  aimGoal: THREE.Vector3;
+  retargetIn: number;
+  slew: number;
   weapon: GroundWeaponId | null;
   cooldown: number;
   burstLeft: number;
@@ -57,6 +67,7 @@ interface Bolt {
   damage: number;
   splash: number;
   targetId: number;
+  interceptId: string | null;
 }
 
 const SAM_POOL = 24;
@@ -74,10 +85,14 @@ export class GroundStationField {
   private readonly _up = new THREE.Vector3(0, 1, 0);
   private elapsed = 0;
   private enemyHit: ((id: string, dmg: number) => void) | null = null;
+  private interceptHit: ((id: string, dmg: number) => void) | null = null;
   private enemies: Array<{ id: string; position: THREE.Vector3; radius: number }> = [];
+  private intercepts: InterceptTarget[] = [];
+  private readonly beamGeo = new THREE.CylinderGeometry(0.06, 1, 1, 12, 1, true);
 
   constructor() {
     this.group.name = 'GroundStations';
+    this.beamGeo.rotateX(Math.PI / 2);
     this.buildPads();
     this.buildPools();
   }
@@ -88,10 +103,14 @@ export class GroundStationField {
 
   setCombat(
     enemies: Array<{ id: string; position: THREE.Vector3; radius: number }>,
-    onEnemyHit?: (id: string, dmg: number) => void
+    onEnemyHit?: (id: string, dmg: number) => void,
+    intercepts?: InterceptTarget[],
+    onInterceptHit?: (id: string, dmg: number) => void
   ): void {
     this.enemies = enemies;
     this.enemyHit = onEnemyHit ?? null;
+    this.intercepts = intercepts ?? [];
+    this.interceptHit = onInterceptHit ?? null;
   }
 
   applyLoadout(state: GroundStationState): void {
@@ -120,6 +139,7 @@ export class GroundStationField {
     });
     this.group.clear();
     this.stations = [];
+    this.beamGeo.dispose();
   }
 
   private buildPads(): void {
@@ -178,29 +198,28 @@ export class GroundStationField {
       turret.add(barrel);
       root.add(turret);
 
-      const lamp = new THREE.Mesh(
-        new THREE.SphereGeometry(0.18, 8, 8),
-        new THREE.MeshBasicMaterial({ color: GROUND_SEARCHLIGHT_COLOR })
-      );
-      lamp.position.set(-1.15, 3.15, -0.6);
-      root.add(lamp);
-
-      const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(2.4, 18, 12, 1, true),
+      const housing = new THREE.Group();
+      housing.position.set(-1.15, 3.15, -0.6);
+      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.42, 0.18), steel);
+      housing.add(yoke);
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.55, 10), steel);
+      drum.rotation.x = Math.PI / 2;
+      drum.position.z = -0.18;
+      housing.add(drum);
+      const lens = new THREE.Mesh(
+        new THREE.SphereGeometry(0.2, 10, 8),
         new THREE.MeshBasicMaterial({
           color: GROUND_SEARCHLIGHT_COLOR,
           transparent: true,
-          opacity: 0.07,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          side: THREE.DoubleSide,
+          opacity: 0.95,
         })
       );
-      cone.rotation.x = Math.PI / 2;
-      lamp.add(cone);
+      lens.position.z = -0.42;
+      housing.add(lens);
+      root.add(housing);
 
       const lightTarget = new THREE.Object3D();
-      lightTarget.position.set(0, 0, 0);
+      lightTarget.position.set(0, 2, 0);
       this.group.add(lightTarget);
 
       const light = new THREE.SpotLight(
@@ -209,20 +228,39 @@ export class GroundStationField {
         GROUND_SEARCHLIGHT_DISTANCE,
         GROUND_SEARCHLIGHT_ANGLE,
         GROUND_SEARCHLIGHT_PENUMBRA,
-        1.25
+        GROUND_SEARCHLIGHT_DECAY
       );
-      light.position.copy(root.position).add(new THREE.Vector3(-1.15, 3.15, -0.6));
+      light.castShadow = false;
       light.target = lightTarget;
       this.group.add(light);
+
+      const beam = new THREE.Mesh(
+        this.beamGeo.clone(),
+        new THREE.MeshBasicMaterial({
+          color: GROUND_SEARCHLIGHT_COLOR,
+          transparent: true,
+          opacity: 0.13,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+        })
+      );
+      beam.frustumCulled = false;
+      this.group.add(beam);
 
       this.group.add(root);
       this.stations.push({
         root,
         turret,
+        housing,
         muzzle: new THREE.Vector3(),
         light,
-        cone,
+        beam,
         lightTarget,
+        aim: new THREE.Vector3(0, 2, 0),
+        aimGoal: new THREE.Vector3(0, 2, 0),
+        retargetIn: 0.2 + i * 0.35,
+        slew: 1,
         weapon: null,
         cooldown: 0.4 + i * 0.2,
         burstLeft: 0,
@@ -244,6 +282,7 @@ export class GroundStationField {
         damage: 0,
         splash: 0,
         targetId: -1,
+        interceptId: null,
       });
     };
     const samGeo = new THREE.ConeGeometry(0.07, 0.55, 6);
@@ -267,26 +306,59 @@ export class GroundStationField {
   }
 
   private updateSearchlights(dt: number): void {
-    void dt;
-    const sweep = GROUND_SEARCHLIGHT_SWEEP_RADIANS;
+    const he = Math.max(4, this.cube?.halfExtent ?? 6);
     for (let i = 0; i < this.stations.length; i++) {
       const s = this.stations[i];
-      const wobble = Math.sin(this.elapsed * 0.35 + i * 1.7) * sweep;
-      const wobbleY = Math.cos(this.elapsed * 0.28 + i) * sweep * 0.45;
-      s.lightTarget.position.set(
-        Math.sin(wobble) * 4,
-        wobbleY * 3,
-        Math.cos(wobble) * 4
-      );
-      const lampWorld = this._tmp.set(-1.15, 3.15, -0.6);
-      s.root.localToWorld(lampWorld);
+      s.retargetIn -= dt;
+      if (s.retargetIn <= 0) {
+        this.pickSearchPoint(s.aimGoal, he, i);
+        s.retargetIn =
+          GROUND_SEARCHLIGHT_RETARGET_MIN_SECONDS +
+          Math.random() *
+            (GROUND_SEARCHLIGHT_RETARGET_MAX_SECONDS - GROUND_SEARCHLIGHT_RETARGET_MIN_SECONDS);
+        s.slew =
+          GROUND_SEARCHLIGHT_SLEW_MIN +
+          Math.random() * (GROUND_SEARCHLIGHT_SLEW_MAX - GROUND_SEARCHLIGHT_SLEW_MIN);
+      }
+      const k = 1 - Math.exp(-s.slew * dt);
+      s.aim.lerp(s.aimGoal, k);
+      s.lightTarget.position.copy(s.aim);
+
+      s.housing.lookAt(s.aim);
+      const lampWorld = this._tmp.set(0, 0, -0.42);
+      s.housing.localToWorld(lampWorld);
       s.light.position.copy(lampWorld);
-      s.cone.position.set(0, 0, 0);
-      const localT = s.cone.parent
-        ? s.cone.parent.worldToLocal(this._aim.copy(s.lightTarget.position))
-        : s.lightTarget.position;
-      s.cone.lookAt(localT);
+
+      const dist = Math.max(0.8, lampWorld.distanceTo(s.aim));
+      const farR = Math.tan(GROUND_SEARCHLIGHT_ANGLE) * dist;
+      s.beam.position.copy(lampWorld).lerp(s.aim, 0.5);
+      s.beam.lookAt(s.aim);
+      s.beam.scale.set(farR, farR, dist);
+      const mat = s.beam.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.09 + Math.min(0.08, 4 / dist);
     }
+  }
+
+  /** Random point on a cube face (or near-center) so the disc crawls the voxels. */
+  private pickSearchPoint(out: THREE.Vector3, he: number, pad: number): void {
+    if (Math.random() < 0.72) {
+      const face = (Math.floor(Math.random() * 6) + pad) % 6;
+      const a = (Math.random() * 2 - 1) * he;
+      const b = (Math.random() * 2 - 1) * he;
+      const f = he * (0.88 + Math.random() * 0.28);
+      if (face === 0) out.set(f, a, b);
+      else if (face === 1) out.set(-f, a, b);
+      else if (face === 2) out.set(a, f, b);
+      else if (face === 3) out.set(a, -f * 0.55, b);
+      else if (face === 4) out.set(a, b, f);
+      else out.set(a, b, -f);
+      return;
+    }
+    out.set(
+      (Math.random() - 0.5) * he * 1.15,
+      (Math.random() - 0.35) * he * 1.1,
+      (Math.random() - 0.5) * he * 1.15
+    );
   }
 
   private tryFire(dt: number, now: number, stats: PlayerStats): void {
@@ -394,7 +466,13 @@ export class GroundStationField {
     if (!b) return;
     const from = this.muzzleWorld(s, this._tmp);
     let aim = this._aim.set(0, 0, 0);
-    if (this.enemies.length > 0 && Math.random() < 0.35) {
+    const inbound = this.pickNearestIntercept(from, 70);
+    b.interceptId = null;
+    if (inbound) {
+      aim.set(inbound.position.x, inbound.position.y, inbound.position.z);
+      b.targetId = -4;
+      b.interceptId = inbound.id;
+    } else if (this.enemies.length > 0 && Math.random() < 0.45) {
       const e = this.enemies[(now * 7) % this.enemies.length | 0];
       aim.copy(e.position);
       b.targetId = -3;
@@ -443,6 +521,19 @@ export class GroundStationField {
       b.mesh.position.copy(b.pos);
       if (b.kind !== 'artillery') b.mesh.lookAt(b.pos.clone().add(b.vel));
 
+      if (b.kind === 'ciws' && b.targetId === -4 && this.interceptHit && b.interceptId) {
+        const t = this.intercepts.find((x) => x.id === b.interceptId);
+        if (t) {
+          const dx = b.pos.x - t.position.x;
+          const dy = b.pos.y - t.position.y;
+          const dz = b.pos.z - t.position.z;
+          if (dx * dx + dy * dy + dz * dz <= (t.radius + 0.45) ** 2) {
+            this.interceptHit(t.id, b.damage);
+            this.killBolt(b);
+            continue;
+          }
+        }
+      }
       if (b.kind === 'ciws' && b.targetId === -3 && this.enemyHit) {
         for (const e of this.enemies) {
           if (b.pos.distanceToSquared(e.position) <= (e.radius + 0.4) ** 2) {
@@ -483,6 +574,22 @@ export class GroundStationField {
       this.cube.applySplash(point, b.splash, b.damage * 0.35, now, instanceId);
     }
     this.killBolt(b);
+  }
+
+  private pickNearestIntercept(from: THREE.Vector3, maxDist: number): InterceptTarget | null {
+    let best: InterceptTarget | null = null;
+    let bestD = maxDist * maxDist;
+    for (const t of this.intercepts) {
+      const dx = t.position.x - from.x;
+      const dy = t.position.y - from.y;
+      const dz = t.position.z - from.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = t;
+      }
+    }
+    return best;
   }
 
   private nextBolt(kind: GroundWeaponId): Bolt | null {

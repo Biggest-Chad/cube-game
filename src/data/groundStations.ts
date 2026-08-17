@@ -75,7 +75,7 @@ export const GROUND_WEAPONS: Record<GroundWeaponId, GroundWeaponDef> = {
   ciws: {
     id: 'ciws',
     name: 'Phalanx CIWS',
-    description: 'Burst minigun. High rate, high spread — shreds faces and drones.',
+    description: 'Point defense. Priority fire on nucleus projectiles, then drones.',
     unitCost: GROUND_CIWS_UNIT_COST,
     unlockCost: GROUND_CIWS_UNLOCK_COST,
     unlockLevel: GROUND_CIWS_UNLOCK_LEVEL,

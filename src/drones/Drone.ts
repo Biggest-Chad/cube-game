@@ -10,7 +10,6 @@ import {
   DRONE_DEFENDER_POINT_DEFENSE_DAMAGE_FRACTION,
   DRONE_FIGHTER_ANTI_DRONE_DAMAGE_FRACTION,
   DRONE_FIGHTER_BLOCK_DAMAGE_FRACTION,
-  DRONE_FIGHTER_POINT_DEFENSE_DAMAGE_FRACTION,
   DRONE_HIDDEN_HEAT_GAIN_PER_SECOND,
   DRONE_MINIMUM_FIRE_RATE,
   DRONE_VISIBLE_HEAT_BLEED_PER_SECOND,
@@ -387,7 +386,7 @@ export class Drone {
       return;
     }
 
-    // —— Fighter: enemies → intercepts → peel outer hull inward ——
+    // —— Fighter: enemy drones / kamikazes → peel hull. Nucleus shots are PD-only. ——
     if (this.role === 'fighter') {
       if (combat?.enemies?.length && combat.onEnemyHit) {
         const enemy = pickBestEnemy(combat.enemies, this.group.position, 90);
@@ -401,22 +400,6 @@ export class Drone {
               DRONE_FIGHTER_ANTI_DRONE_DAMAGE_FRACTION *
               stats.droneDamageMul *
               def.antiDroneMul
-          );
-          return;
-        }
-      }
-      if (combat?.intercepts?.length && combat.onInterceptHit) {
-        const t = pickBestIntercept(combat.intercepts, this.group.position, 70);
-        if (t) {
-          this._target.set(t.position.x, t.position.y, t.position.z);
-          this.markFireLook(this._target);
-          this.showBeam(this.group.position, this._target);
-          combat.onInterceptHit(
-            t.id,
-            DRONE_BASE_DAMAGE *
-              DRONE_FIGHTER_POINT_DEFENSE_DAMAGE_FRACTION *
-              stats.droneDamageMul *
-              def.pointDefenseMul
           );
           return;
         }

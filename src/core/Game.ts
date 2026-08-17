@@ -3165,7 +3165,9 @@ export class Game {
         this.drones.update(dt, this.cube, this.tech.stats, now, this.hidden);
         this.groundStations.setCombat(
           this.cubeDefense.getEnemyTargetsForWeapons(),
-          (id, dmg) => this.cubeDefense.damageEnemy(id, dmg)
+          (id, dmg) => this.cubeDefense.damageEnemy(id, dmg),
+          this.cubeDefense.getInterceptTargets(),
+          (id, dmg) => this.cubeDefense.damageIntercept(id, dmg)
         );
         this.groundStations.update(dt, now, this.canFireWeapons(), this.tech.stats);
 

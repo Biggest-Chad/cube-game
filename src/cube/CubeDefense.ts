@@ -564,7 +564,7 @@ export class CubeDefense {
     return this.kit.damageEntity(id, amount);
   }
 
-  /** Large hostile projectiles (rage arcs) for fighter intercept. */
+  /** Nucleus / rage projectiles — defender drones and CIWS only. */
   getInterceptTargets(): Array<{
     id: string;
     position: { x: number; y: number; z: number };

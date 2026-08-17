@@ -82,7 +82,7 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     id: 'fighter',
     name: 'Fighter',
     description:
-      'Agile interceptor. Hunts enemy drones & large projectiles. Light block damage.',
+      'Agile interceptor. Hunts enemy drones and kamikazes, then peels hull. Nucleus shots are defender / CIWS work.',
     blockDamageMul: FIGHTER_BLOCK_DAMAGE_MULTIPLIER,
     splashRadius: FIGHTER_SPLASH_RADIUS,
     armorPierce: FIGHTER_ARMOR_PIERCE,
@@ -122,7 +122,7 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     id: 'defender',
     name: 'Defender',
     description:
-      'Escort with a tight personal shield bubble + point defense. Does not mine the cube.',
+      'Escort with a shield bubble. The only drone that shoots nucleus projectiles (spikes, blobs, mines).',
     blockDamageMul: DEFENDER_BLOCK_DAMAGE_MULTIPLIER,
     splashRadius: DEFENDER_SPLASH_RADIUS,
     armorPierce: DEFENDER_ARMOR_PIERCE,

@@ -1046,7 +1046,7 @@ export class ShopUI {
         <div class="lo-slot-row" aria-label="Ground pads">
           ${pads}
         </div>
-        <p class="dim" style="padding:6px 2px 10px">Four searchlight pads always cover the cube. Unlock a battery, buy a unit, arm a pad.</p>
+        <p class="dim" style="padding:6px 2px 10px">Each pad mounts a live searchlight that sweeps the cube. Unlock a battery, buy a unit, arm a pad. CIWS is point defense vs nucleus shots.</p>
         <div class="lo-card-grid">${cards}</div>
       </div>`;
   }

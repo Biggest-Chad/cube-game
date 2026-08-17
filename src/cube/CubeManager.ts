@@ -108,8 +108,8 @@ export class CubeManager {
       color: 0xffffff,
       emissive: 0x082028,
       emissiveIntensity: CUBE_LATENT_EMISSIVE_INTENSITY,
-      metalness: 0.22,
-      roughness: 0.46,
+      metalness: 0.36,
+      roughness: 0.34,
       toneMapped: true,
       envMapIntensity: 0,
     });
