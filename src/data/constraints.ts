@@ -384,6 +384,74 @@ export const SHIP_BASE_ARMOR_RATING = 0;
 export const SHIP_SHIELD_RECHARGE_DELAY_SECONDS = 3;
 export const SHIP_SHIELD_RECHARGE_PER_SECOND = 6;
 
+/** World Y of the arena deck (GridVoid root sits here; pad is local 0). */
+export const ARENA_FLOOR_WORLD_Y = -22;
+/** Ship / camera must stay this far above the deck. */
+export const SHIP_FLOOR_CLEARANCE = 2.4;
+
+/** Sky wash — brighter so Standard cube/ship read after combat lights were cut. */
+export const LIGHTING_AMBIENT_COLOR = 0x4a88aa;
+export const LIGHTING_AMBIENT_INTENSITY = 1.22;
+export const LIGHTING_HEMI_SKY_COLOR = 0xa8d8f0;
+export const LIGHTING_HEMI_GROUND_COLOR = 0x1a1420;
+export const LIGHTING_HEMI_INTENSITY = 1.28;
+export const LIGHTING_KEY_COLOR = 0xeef8ff;
+export const LIGHTING_KEY_INTENSITY = 1.55;
+export const LIGHTING_RIM_COLOR = 0xc070e0;
+export const LIGHTING_RIM_INTENSITY = 0.62;
+export const CUBE_LATENT_EMISSIVE_INTENSITY = 0.18;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GROUND STATIONS (4-pad square, searchlights always on, weapons like drones)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const GROUND_STATION_COUNT = 4;
+export const GROUND_STATION_RING_RADIUS = 38;
+export const GROUND_STATION_PAD_HEIGHT = 0.45;
+export const GROUND_SEARCHLIGHT_INTENSITY = 26;
+export const GROUND_SEARCHLIGHT_DISTANCE = 78;
+export const GROUND_SEARCHLIGHT_ANGLE = 0.2;
+export const GROUND_SEARCHLIGHT_PENUMBRA = 0.5;
+export const GROUND_SEARCHLIGHT_COLOR = 0xfff1c4;
+export const GROUND_SEARCHLIGHT_SWEEP_RADIANS = 0.09;
+
+export const GROUND_SAM_UNLOCK_COST = 160;
+export const GROUND_SAM_UNIT_COST = 120;
+export const GROUND_SAM_UNLOCK_LEVEL = 3;
+export const GROUND_SAM_DAMAGE = 34;
+export const GROUND_SAM_FIRE_RATE = 0.55;
+export const GROUND_SAM_SWARM_COUNT = 4;
+export const GROUND_SAM_SPEED = 28;
+export const GROUND_SAM_HOMING = 4.2;
+export const GROUND_SAM_SPLASH = 1.15;
+export const GROUND_SAM_LIFE = 4.2;
+
+export const GROUND_ARTILLERY_UNLOCK_COST = 220;
+export const GROUND_ARTILLERY_UNIT_COST = 150;
+export const GROUND_ARTILLERY_UNLOCK_LEVEL = 5;
+export const GROUND_ARTILLERY_DAMAGE = 96;
+export const GROUND_ARTILLERY_FIRE_RATE = 0.22;
+export const GROUND_ARTILLERY_SPEED = 22;
+export const GROUND_ARTILLERY_SPLASH = 3.4;
+export const GROUND_ARTILLERY_ARC_GRAVITY = 18;
+export const GROUND_ARTILLERY_LIFE = 5.5;
+
+export const GROUND_CIWS_UNLOCK_COST = 180;
+export const GROUND_CIWS_UNIT_COST = 130;
+export const GROUND_CIWS_UNLOCK_LEVEL = 4;
+export const GROUND_CIWS_DAMAGE = 7;
+export const GROUND_CIWS_FIRE_RATE = 16;
+export const GROUND_CIWS_BURST = 8;
+export const GROUND_CIWS_SPREAD = 0.28;
+export const GROUND_CIWS_SPEED = 95;
+export const GROUND_CIWS_LIFE = 1.15;
+
+export const GROUND_WEAPON_UPGRADE_BASE_COST = 140;
+export const GROUND_WEAPON_UPGRADE_COST_GROWTH = 1.52;
+export const GROUND_WEAPON_UPGRADE_MAX_RANK = 5;
+export const GROUND_WEAPON_UPGRADE_DAMAGE_PER_RANK = 0.16;
+export const GROUND_WEAPON_UPGRADE_RATE_PER_RANK = 0.1;
+
 export const ORBIT_DEFAULT_RADIUS = 18;
 export const ORBIT_MINIMUM_RADIUS = 10;
 export const ORBIT_MAXIMUM_RADIUS = 80;
@@ -470,6 +538,90 @@ export const NUCLEUS_SPIKE_LIFETIME_SECONDS = 5.2;
 export const NUCLEUS_SPIKE_SHOCK_RADIUS = 11;
 export const NUCLEUS_SPIKE_SHOCK_DAMAGE = 14;
 export const NUCLEUS_SPIKE_SHOCK_DURATION = 0.4;
+
+// ── Nucleus ATK power (stage lethality / cool-factor) ──
+/** Linear ATK growth per stage after 1. */
+export const NUCLEUS_ATK_POWER_MULTIPLIER_PER_STAGE = 0.055;
+/** Extra super-linear ATK so late beacons stay threatening. */
+export const NUCLEUS_ATK_POWER_MULTIPLIER_ACCEL = 0.008;
+/**
+ * Global difficulty knob applied on top of the stage curve.
+ * 1 = baseline. Raise to make every nucleus toy hit harder / more often.
+ */
+export const NUCLEUS_ATK_DIFFICULTY_MULTIPLIER = 1;
+
+export const NUCLEUS_BLOB_UNLOCK_STAGE = 10;
+export const NUCLEUS_KAMIKAZE_UNLOCK_STAGE = 20;
+export const NUCLEUS_MINE_UNLOCK_STAGE = 30;
+export const NUCLEUS_GRAVITY_WELL_UNLOCK_STAGE = 40;
+export const NUCLEUS_MIRROR_SHARD_UNLOCK_STAGE = 50;
+export const NUCLEUS_PHASE_RIFT_UNLOCK_STAGE = 60;
+export const NUCLEUS_STATIC_BLOOM_UNLOCK_STAGE = 70;
+export const NUCLEUS_LATTICE_JAVELIN_UNLOCK_STAGE = 80;
+
+export const NUCLEUS_BLOB_COOLDOWN_SECONDS = 7.2;
+export const NUCLEUS_BLOB_DAMAGE = 8;
+export const NUCLEUS_BLOB_SPEED = 11;
+export const NUCLEUS_BLOB_RADIUS = 1.05;
+export const NUCLEUS_BLOB_LIFE_SECONDS = 6.5;
+export const NUCLEUS_BLOB_HIT_POINTS = 18;
+export const NUCLEUS_BLOB_OVERLOAD_COUNT = 4;
+export const NUCLEUS_BLOB_OVERLOAD_SPREAD = 0.32;
+
+export const NUCLEUS_KAMIKAZE_BASE_COUNT = 2;
+export const NUCLEUS_KAMIKAZE_BASE_HIT_POINTS = 18;
+export const NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE = 1.55;
+export const NUCLEUS_KAMIKAZE_DAMAGE = 14;
+export const NUCLEUS_KAMIKAZE_SPEED = 7.2;
+export const NUCLEUS_KAMIKAZE_PROXIMITY = 1.45;
+
+export const NUCLEUS_MINE_COOLDOWN_SECONDS = 16;
+export const NUCLEUS_MINE_MAX_LIVE = 3;
+export const NUCLEUS_MINE_HIT_POINTS = 22;
+export const NUCLEUS_MINE_PROXIMITY = 2.85;
+export const NUCLEUS_MINE_FUSE_SECONDS = 8.5;
+export const NUCLEUS_MINE_BLAST_DAMAGE = 12;
+export const NUCLEUS_MINE_BLAST_RADIUS = 3.2;
+export const NUCLEUS_MINE_SHRAPNEL_COUNT = 8;
+export const NUCLEUS_MINE_SHRAPNEL_DAMAGE = 6;
+export const NUCLEUS_MINE_SHRAPNEL_SPEED = 16;
+
+export const NUCLEUS_GRAVITY_COOLDOWN_SECONDS = 16;
+export const NUCLEUS_GRAVITY_DURATION_SECONDS = 2.1;
+export const NUCLEUS_GRAVITY_YAW_STRENGTH = 0.22;
+export const NUCLEUS_GRAVITY_CORE_DAMAGE = 4;
+
+export const NUCLEUS_SHARD_COOLDOWN_SECONDS = 20;
+export const NUCLEUS_SHARD_COUNT = 2;
+export const NUCLEUS_SHARD_HITS = 3;
+export const NUCLEUS_SHARD_ORBIT_RADIUS = 6.5;
+export const NUCLEUS_SHARD_LIFE_SECONDS = 12;
+
+export const NUCLEUS_RIFT_COOLDOWN_SECONDS = 18;
+export const NUCLEUS_RIFT_TELEGRAPH_SECONDS = 1.35;
+export const NUCLEUS_RIFT_FIRE_SECONDS = 0.7;
+export const NUCLEUS_RIFT_DAMAGE_PER_SECOND = 18;
+export const NUCLEUS_RIFT_HIT_RADIUS = 1.05;
+
+export const NUCLEUS_BLOOM_COOLDOWN_SECONDS = 15;
+export const NUCLEUS_BLOOM_DURATION_SECONDS = 1.15;
+
+export const NUCLEUS_JAVELIN_COOLDOWN_SECONDS = 16;
+export const NUCLEUS_JAVELIN_TELEGRAPH_SECONDS = 1.55;
+export const NUCLEUS_JAVELIN_DAMAGE = 22;
+export const NUCLEUS_JAVELIN_SPEED = 28;
+export const NUCLEUS_JAVELIN_HIT_POINTS = 20;
+
+/** Master nucleus ATK power vs stage. Also in `nucleusAtk.ts` as the named API. */
+export function nucleusAtkPowerMultiplier(
+  stage: number,
+  difficultyMul: number = NUCLEUS_ATK_DIFFICULTY_MULTIPLIER
+): number {
+  const s = Math.max(1, stage);
+  const linear = 1 + (s - 1) * NUCLEUS_ATK_POWER_MULTIPLIER_PER_STAGE;
+  const accel = Math.pow(Math.max(0, s - 1), 1.12) * NUCLEUS_ATK_POWER_MULTIPLIER_ACCEL;
+  return Math.max(1, (linear + accel) * Math.max(0.25, difficultyMul));
+}
 
 export const NUCLEUS_RAGE_FIRE_RATE_MULTIPLIER = 1.35;
 export const NUCLEUS_RAGE_ARC_COOLDOWN_SECONDS = 4.2;
@@ -674,6 +826,14 @@ export const CURRENCY_CORE_CLEAR_BASE = 25;
 export const EVOLVE_COST_PER_TIER = 100_000;
 export const EVOLVE_MIN_LEVEL_BASE = 8;
 export const EVOLVE_MIN_LEVEL_PER_ASCENSION = 3;
+/** Every Nth sector is a Chronobeacon checkpoint. */
+export const CHRONOBEACON_INTERVAL = 5;
+/** After Evolve the run restarts at this Chronobeacon. */
+export const EVOLVE_RESET_LEVEL = 5;
+/** Repeatable shop ranks unlocked per evolution (Evo 0 = 10, Evo 1 = 20…). */
+export const REPEATABLE_UPGRADE_CAP_PER_EVOLUTION = 10;
+/** Generated catalog length so later evolutions have ranks to buy. */
+export const REPEATABLE_UPGRADE_GENERATED_RANKS = 100;
 export const EVOLVE_CORE_GRANT_BASE = 100;
 export const EVOLVE_CORE_GRANT_PER_TIER = 60;
 export const EVOLVE_UI_PREVIEW_RATIO = 0.5;

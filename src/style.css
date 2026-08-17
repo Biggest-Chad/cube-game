@@ -1317,6 +1317,13 @@ body {
   border-color: rgba(0, 255, 160, 0.45);
 }
 
+.level-card.beacon {
+  border-color: rgba(180, 140, 255, 0.55);
+}
+.level-card.beacon .lv {
+  color: #d4b4ff;
+}
+
 /* Toast — non-blocking, lives under #toast-root */
 .toast {
   position: absolute;

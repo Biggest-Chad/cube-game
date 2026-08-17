@@ -5,6 +5,7 @@ import {
   canEvolve,
   evolveCoreGrant,
   evolveCost,
+  repeatableUpgradeCap,
 } from '../data/evolve';
 import {
   SHOP_TABS,
@@ -29,12 +30,23 @@ import type { TechTree, PlayerStats } from '../progression/TechTree';
 import type { Currency } from '../progression/Currency';
 import type { LoadoutState } from '../loadout/LoadoutState';
 import type { DroneBayController } from '../loadout/DroneBayState';
+import type { GroundStationController } from '../loadout/GroundStationState';
 import {
   DRONE_BAY_MAX,
   DRONE_ROLES,
   freeInventory,
   type DroneRole,
 } from '../data/drones';
+import {
+  GROUND_STATION_COUNT,
+  GROUND_WEAPON_UPGRADE_MAX_RANK,
+} from '../data/constraints';
+import {
+  GROUND_WEAPONS,
+  GROUND_WEAPON_IDS,
+  freeGroundInventory,
+  type GroundWeaponId,
+} from '../data/groundStations';
 
 export interface StatsSnapshot {
   dpsMain: number;
@@ -118,6 +130,7 @@ const TAB_ICONS: Record<ShopTabId, string> = {
   main_gun: '⚡',
   loadouts: '◎',
   drone_bays: '⬡',
+  bases: '▲',
   other: '✶',
 };
 
@@ -144,6 +157,7 @@ export class ShopUI {
   } | null = null;
   private loadout: LoadoutState | null = null;
   private droneBay: DroneBayController | null = null;
+  private groundBays: GroundStationController | null = null;
   private highestLevel = 1;
   private ascensionTier = 0;
   private confirmEvolve = false;
@@ -165,6 +179,11 @@ export class ShopUI {
   onBuyDroneUnit: ((role: DroneRole) => boolean) | null = null;
   onAssignDroneSlot: ((slot: number, role: DroneRole | null) => boolean) | null = null;
   onMoveDroneSlot: ((from: number, to: number) => boolean) | null = null;
+  onUnlockBaseType: ((id: GroundWeaponId) => boolean) | null = null;
+  onBuyBaseUnit: ((id: GroundWeaponId) => boolean) | null = null;
+  onAssignBaseSlot: ((slot: number, id: GroundWeaponId | null) => boolean) | null = null;
+  onMoveBaseSlot: ((from: number, to: number) => boolean) | null = null;
+  onUpgradeBaseType: ((id: GroundWeaponId) => boolean) | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -192,6 +211,10 @@ export class ShopUI {
 
   setDroneBay(ctrl: DroneBayController | null): void {
     this.droneBay = ctrl;
+  }
+
+  setGroundStations(ctrl: GroundStationController | null): void {
+    this.groundBays = ctrl;
   }
 
   /** Deep-link FLEET vs UPGRADES on the DRONES tab. */
@@ -234,7 +257,12 @@ export class ShopUI {
       hpUsed,
       hpMax
     );
-    const visible = getSequentialVisibleNodes(tree.owned, currency, this.activeTab);
+    const visible = getSequentialVisibleNodes(
+      tree.owned,
+      currency,
+      this.activeTab,
+      repeatableUpgradeCap(this.ascensionTier)
+    );
 
     // Prefer first drone (Ally Protocol) as recommended until owned — smoother ramp
     let recommended: UpgradeNodeDef | null = null;
@@ -369,6 +397,8 @@ export class ShopUI {
                   ? this.renderLoadoutPanel(currency, tree)
                   : this.activeTab === 'drone_bays'
                     ? this.renderDroneBayPanel(currency, tree)
+                    : this.activeTab === 'bases'
+                      ? this.renderGroundBasePanel(currency)
                     : `<div class="shop-cards">${visible
                         .map((v) => this.renderCard(v, tree, currency))
                         .join('')}</div>`
@@ -537,6 +567,7 @@ export class ShopUI {
     });
 
     this.bindDroneBayDnD(tree, currency);
+    this.bindGroundBaseEvents(tree, currency);
     this.bindWeaponDnD(tree, currency);
     // Re-apply pick highlight after DOM rebuild (touch equip flow)
     if (this.dragPayload) this.markPickArmed();
@@ -567,6 +598,44 @@ export class ShopUI {
         .forEach((el) => el.classList.add('pick-armed'));
       this.root.querySelectorAll('[data-bay-slot]').forEach((el) => el.classList.add('drop-ready'));
     }
+  }
+
+  private bindGroundBaseEvents(tree: TechTree, currency: Currency): void {
+    this.root.querySelectorAll('[data-unlock-base]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.unlockBase as GroundWeaponId;
+        if (this.onUnlockBaseType?.(id)) this.render(tree, currency);
+      });
+    });
+    this.root.querySelectorAll('[data-buy-base]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.buyBase as GroundWeaponId;
+        if (this.onBuyBaseUnit?.(id)) this.render(tree, currency);
+      });
+    });
+    this.root.querySelectorAll('[data-assign-base]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.assignBase as GroundWeaponId;
+        const B = this.groundBays;
+        if (!B || !id) return;
+        const empty = B.state.slots.findIndex((s) => s == null);
+        if (empty < 0) return;
+        if (this.onAssignBaseSlot?.(empty, id)) this.render(tree, currency);
+      });
+    });
+    this.root.querySelectorAll('[data-clear-base]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const slot = Number((btn as HTMLElement).dataset.clearBase);
+        if (this.onAssignBaseSlot?.(slot, null)) this.render(tree, currency);
+      });
+    });
+    this.root.querySelectorAll('[data-upgrade-base]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.upgradeBase as GroundWeaponId;
+        if (this.onUpgradeBaseType?.(id)) this.render(tree, currency);
+      });
+    });
   }
 
   private bindDroneBayDnD(tree: TechTree, currency: Currency): void {
@@ -761,7 +830,12 @@ export class ShopUI {
     const stockActive = sub === 'stock';
     const upgradesActive = sub === 'upgrades';
 
-    const techCards = getSequentialVisibleNodes(tree.owned, currency, 'drone_bays')
+    const techCards = getSequentialVisibleNodes(
+      tree.owned,
+      currency,
+      'drone_bays',
+      repeatableUpgradeCap(this.ascensionTier)
+    )
       .map((v) => this.renderCard(v, tree, currency))
       .join('');
 
@@ -896,6 +970,84 @@ export class ShopUI {
         <div class="lo-body">
           ${upgradesActive ? upgradesBody : stockBody}
         </div>
+      </div>`;
+  }
+
+  private renderGroundBasePanel(currency: Currency): string {
+    const B = this.groundBays;
+    if (!B) return `<div class="shop-empty">Ground net offline.</div>`;
+    const st = B.state;
+    const pads = Array.from({ length: GROUND_STATION_COUNT }, (_, i) => {
+      const id = st.slots[i] ?? null;
+      const def = id ? GROUND_WEAPONS[id] : null;
+      return `
+        <div class="lo-slot bay-slot ${id ? 'filled' : 'empty'}"
+          style="${def ? `--accent:${def.colorCss}` : ''}"
+          data-base-slot="${i}" data-base-role="${id ?? ''}"
+          title="${def ? def.name : `Pad ${i + 1} — searchlight only`}">
+          <span class="lo-slot-idx">P${i + 1}</span>
+          <span class="lo-slot-name">${def ? def.name : 'Searchlight'}</span>
+          ${
+            def
+              ? `<button type="button" class="lo-slot-x" data-clear-base="${i}" title="Clear">×</button>`
+              : ''
+          }
+        </div>`;
+    }).join('');
+
+    const cards = GROUND_WEAPON_IDS.map((id) => {
+      const def = GROUND_WEAPONS[id];
+      const unlocked = B.isTypeUnlocked(id);
+      const free = freeGroundInventory(st, id);
+      const owned = st.owned[id] ?? 0;
+      const rank = st.ranks[id] ?? 0;
+      const levelOk = this.highestLevel >= def.unlockLevel;
+      if (!unlocked) {
+        const can = levelOk && currency.dataFragments >= def.unlockCost;
+        return `
+          <div class="lo-card locked" style="--accent:${def.colorCss}">
+            <div class="lo-card-title">${def.name}</div>
+            <div class="lo-card-sub">${levelOk ? `${def.unlockCost} FRAG` : `STAGE ${def.unlockLevel}+`}</div>
+            <p class="lo-card-desc">${def.description}</p>
+            <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
+              data-unlock-base="${id}" ${can ? '' : 'disabled'}>
+              ${levelOk ? 'UNLOCK TYPE' : 'LOCKED'}
+            </button>
+          </div>`;
+      }
+      const canBuy = currency.dataFragments >= def.unitCost;
+      const empty = st.slots.findIndex((s) => s == null);
+      const canAssign = free > 0 && empty >= 0;
+      const canUp = B.canUpgrade(id) && currency.dataFragments >= B.nextUpgradeCost(id);
+      return `
+        <div class="lo-card" style="--accent:${def.colorCss}">
+          <div class="lo-card-title">${def.name}</div>
+          <div class="lo-card-sub">Free ${free} · Own ${owned} · R${rank}/${GROUND_WEAPON_UPGRADE_MAX_RANK}</div>
+          <p class="lo-card-desc">${def.description}</p>
+          <div class="lo-card-actions">
+            <button type="button" class="loadout-equip-btn ${canAssign ? '' : 'equipped'}"
+              data-assign-base="${id}" ${canAssign ? '' : 'disabled'}>
+              ${canAssign ? 'ARM PAD' : free <= 0 ? 'NONE' : 'FULL'}
+            </button>
+            <button type="button" class="shop-card-buy ${canBuy ? 'buyable' : ''}"
+              data-buy-base="${id}" ${canBuy ? '' : 'disabled'}>
+              +1 · ${def.unitCost}
+            </button>
+            <button type="button" class="shop-card-buy ${canUp ? 'buyable' : ''}"
+              data-upgrade-base="${id}" ${canUp ? '' : 'disabled'}>
+              ${B.canUpgrade(id) ? `UP · ${B.nextUpgradeCost(id)}` : 'MAX'}
+            </button>
+          </div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="lo-panel drone-lo">
+        <div class="lo-slot-row" aria-label="Ground pads">
+          ${pads}
+        </div>
+        <p class="dim" style="padding:6px 2px 10px">Four searchlight pads always cover the cube. Unlock a battery, buy a unit, arm a pad.</p>
+        <div class="lo-card-grid">${cards}</div>
       </div>`;
   }
 

@@ -139,7 +139,7 @@ export const LEVELS: LevelDefinition[] = [
     explosive: 0.05,
     siege: 0,
   }),
-  makeLevel(5, 'NUCLEUS I', 8, 1.0, 52, 0.14, 0, 1.12, {
+  makeLevel(5, 'CHRONOBEACON · NUCLEUS I', 8, 1.0, 52, 0.14, 0, 1.12, {
     hasCore: true,
     coreHP: 280,
     reinforced: 0.16,
@@ -170,7 +170,7 @@ export const LEVELS: LevelDefinition[] = [
     siege: 0.04,
     hasCore: true,
   }),
-  makeLevel(10, 'MONOLITH', 10, 0.9, 150, 0.28, 0.06, 1.25, {
+  makeLevel(10, 'CHRONOBEACON · MONOLITH', 10, 0.9, 150, 0.28, 0.06, 1.25, {
     hasCore: true,
     coreHP: 520,
     reinforced: 0.26,
@@ -200,7 +200,7 @@ export const LEVELS: LevelDefinition[] = [
     siege: 0.12,
     hasCore: true,
   }),
-  makeLevel(15, 'APEX PRIME', 12, 0.82, 320, 0.4, 0.12, 1.38, {
+  makeLevel(15, 'CHRONOBEACON · APEX PRIME', 12, 0.82, 320, 0.4, 0.12, 1.38, {
     hasCore: true,
     coreHP: 900,
     reinforced: 0.32,
@@ -228,7 +228,7 @@ export const LEVELS: LevelDefinition[] = [
     siege: 0.18,
     hasCore: true,
   }),
-  makeLevel(20, 'TITAN CUBE', 14, 0.78, 580, 0.5, 0.16, 1.52, {
+  makeLevel(20, 'CHRONOBEACON · TITAN CUBE', 14, 0.78, 580, 0.5, 0.16, 1.52, {
     hasCore: true,
     coreHP: 1400,
     reinforced: 0.36,
@@ -254,7 +254,7 @@ export const LEVELS: LevelDefinition[] = [
     siege: 0.24,
     hasCore: true,
   }),
-  makeLevel(25, 'SINGULARITY', 16, 0.72, 950, 0.56, 0.2, 1.65, {
+  makeLevel(25, 'CHRONOBEACON · SINGULARITY', 16, 0.72, 950, 0.56, 0.2, 1.65, {
     hasCore: true,
     coreHP: 2000,
     reinforced: 0.4,
@@ -282,7 +282,7 @@ export const LEVELS: LevelDefinition[] = [
     siege: 0.28,
     hasCore: true,
   }),
-  makeLevel(30, 'CUBE ZERO', 18, 0.68, 1600, 0.65, 0.26, 1.8, {
+  makeLevel(30, 'CHRONOBEACON · CUBE ZERO', 18, 0.68, 1600, 0.65, 0.26, 1.8, {
     hasCore: true,
     coreHP: 3200,
     reinforced: 0.44,
@@ -299,7 +299,7 @@ export function getLevel(id: number): LevelDefinition {
   const avgHP = 160 + id * 48;
   return makeLevel(
     id,
-    `SECTOR ${id}`,
+    id > 0 && id % 5 === 0 ? `CHRONOBEACON · SECTOR ${id}` : `SECTOR ${id}`,
     size,
     density,
     avgHP,

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ORBIT } from '../data/constants';
 import { maxOrbitSpeedMul } from '../data/balance';
+import { ARENA_FLOOR_WORLD_Y, SHIP_FLOOR_CLEARANCE } from '../data/constraints';
 
 export type CameraMode = 'gameplay' | 'cinematic' | 'blend';
 
@@ -62,6 +63,8 @@ export class OrbitalCamera {
    * Soft-clamped to balance maxOrbitSpeedMul.
    */
   private topSpeedMul = 1;
+  private floorY = ARENA_FLOOR_WORLD_Y;
+  private floorClearance = SHIP_FLOOR_CLEARANCE;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(52, aspect, 0.1, 500);
@@ -83,6 +86,13 @@ export class OrbitalCamera {
 
   getTopSpeedMul(): number {
     return this.topSpeedMul;
+  }
+
+  /** Keep the combat seat above the arena deck (no flying under the floor). */
+  setFloorLimit(y: number, clearance = SHIP_FLOOR_CLEARANCE): void {
+    this.floorY = y;
+    this.floorClearance = clearance;
+    this.clampPitchToFloor();
   }
 
   /**
@@ -376,9 +386,9 @@ export class OrbitalCamera {
     for (let s = 0; s < steps; s++) {
       this.yaw += this.velYaw * h;
       this.pitch += this.velPitch * h;
-      this.pitch = THREE.MathUtils.clamp(this.pitch, ORBIT.minPitch, ORBIT.maxPitch);
-      // Soft stop at poles: kill pitch velocity into the limit
-      if (this.pitch <= ORBIT.minPitch + 0.001 && this.velPitch < 0) this.velPitch = 0;
+      this.pitch = THREE.MathUtils.clamp(this.pitch, this.effectiveMinPitch(), ORBIT.maxPitch);
+      // Soft stop at poles / deck: kill pitch velocity into the limit
+      if (this.pitch <= this.effectiveMinPitch() + 0.001 && this.velPitch < 0) this.velPitch = 0;
       if (this.pitch >= ORBIT.maxPitch - 0.001 && this.velPitch > 0) this.velPitch = 0;
     }
 
@@ -401,6 +411,7 @@ export class OrbitalCamera {
     if (dt <= 0) return;
     const rk = 1 - Math.exp(-ORBIT.cameraLag * dt);
     this.radius += (this.targetRadius - this.radius) * rk;
+    this.clampPitchToFloor();
     // Sway lag with real dt (buildGameplayCamera uses a 1/60 placeholder blend)
     const peak = ORBIT.yawSpeed * maxOrbitSpeedMul;
     const tYaw = peak > 0 ? THREE.MathUtils.clamp(this.velYaw / peak, -1, 1) : 0;
@@ -410,6 +421,22 @@ export class OrbitalCamera {
     this.swayX += (-tYaw * swayAmt - this.swayX) * sk;
     this.swayY += (tPitch * swayAmt * 0.45 - this.swayY) * sk;
     this.sync(false, dt);
+  }
+
+  private effectiveMinPitch(): number {
+    const minY = this.floorY + this.floorClearance;
+    const r = Math.max(this.radius, this.targetRadius, 0.01);
+    const ratio = THREE.MathUtils.clamp(minY / r, -0.98, 0.98);
+    return Math.max(ORBIT.minPitch, Math.asin(ratio));
+  }
+
+  private clampPitchToFloor(): void {
+    if (this.mode === 'cinematic') return;
+    const lim = this.effectiveMinPitch();
+    if (this.pitch < lim) {
+      this.pitch = lim;
+      if (this.velPitch < 0) this.velPitch = 0;
+    }
   }
 
   private resetVelocities(): void {
@@ -538,6 +565,12 @@ export class OrbitalCamera {
   /** Current turn rate magnitude — thruster visuals, lag scaling */
   get turnRate(): number {
     return Math.hypot(this.velYaw, this.velPitch);
+  }
+
+  /** External orbit tug (gravity well). */
+  nudgeAngular(dYaw: number, dPitch: number): void {
+    this.velYaw += dYaw;
+    this.velPitch += dPitch;
   }
 
   /** Signed yaw angular velocity (rad/s) — ship bank / camera sway */

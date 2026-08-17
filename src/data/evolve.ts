@@ -5,12 +5,15 @@
  */
 
 import {
+  CHRONOBEACON_INTERVAL,
   EVOLVE_BASELINE_DAMAGE_SOFT_CAP,
   EVOLVE_CORE_GRANT_BASE,
   EVOLVE_CORE_GRANT_PER_TIER,
   EVOLVE_COST_PER_TIER,
   EVOLVE_MIN_LEVEL_BASE,
   EVOLVE_MIN_LEVEL_PER_ASCENSION,
+  EVOLVE_RESET_LEVEL,
+  REPEATABLE_UPGRADE_CAP_PER_EVOLUTION,
   EVOLVE_TIER_1_2_DAMAGE_MULTIPLIER,
   EVOLVE_TIER_1_2_DRONE_DAMAGE_MULTIPLIER,
   EVOLVE_TIER_1_2_HULL_MULTIPLIER,
@@ -85,6 +88,43 @@ export function evolveCost(currentAscension: number): number {
 /** Soft gate: highestLevel >= EVOLVE_MIN_LEVEL_BASE + ascension * EVOLVE_MIN_LEVEL_PER_ASCENSION */
 export function evolveMinLevel(currentAscension: number): number {
   return EVOLVE_MIN_LEVEL_BASE + Math.max(0, Math.floor(currentAscension)) * EVOLVE_MIN_LEVEL_PER_ASCENSION;
+}
+
+export { CHRONOBEACON_INTERVAL, EVOLVE_RESET_LEVEL };
+
+/** Every 5th sector (5, 10, 15…) is a Chronobeacon checkpoint. */
+export function isChronobeacon(levelId: number): boolean {
+  return levelId > 0 && levelId % CHRONOBEACON_INTERVAL === 0;
+}
+
+/** Highest Chronobeacon the player has actually cleared. */
+export function furthestCompletedBeacon(lifetimeHighest: number): number {
+  return (
+    Math.floor((Math.max(1, lifetimeHighest) - 1) / CHRONOBEACON_INTERVAL) * CHRONOBEACON_INTERVAL
+  );
+}
+
+/** Next Chronobeacon strictly after `afterLevel`. */
+export function nextChronobeacon(afterLevel: number): number {
+  return (
+    Math.floor(Math.max(0, afterLevel) / CHRONOBEACON_INTERVAL) * CHRONOBEACON_INTERVAL +
+    CHRONOBEACON_INTERVAL
+  );
+}
+
+/**
+ * Post-clear next sector. After Evolve the run skips 5 → 10 → 15… until the
+ * furthest lifetime Chronobeacon, then sequential play resumes.
+ */
+export function nextStageAfterClear(cleared: number, lifetimeHighest: number): number {
+  const furthest = furthestCompletedBeacon(lifetimeHighest);
+  if (cleared < furthest) return nextChronobeacon(cleared);
+  return cleared + 1;
+}
+
+/** Repeatable shop ranks: Evo 0 = 10, Evo 1 = 20, Evo 2 = 30… */
+export function repeatableUpgradeCap(ascensionTier: number): number {
+  return REPEATABLE_UPGRADE_CAP_PER_EVOLUTION * (Math.max(0, Math.floor(ascensionTier)) + 1);
 }
 
 /**

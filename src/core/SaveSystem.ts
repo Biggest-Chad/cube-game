@@ -25,6 +25,11 @@ export interface SaveData {
   /** Shop sequential progress (upgrade node ids). */
   ownedUpgrades: string[];
   highestLevel: number;
+  /**
+   * Lifetime campaign ceiling (never decreases). Shop / weapon gates use this
+   * so Evolve can reset the current-run sector without re-locking the arsenal.
+   */
+  lifetimeHighestLevel: number;
   currentLevel: number;
   levelProgress: number;
   totalBlocksDestroyed: number;
@@ -56,6 +61,12 @@ export interface SaveData {
   droneUnlockedTypes: string[];
   /** Legacy */
   droneRoles: Record<string, number>;
+
+  // --- ground stations (4 pads) ---
+  baseOwned: Record<string, number>;
+  baseSlots: Array<string | null>;
+  baseUnlockedTypes: string[];
+  baseRanks: Record<string, number>;
 
   // --- v2: ads ---
   /** placementId → watches completed today */
@@ -93,6 +104,7 @@ export function defaultSave(): SaveData {
     prestigeTokens: 0,
     ownedUpgrades: [],
     highestLevel: 1,
+    lifetimeHighestLevel: 1,
     currentLevel: 1,
     levelProgress: 0,
     totalBlocksDestroyed: 0,
@@ -116,6 +128,11 @@ export function defaultSave(): SaveData {
     droneSlots: [],
     droneUnlockedTypes: ['fighter'],
     droneRoles: {},
+
+    baseOwned: { sam: 0, artillery: 0, ciws: 0 },
+    baseSlots: [null, null, null, null],
+    baseUnlockedTypes: [],
+    baseRanks: { sam: 0, artillery: 0, ciws: 0 },
 
     adsWatchedToday: {},
     adsDayKey: todayKey(),
@@ -230,6 +247,29 @@ export class SaveSystem {
               (t): t is string => typeof t === 'string'
             )
           : base.droneUnlockedTypes,
+        baseOwned:
+          parsed.baseOwned && typeof parsed.baseOwned === 'object'
+            ? { sam: 0, artillery: 0, ciws: 0, ...parsed.baseOwned }
+            : base.baseOwned,
+        baseSlots: (() => {
+          const raw = Array.isArray(parsed.baseSlots) ? parsed.baseSlots : [];
+          const slots: Array<string | null> = [];
+          for (let i = 0; i < 4; i++) {
+            const s = raw[i];
+            slots.push(s === 'sam' || s === 'artillery' || s === 'ciws' ? s : null);
+          }
+          return slots;
+        })(),
+        baseUnlockedTypes: Array.isArray(parsed.baseUnlockedTypes)
+          ? parsed.baseUnlockedTypes.filter(
+              (t): t is string =>
+                t === 'sam' || t === 'artillery' || t === 'ciws'
+            )
+          : base.baseUnlockedTypes,
+        baseRanks:
+          parsed.baseRanks && typeof parsed.baseRanks === 'object'
+            ? { sam: 0, artillery: 0, ciws: 0, ...parsed.baseRanks }
+            : base.baseRanks,
         adsWatchedToday:
           parsed.adsWatchedToday && typeof parsed.adsWatchedToday === 'object'
             ? { ...parsed.adsWatchedToday }
@@ -258,6 +298,15 @@ export class SaveSystem {
         coreEnergy: sanitizeCurrency(parsed.coreEnergy, base.coreEnergy),
         prestigeTokens: sanitizeCurrency(parsed.prestigeTokens, base.prestigeTokens),
       };
+      const parsedLifetime =
+        typeof parsed.lifetimeHighestLevel === 'number' && parsed.lifetimeHighestLevel > 0
+          ? Math.floor(parsed.lifetimeHighestLevel)
+          : 1;
+      this.data.lifetimeHighestLevel = Math.max(
+        parsedLifetime,
+        this.data.highestLevel || 1,
+        this.data.currentLevel || 1
+      );
       // Always fold baseline from tier (ignore tampered mult blobs)
       this.data.baseline = baselineFromTier(this.data.ascensionTier);
       if (typeof this.data.evolveReadySeenTier !== 'number') {

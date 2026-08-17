@@ -6,6 +6,7 @@ import {
 } from '../data/upgrades';
 import {
   BASELINE_IDENTITY,
+  repeatableUpgradeCap,
   type AscensionBaseline,
 } from '../data/evolve';
 import { bus } from '../core/EventBus';
@@ -227,6 +228,8 @@ export class TechTree {
   baseline: AscensionBaseline = { ...BASELINE_IDENTITY };
   /** Research Lattice permanent bonuses. */
   research: ResearchBonuses = defaultResearchBonuses();
+  /** Current Evolution — caps repeatable shop ranks. */
+  ascensionTier = 0;
 
   load(ids: string[]): void {
     this.owned = new Set(ids);
@@ -241,6 +244,10 @@ export class TechTree {
   setResearch(r: ResearchBonuses): void {
     this.research = { ...r };
     this.recompute();
+  }
+
+  setAscensionTier(tier: number): void {
+    this.ascensionTier = Math.max(0, Math.floor(tier));
   }
 
   /** Clear combat shop ownership only (Evolve retrain). */
@@ -305,6 +312,7 @@ export class TechTree {
     if (this.owned.has(node.id)) return false;
     // Placeholder teaser with absurd cost
     if (node.cost >= 99999) return false;
+    if (node.repeatable && node.rank > repeatableUpgradeCap(this.ascensionTier)) return false;
     return node.prerequisites.every((p) => this.owned.has(p));
   }
 

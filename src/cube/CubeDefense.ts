@@ -43,6 +43,9 @@ import {
 import { CORE } from '../data/core';
 import { RageLaser, type RageLaserPhase } from './RageLaser';
 import { NucleusSpikeBurst, type SpikeBurstPhase } from './NucleusSpikeBurst';
+import { NucleusOffensiveKit } from './NucleusOffensiveKit';
+import { spikeBurstProfileForStage } from '../data/nucleusAtk';
+import { NUCLEUS_KAMIKAZE_PROXIMITY } from '../data/constraints';
 
 export interface DefenseSchedule {
   coreShield: boolean;
@@ -178,12 +181,14 @@ export class CubeDefense {
   }> = [];
   private readonly rageLaser = new RageLaser();
   private readonly spikes = new NucleusSpikeBurst();
+  private readonly kit = new NucleusOffensiveKit();
   private readonly _laserOrigin = new THREE.Vector3();
 
   constructor() {
     this.group.add(this.projectileRoot);
     this.group.add(this.rageLaser.group);
     this.group.add(this.spikes.group);
+    this.group.add(this.kit.group);
   }
 
   get rageLaserPhase(): RageLaserPhase {
@@ -205,6 +210,7 @@ export class CubeDefense {
   startLevel(levelId: number): void {
     this.reset();
     this.levelId = levelId;
+    this.kit.startLevel(levelId);
     this.schedule = defenseScheduleForLevel(levelId);
     this.fireRateMul = 1;
     this.bindCoreEvents();
@@ -335,35 +341,58 @@ export class CubeDefense {
       bus.on('core-spike-burst', () => {
         if (!this.cube || !this.hooks) return;
         this.cube.nucleus.getWorldCenter(this._laserOrigin);
-        const extra = Math.min(6, Math.max(0, Math.floor((this.levelId - 1) / 3)));
         this.spikes.arm(
           this._laserOrigin,
           this.hooks.getPlayerPosition(),
-          CORE.spikeOmniCount + extra
+          spikeBurstProfileForStage(this.levelId)
         );
-      })
+      }),
+      bus.on('core-overload', () => {
+        this.kit.notifyOverload();
+      }),
+      bus.on(
+        'core-spawn-kamikaze',
+        (p: { count: number; hp: number; damage: number; speed: number }) => {
+          for (let i = 0; i < p.count; i++) {
+            this.spawnEnemyDrone('kamikaze', true, p);
+          }
+        }
+      )
     );
   }
 
-  spawnEnemyDrone(role: EnemyDroneRole = 'attack', enraged = false): EnemyDrone | null {
+  spawnEnemyDrone(
+    role: EnemyDroneRole = 'attack',
+    enraged = false,
+    kami?: { hp: number; damage: number; speed: number }
+  ): EnemyDrone | null {
     if (!this.cube) return null;
     // Soft cap to avoid meltdown
     if (this.enemyDrones.filter((d) => d.alive).length >= ENEMY_DRONE_SOFT_CAP) return null;
     const he = this.cube.halfExtent;
     const idx = this.enemyDrones.length;
     const isRepair = role === 'repair';
+    const isKami = role === 'kamikaze';
     const d = new EnemyDrone(`ed_${this._idSeq++}`, idx, he, {
-      hp:
-        (isRepair ? ENEMY_REPAIR_DRONE_BASE_HIT_POINTS : ENEMY_ATTACK_DRONE_BASE_HIT_POINTS) +
-        this.levelId *
-          (isRepair ? ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL : ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL),
-      damage: ENEMY_DRONE_BASE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL,
+      hp: isKami
+        ? kami?.hp ?? 22
+        : (isRepair ? ENEMY_REPAIR_DRONE_BASE_HIT_POINTS : ENEMY_ATTACK_DRONE_BASE_HIT_POINTS) +
+          this.levelId *
+            (isRepair ? ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL : ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL),
+      damage: isKami
+        ? kami?.damage ?? 14
+        : ENEMY_DRONE_BASE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL,
       fireRate:
         (this.schedule.elite ? ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER : 1.0) * this.fireRateMul,
-      speed: isRepair ? ENEMY_REPAIR_DRONE_SPEED : ENEMY_ATTACK_DRONE_SPEED,
-      color: isRepair ? 0x44ff88 : 0xff2244,
+      speed: isKami
+        ? kami?.speed ?? 7.2
+        : isRepair
+          ? ENEMY_REPAIR_DRONE_SPEED
+          : ENEMY_ATTACK_DRONE_SPEED,
+      color: isKami ? 0xffaa22 : isRepair ? 0x44ff88 : 0xff2244,
       role,
       repairFrac: ENEMY_DRONE_REPAIR_FRACTION,
+      ...(isKami ? { range: NUCLEUS_KAMIKAZE_PROXIMITY + 40 } : {}),
     });
     if (enraged) d.setEnraged(true);
     // Spawn near cube surface
@@ -485,6 +514,7 @@ export class CubeDefense {
         id: link.turret.id,
       });
     }
+    for (const t of this.kit.getWeaponTargets()) out.push(t);
     return out;
   }
 
@@ -531,7 +561,7 @@ export class CubeDefense {
       }
       return killed;
     }
-    return false;
+    return this.kit.damageEntity(id, amount);
   }
 
   /** Large hostile projectiles (rage arcs) for fighter intercept. */
@@ -554,12 +584,14 @@ export class CubeDefense {
       });
     }
     for (const s of this.spikes.getInterceptTargets()) out.push(s);
+    for (const k of this.kit.getInterceptTargets()) out.push(k);
     return out;
   }
 
   /** Damage an intercept target (arc beam / spike). Returns true if destroyed. */
   damageIntercept(id: string, amount: number): boolean {
     if (id.startsWith('spike_')) return this.spikes.damageIntercept(id, amount);
+    if (id.startsWith('kit_')) return this.kit.damageEntity(id, amount);
     if (!id.startsWith('arc_')) return false;
     const idx = Number(id.slice(4));
     const a = this.arcs[idx];
@@ -671,6 +703,17 @@ export class CubeDefense {
     );
     if (this.spikes.glow > 0) nuc.flareFromLaser(this.spikes.glow);
 
+    if (nuc.isActive) {
+      nuc.getWorldCenter(this._laserOrigin);
+      this.kit.update(
+        dt,
+        this._laserOrigin,
+        playerPos,
+        allowFire,
+        (dmg) => this.hooks?.onPlayerDamage(dmg, 'core-kit')
+      );
+    }
+
     if (this.coreShieldMesh && this.coreShield.active) {
       const mat = this.coreShieldMesh.material as THREE.MeshBasicMaterial;
       const ratio = this.coreShield.current / Math.max(1, this.coreShield.max);
@@ -701,6 +744,10 @@ export class CubeDefense {
   /** Apply nucleus fire-rate aura (Rage). */
   setFireRateMul(mul: number): void {
     this.fireRateMul = Math.max(1, mul);
+  }
+
+  consumeOrbitNudge(): { yaw: number; pitch: number } | null {
+    return this.kit.consumeOrbitNudge();
   }
 
   private tickShield(pool: ShieldPool, mesh: THREE.Mesh | null, dt: number): void {
@@ -793,6 +840,7 @@ export class CubeDefense {
     this.arcs = [];
     this.rageLaser.reset();
     this.spikes.reset();
+    this.kit.reset();
     if (this.coreShieldMesh) {
       this.group.remove(this.coreShieldMesh);
       this.coreShieldMesh.geometry.dispose();
@@ -817,6 +865,7 @@ export class CubeDefense {
     this.reset();
     this.rageLaser.dispose();
     this.spikes.dispose();
+    this.kit.dispose();
     this.group.clear();
   }
 }

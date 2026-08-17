@@ -3,6 +3,7 @@ import { CHUNK_SIZE } from '../data/constants';
 import {
   BLOCK_FORGIVING_HALF_EXTENT,
   BLOCK_TRUE_HALF_EXTENT,
+  CUBE_LATENT_EMISSIVE_INTENSITY,
   NUCLEUS_SHELL_OCCLUSION_EPSILON,
   PERFORMANCE_RAYCAST_HASH_CELL_SIZE,
 } from '../data/constraints';
@@ -105,10 +106,10 @@ export class CubeManager {
     // Per-instance color carries hue; Standard keeps cube lighting/readability
     this.material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      emissive: 0x000000,
-      emissiveIntensity: 0,
-      metalness: 0.25,
-      roughness: 0.42,
+      emissive: 0x082028,
+      emissiveIntensity: CUBE_LATENT_EMISSIVE_INTENSITY,
+      metalness: 0.22,
+      roughness: 0.46,
       toneMapped: true,
       envMapIntensity: 0,
     });

@@ -73,15 +73,35 @@ import { cheapestPurchasableWeapon, weaponUnlockCost } from '../data/weapons';
 import {
   baselineFromTier,
   canEvolve,
+  EVOLVE_RESET_LEVEL,
   evolveCoreGrant,
   evolveCost,
+  isChronobeacon,
+  nextStageAfterClear,
 } from '../data/evolve';
 import { EVOLVE_FRAG_PER_CORE, getResearchNode } from '../data/research';
 import {
+  ARENA_FLOOR_WORLD_Y,
+  LIGHTING_AMBIENT_COLOR,
+  LIGHTING_AMBIENT_INTENSITY,
+  LIGHTING_HEMI_GROUND_COLOR,
+  LIGHTING_HEMI_INTENSITY,
+  LIGHTING_HEMI_SKY_COLOR,
+  LIGHTING_KEY_COLOR,
+  LIGHTING_KEY_INTENSITY,
+  LIGHTING_RIM_COLOR,
+  LIGHTING_RIM_INTENSITY,
   PERFORMANCE_COMBAT_BLOOM_GRACE_SECONDS,
   PERFORMANCE_FRAME_CAP_HZ,
   PERFORMANCE_MENU_FRAME_CAP_HZ,
+  SHIP_FLOOR_CLEARANCE,
 } from '../data/constraints';
+import { GroundStationController } from '../loadout/GroundStationState';
+import { GroundStationField } from '../world/GroundStationField';
+import {
+  GROUND_WEAPONS,
+  type GroundWeaponId,
+} from '../data/groundStations';
 
 type Mode =
   | 'menu'
@@ -120,6 +140,8 @@ export class Game {
   private loadout = new LoadoutState();
   private droneBays = new DroneBayController();
   private drones = new DroneManager();
+  private groundBays = new GroundStationController();
+  private groundStations = new GroundStationField();
   private input = new InputController();
   private currency = new Currency();
   private tech = new TechTree();
@@ -157,6 +179,8 @@ export class Game {
 
   private mode: Mode = 'menu';
   private currentLevelId = 1;
+  /** Next sector after a clear (Chronobeacon skip or sequential). */
+  private pendingNextLevelId = 2;
   private raf = 0;
   private hidden = false;
   private lastPresentMs = 0;
@@ -277,6 +301,9 @@ export class Game {
     this.scene.add(this.hardpoints.worldGroup);
     this.hardpoints.attachToShip(this.ship.group);
     this.scene.add(this.drones.group);
+    this.scene.add(this.groundStations.group);
+    this.groundStations.bind(this.cube);
+    this.cameraCtrl.setFloorLimit(ARENA_FLOOR_WORLD_Y, SHIP_FLOOR_CLEARANCE);
 
     this.particles = new ParticlePool(PERF.maxParticles);
     this.shatter = new ShatterSystem(this.particles);
@@ -290,15 +317,19 @@ export class Game {
     this.scene.add(this.cinematic.group);
     this.orientLock = document.getElementById('orientation-lock');
 
-    // Dramatic neon arena lighting — readable cube + punchy emissives
-    const amb = new THREE.AmbientLight(0x142030, 0.68);
+    // Sky wash + key/rim. Combat PointLights stay gone; searchlights live on the pads.
+    const amb = new THREE.AmbientLight(LIGHTING_AMBIENT_COLOR, LIGHTING_AMBIENT_INTENSITY);
     this.scene.add(amb);
-    const hemi = new THREE.HemisphereLight(0x4a7a9a, 0x100818, 0.88);
+    const hemi = new THREE.HemisphereLight(
+      LIGHTING_HEMI_SKY_COLOR,
+      LIGHTING_HEMI_GROUND_COLOR,
+      LIGHTING_HEMI_INTENSITY
+    );
     this.scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xd8f4ff, 1.05);
-    key.position.set(18, 32, 16);
+    const key = new THREE.DirectionalLight(LIGHTING_KEY_COLOR, LIGHTING_KEY_INTENSITY);
+    key.position.set(6, 42, 8);
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0xaa44cc, 0.45);
+    const rim = new THREE.DirectionalLight(LIGHTING_RIM_COLOR, LIGHTING_RIM_INTENSITY);
     rim.position.set(-18, -4, -14);
     this.scene.add(rim);
     // Arena sits on layer 1 so city StandardMaterials are not point-lit.
@@ -572,7 +603,7 @@ export class Game {
       if (this.currency.coreEnergy < finalCost) return false;
       if (!this.currency.spendCoreEnergy(finalCost)) return false;
       if (
-        this.loadout.unlockHardpoint(slot, this.save.data.highestLevel, asc) < 0
+        this.loadout.unlockHardpoint(slot, this.shopGateLevel(), asc) < 0
       ) {
         this.currency.addCoreEnergy(finalCost, 1);
         return false;
@@ -622,7 +653,7 @@ export class Game {
     };
     this.shopUI.onUnlockDroneType = (role) => {
       const def = DRONE_ROLES[role];
-      if (this.save.data.highestLevel < def.unlockLevel) {
+      if (this.shopGateLevel() < def.unlockLevel) {
         this.toast(`REQUIRES SECTOR ${def.unlockLevel}+`);
         return false;
       }
@@ -664,6 +695,59 @@ export class Game {
         this.persist();
       }
       return ok;
+    };
+    this.shopUI.onUnlockBaseType = (id) => {
+      const def = GROUND_WEAPONS[id];
+      if (this.shopGateLevel() < def.unlockLevel) {
+        this.toast(`REQUIRES SECTOR ${def.unlockLevel}+`);
+        return false;
+      }
+      if (this.groundBays.isTypeUnlocked(id)) return false;
+      if (!this.currency.spendFragments(def.unlockCost)) return false;
+      this.groundBays.unlockType(id);
+      this.persist();
+      this.audio.playPurchase();
+      this.toast(`${def.name.toUpperCase()} UNLOCKED`);
+      return true;
+    };
+    this.shopUI.onBuyBaseUnit = (id) => {
+      if (!this.groundBays.isTypeUnlocked(id)) return false;
+      const cost = this.groundBays.unitCost(id);
+      if (!this.currency.spendFragments(cost)) return false;
+      this.groundBays.buyUnit(id);
+      const empty = this.groundBays.state.slots.findIndex((s) => s == null);
+      if (empty >= 0) this.groundBays.assignSlot(empty, id);
+      this.syncGroundStations();
+      this.persist();
+      this.audio.playPurchase();
+      return true;
+    };
+    this.shopUI.onAssignBaseSlot = (slot, id) => {
+      const ok = this.groundBays.assignSlot(slot, id);
+      if (ok) {
+        this.syncGroundStations();
+        this.persist();
+      }
+      return ok;
+    };
+    this.shopUI.onMoveBaseSlot = (from, to) => {
+      const ok = this.groundBays.moveSlot(from, to);
+      if (ok) {
+        this.syncGroundStations();
+        this.persist();
+      }
+      return ok;
+    };
+    this.shopUI.onUpgradeBaseType = (id) => {
+      if (!this.groundBays.canUpgrade(id)) return false;
+      const cost = this.groundBays.nextUpgradeCost(id);
+      if (!this.currency.spendFragments(cost)) return false;
+      this.groundBays.upgrade(id);
+      this.syncGroundStations();
+      this.persist();
+      this.audio.playPurchase();
+      this.toast(`${GROUND_WEAPONS[id].name.toUpperCase()} RANK ${this.groundBays.state.ranks[id]}`);
+      return true;
     };
 
     this.researchUI.onClose = () => {
@@ -796,7 +880,7 @@ export class Game {
       const discount = this.ads.pendingHardpointDiscount;
       const finalCost = Math.round(cost * (1 - discount));
       if (!this.currency.spendCoreEnergy(finalCost)) return false;
-      if (this.loadout.unlockHardpoint(slot, this.save.data.highestLevel, asc) < 0) {
+      if (this.loadout.unlockHardpoint(slot, this.shopGateLevel(), asc) < 0) {
         this.currency.addCoreEnergy(finalCost, 1);
         return false;
       }
@@ -925,6 +1009,11 @@ export class Game {
     this.toast('AD REWARD APPLIED');
   }
 
+  /** Shop / arsenal gates stay on lifetime progress so Evolve does not re-lock weapons. */
+  private shopGateLevel(): number {
+    return Math.max(this.save.data.highestLevel, this.save.data.lifetimeHighestLevel ?? 1);
+  }
+
   /** Evolve hull: spend FRAG, reset combat shop, permanent baseline, Core grant. */
   private performEvolve(): boolean {
     const tier = this.save.data.ascensionTier;
@@ -946,8 +1035,19 @@ export class Game {
     this.save.data.baseline = baselineFromTier(newTier);
     this.currency.prestigeTokens = newTier;
 
+    this.save.data.lifetimeHighestLevel = Math.max(
+      this.save.data.lifetimeHighestLevel ?? 1,
+      this.save.data.highestLevel,
+      this.currentLevelId
+    );
+    this.save.data.highestLevel = EVOLVE_RESET_LEVEL;
+    this.currentLevelId = EVOLVE_RESET_LEVEL;
+    this.save.data.currentLevel = EVOLVE_RESET_LEVEL;
+    this.pendingNextLevelId = EVOLVE_RESET_LEVEL;
+
     // Retrain combat shop only — keep weapons, branches, research
     this.tech.resetCombatUpgrades();
+    this.tech.setAscensionTier(newTier);
     this.tech.setBaseline(this.save.data.baseline);
     this.tech.setResearch(this.research.bonuses);
 
@@ -965,20 +1065,21 @@ export class Game {
     this.applyStatsToSystems();
     this.vitals.fullRestore();
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
-    this.shopUI.setLoadoutContext(
-      this.loadout,
-      this.save.data.highestLevel,
-      newTier
-    );
+    this.shopUI.setLoadoutContext(this.loadout, this.shopGateLevel(), newTier);
     this.persist();
     this.audio.playPurchase();
     const convertMsg = converted > 0 ? ` · +${converted} CORE FROM FRAG` : '';
-    this.toast(`ASCENSION ${newTier} · +${grant} CORE${convertMsg} · RETRAIN`);
+    this.toast(
+      `ASCENSION ${newTier} · SECTOR ${EVOLVE_RESET_LEVEL} · SKIP BEACONS · +${grant} CORE${convertMsg}`
+    );
     bus.emit('evolved', {
       tier: newTier,
       coreGrant: grant,
       fragConverted: converted,
     });
+    if (this.mode === 'playing' || this.mode === 'paused' || this.mode === 'intro') {
+      this.startLevel(EVOLVE_RESET_LEVEL);
+    }
     return true;
   }
 
@@ -1423,6 +1524,10 @@ export class Game {
     this.drones.syncFromBays(this.tech.stats);
   }
 
+  private syncGroundStations(): void {
+    this.groundStations.applyLoadout(this.groundBays.state);
+  }
+
   private updateHudVitals(): void {
     const snap = this.vitals.snapshot();
     this.shopUI.setVitals(snap);
@@ -1455,7 +1560,7 @@ export class Game {
     const weapon = cheapestPurchasableWeapon(
       this.loadout.ownedWeapons,
       this.currency.dataFragments,
-      this.save.data.highestLevel
+      this.shopGateLevel()
     );
     const canBuy = shopVisible && (!!rec || !!weapon);
     const firstDrone =
@@ -1465,7 +1570,7 @@ export class Game {
       weapon.id === 'rocket_pod' &&
       !this.loadout.isOwned('rocket_pod') &&
       !this.save.data.tutorialLoadoutDone &&
-      this.save.data.highestLevel >= 3;
+      this.shopGateLevel() >= 3;
 
     let hint = '';
     if (firstDrone) {
@@ -1532,7 +1637,8 @@ export class Game {
       ),
       ownedWeapons: data.ownedWeapons,
     });
-    this.loadout.syncLevelUnlocks(data.highestLevel);
+    this.tech.setAscensionTier(data.ascensionTier ?? 0);
+    this.loadout.syncLevelUnlocks(Math.max(data.highestLevel, data.lifetimeHighestLevel ?? 1));
     this.hardpoints.bindLoadout(this.loadout);
 
     // Drone bays — migrate legacy droneCount if empty
@@ -1555,6 +1661,13 @@ export class Game {
       this.droneBays.state.unlockedTypes = ['fighter'];
     }
     this.syncDronesFromBays();
+    this.groundBays.load({
+      owned: data.baseOwned as never,
+      slots: data.baseSlots as never,
+      unlockedTypes: data.baseUnlockedTypes as never,
+      ranks: data.baseRanks as never,
+    });
+    this.syncGroundStations();
 
     this.tutorial.setFlags(
       !!data.tutorialStage1Done,
@@ -1679,6 +1792,11 @@ export class Game {
     this.save.data.droneOwned = db.owned;
     this.save.data.droneSlots = db.slots;
     this.save.data.droneUnlockedTypes = db.unlockedTypes;
+    const gb = this.groundBays.toJSON();
+    this.save.data.baseOwned = gb.owned;
+    this.save.data.baseSlots = gb.slots;
+    this.save.data.baseUnlockedTypes = gb.unlockedTypes;
+    this.save.data.baseRanks = gb.ranks;
     this.syncLoadoutToSave();
     const adSnap = this.ads.toJSON();
     this.save.data.adsDayKey = adSnap.day;
@@ -1686,6 +1804,11 @@ export class Game {
     if (this.currentLevelId > this.save.data.highestLevel) {
       this.save.data.highestLevel = this.currentLevelId;
     }
+    this.save.data.lifetimeHighestLevel = Math.max(
+      this.save.data.lifetimeHighestLevel ?? 1,
+      this.save.data.highestLevel,
+      this.currentLevelId
+    );
     this.save.save();
     this.maybeOfferEvolveReady();
   }
@@ -1748,7 +1871,7 @@ export class Game {
     this.arena.setContext({
       levelId: this.currentLevelId || 1,
       ascensionTier: this.save.data.ascensionTier ?? 0,
-      highestLevel: this.save.data.highestLevel,
+      highestLevel: this.shopGateLevel(),
     });
     this.mode = 'menu';
     this.shopOpen = false;
@@ -1828,6 +1951,7 @@ export class Game {
     this.cubeAnimator.setDemoMode(true);
     this.cubeAnimator.setEnabled(true);
     this.cameraCtrl.setOrbitLimits(this.cube.halfExtent * 1.15);
+    this.cameraCtrl.setFloorLimit(ARENA_FLOOR_WORLD_Y, SHIP_FLOOR_CLEARANCE);
   }
 
   /** Passive demo cube on main menu — rubik slices + slow orbit. */
@@ -1846,6 +1970,7 @@ export class Game {
     this.ship.group.visible = false;
     this.hardpoints.group.visible = false;
     this.cameraCtrl.setOrbitLimits(this.cube.halfExtent * 1.15);
+    this.cameraCtrl.setFloorLimit(ARENA_FLOOR_WORLD_Y, SHIP_FLOOR_CLEARANCE);
     this.cameraCtrl.yaw = 0.95;
     this.cameraCtrl.pitch = 0.32;
   }
@@ -1955,7 +2080,16 @@ export class Game {
   }
 
   private openTech(
-    tab?: 'ship' | 'main_gun' | 'loadouts' | 'drone_bays' | 'other' | 'drones' | 'economy' | 'global'
+    tab?:
+      | 'ship'
+      | 'main_gun'
+      | 'loadouts'
+      | 'drone_bays'
+      | 'bases'
+      | 'other'
+      | 'drones'
+      | 'economy'
+      | 'global'
   ): void {
     // Gate shop until first drone is affordable or already owned
     const ownsDrone =
@@ -2017,10 +2151,11 @@ export class Game {
     this.shopUI.setVitals(this.vitals.snapshot());
     this.shopUI.setLoadoutContext(
       this.loadout,
-      this.save.data.highestLevel,
+      this.shopGateLevel(),
       this.save.data.ascensionTier
     );
     this.shopUI.setDroneBay(this.droneBays);
+    this.shopUI.setGroundStations(this.groundBays);
     // Default to DRONES until Ally Protocol / first bay; 'drones' deep-link opens UPGRADES
     const openTab =
       tab ??
@@ -2092,10 +2227,11 @@ export class Game {
       this.shopUI.setVitals(this.vitals.snapshot());
       this.shopUI.setLoadoutContext(
         this.loadout,
-        this.save.data.highestLevel,
+        this.shopGateLevel(),
         this.save.data.ascensionTier
       );
       this.shopUI.setDroneBay(this.droneBays);
+      this.shopUI.setGroundStations(this.groundBays);
       this.shopUI.render(this.tech, this.currency);
       this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
       this.audio.playPurchase();
@@ -2105,7 +2241,7 @@ export class Game {
   }
 
   private buyWeapon(defId: string): boolean {
-    const cost = this.loadout.weaponBuyCost(defId, this.save.data.highestLevel);
+    const cost = this.loadout.weaponBuyCost(defId, this.shopGateLevel());
     if (!cost) {
       this.toast('WEAPON LOCKED — CLEAR MORE SECTORS');
       return false;
@@ -2193,20 +2329,25 @@ export class Game {
     this.arena.setContext({
       levelId: id,
       ascensionTier: this.save.data.ascensionTier ?? 0,
-      highestLevel: this.save.data.highestLevel,
+      highestLevel: this.shopGateLevel(),
       preferred: level.arena,
     });
     this.cube.loadLevel(level);
     this.cubeAnimator.setDemoMode(false);
     this.cubeAnimator.setLevel(id);
     this.cubeDefense.startLevel(id);
+    if (isChronobeacon(id)) {
+      this.toast(`CHRONOBEACON ${id}`);
+    }
     this.cameraCtrl.setOrbitLimits(this.cube.halfExtent);
+    this.cameraCtrl.setFloorLimit(ARENA_FLOOR_WORLD_Y, SHIP_FLOOR_CLEARANCE);
     this.cameraCtrl.setTopSpeedMul(this.tech.stats.orbitSpeedMul);
     this.cameraCtrl.extendMaxRadius(this.tech.stats.zoomRangeAdd);
 
-    this.loadout.syncLevelUnlocks(this.save.data.highestLevel);
+    this.loadout.syncLevelUnlocks(this.shopGateLevel());
     this.hardpoints.rebuildFromLoadout();
     this.syncDronesFromBays();
+    this.syncGroundStations();
     this.vitals.fullRestore();
     this.vitals.syncFromStats(this.tech.stats);
     this.vitals.fullRestore();
@@ -2571,10 +2712,18 @@ export class Game {
     this.particles.spawn(0, 0, 0, COLORS.magenta, 30, 10, 'glow');
     this.rings.spawn(0, 0, 0, COLORS.white, 2.5);
 
-    if (this.currentLevelId >= this.save.data.highestLevel) {
-      this.save.data.highestLevel = this.currentLevelId + 1;
-    }
-    this.loadout.syncLevelUnlocks(this.save.data.highestLevel);
+    const nextId = nextStageAfterClear(
+      this.currentLevelId,
+      this.save.data.lifetimeHighestLevel
+    );
+    this.pendingNextLevelId = nextId;
+    this.save.data.highestLevel = Math.max(this.save.data.highestLevel, nextId);
+    this.save.data.lifetimeHighestLevel = Math.max(
+      this.save.data.lifetimeHighestLevel ?? 1,
+      this.currentLevelId + 1,
+      nextId
+    );
+    this.loadout.syncLevelUnlocks(this.shopGateLevel());
     this.persist();
 
     this.clearCard = {
@@ -2670,7 +2819,7 @@ export class Game {
     this.overlay.querySelector('#next-level')!.addEventListener('click', () => {
       this.overlay.innerHTML = '';
       this.returnToClear = false;
-      this.startLevel(this.currentLevelId + 1);
+      this.startLevel(this.pendingNextLevelId || this.currentLevelId + 1);
     });
     this.overlay.querySelector('#clear-loadout')!.addEventListener('click', () => {
       this.returnToClear = true;
@@ -2687,7 +2836,10 @@ export class Game {
     this.overlay.querySelector('#clear-menu')!.addEventListener('click', () => {
       this.overlay.innerHTML = '';
       this.returnToClear = false;
-      this.currentLevelId = Math.min(this.currentLevelId + 1, this.save.data.highestLevel);
+      this.currentLevelId = Math.min(
+        this.pendingNextLevelId || this.currentLevelId + 1,
+        this.save.data.highestLevel
+      );
       this.showMenu({ forceReloadDemo: true });
     });
   }
@@ -2955,7 +3107,7 @@ export class Game {
             !ownsDrone && this.currency.dataFragments >= FIRST_DRONE_COST;
           const rocketCost = this.loadout.weaponBuyCost(
             'rocket_pod',
-            this.save.data.highestLevel
+            this.shopGateLevel()
           );
           this.tutorial.update(dt, {
             orbitMag,
@@ -3011,6 +3163,11 @@ export class Game {
           nucleusExposed: this.cube.nucleus.isExposed,
         });
         this.drones.update(dt, this.cube, this.tech.stats, now, this.hidden);
+        this.groundStations.setCombat(
+          this.cubeDefense.getEnemyTargetsForWeapons(),
+          (id, dmg) => this.cubeDefense.damageEnemy(id, dmg)
+        );
+        this.groundStations.update(dt, now, this.canFireWeapons(), this.tech.stats);
 
         this.cube.update(dt, now);
         this.cubeAnimator.update(dt);
@@ -3023,6 +3180,8 @@ export class Game {
         this.cubeDefense.setFireRateMul(this.cube.nucleus.rageFireMul);
         // Turrets/enemy drones locked during stage countdown same as player
         this.cubeDefense.update(dt, this.canFireWeapons());
+        const tug = this.cubeDefense.consumeOrbitNudge();
+        if (tug) this.cameraCtrl.nudgeAngular(tug.yaw, tug.pitch);
 
         const level = getLevel(this.currentLevelId);
         this.hud.updateLevel(
@@ -3098,6 +3257,7 @@ export class Game {
     this.weapon.dispose();
     this.hardpoints.dispose();
     this.drones.dispose();
+    this.groundStations.dispose();
     this.particles.dispose();
     this.shatter.dispose();
     this.rings.dispose();

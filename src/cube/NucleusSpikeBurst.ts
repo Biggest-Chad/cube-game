@@ -5,20 +5,25 @@
 import * as THREE from 'three';
 import { CORE } from '../data/core';
 import { bus } from '../core/EventBus';
+import type { SpikeBurstProfile } from '../data/nucleusAtk';
+import { spikeBurstProfileForStage } from '../data/nucleusAtk';
 
 export type SpikeBurstPhase = 'idle' | 'telegraph' | 'fire';
 
 interface Spike {
   active: boolean;
   aimed: boolean;
+  airBurst: boolean;
+  burstAt: number;
   mesh: THREE.Mesh;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;
+  maxLife: number;
   hp: number;
 }
 
-const MAX_SPIKES = 18;
+const MAX_SPIKES = 40;
 const LINE_LEN = 36;
 const _fwd = new THREE.Vector3(0, 0, 1);
 const _up = new THREE.Vector3(0, 1, 0);
@@ -34,6 +39,10 @@ export class NucleusSpikeBurst {
   private dirCount = 0;
   private aimedIndex = 0;
   private shockHit = false;
+  private profile: SpikeBurstProfile = spikeBurstProfileForStage(1);
+  private wavesLeft = 0;
+  private waveTimer = 0;
+  private nextSpikeSlot = 0;
 
   private readonly spikes: Spike[] = [];
   private readonly lines: THREE.Mesh[] = [];
@@ -64,10 +73,13 @@ export class NucleusSpikeBurst {
       this.spikes.push({
         active: false,
         aimed: false,
+        airBurst: false,
+        burstAt: 0,
         mesh,
         pos: new THREE.Vector3(),
         vel: new THREE.Vector3(),
         life: 0,
+        maxLife: 1,
         hp: 18,
       });
 
@@ -135,25 +147,31 @@ export class NucleusSpikeBurst {
 
   get glow(): number {
     if (this.phase === 'telegraph') {
-      return 0.4 + (1 - this.timer / CORE.spikeTelegraphSec) * 0.55;
+      return 0.4 + (1 - this.timer / this.profile.telegraphSec) * 0.55;
     }
     if (this.phase === 'fire') return 0.7;
     return 0;
   }
 
   /** Begin a telegraphed volley. Dirs lock now so the player can step off the line. */
-  arm(origin: THREE.Vector3, player: THREE.Vector3, omniCount: number): boolean {
+  arm(origin: THREE.Vector3, player: THREE.Vector3, profile: SpikeBurstProfile): boolean {
     if (this.phase === 'telegraph') return false;
+    this.profile = profile;
     this.origin.copy(origin);
-    this.buildDirs(player, omniCount);
+    this.buildDirs(player, profile.omniCount);
     this.phase = 'telegraph';
-    this.timer = CORE.spikeTelegraphSec;
+    this.timer = profile.telegraphSec;
     this.shockHit = false;
+    this.wavesLeft = 0;
+    this.nextSpikeSlot = 0;
     this.group.visible = true;
     this.layoutTelegraph(0);
     bus.emit('core-notify', {
       title: 'SPIKE BURST',
-      body: 'Lines locked — move off the bright one.',
+      body:
+        profile.airBurstChance > 0.05
+          ? 'Lines locked — spikes may air-burst. Step off the bright one.'
+          : 'Lines locked — move off the bright one.',
       kind: 'overload',
     });
     bus.emit('core-spike-telegraph');
@@ -175,19 +193,23 @@ export class NucleusSpikeBurst {
     if (this.phase === 'telegraph') {
       this.simSpikes(dt, player, onDamage);
       if (!allowFire) {
-        this.layoutTelegraph(1 - this.timer / CORE.spikeTelegraphSec);
+        this.layoutTelegraph(1 - this.timer / this.profile.telegraphSec);
         return;
       }
       this.timer -= dt;
-      const u = 1 - Math.max(0, this.timer) / CORE.spikeTelegraphSec;
+      const u = 1 - Math.max(0, this.timer) / this.profile.telegraphSec;
       this.layoutTelegraph(u);
       if (this.timer <= 0) this.fire();
       return;
     }
 
-    // fire — shockwave + flying spikes
+    // fire — shockwave + flying spikes (optional extra spray waves)
     this.timer -= dt;
-    const shockT = 1 - Math.max(0, this.timer) / CORE.spikeShockDuration;
+    if (this.wavesLeft > 0) {
+      this.waveTimer -= dt;
+      if (this.waveTimer <= 0) this.releaseWave();
+    }
+    const shockT = 1 - Math.max(0, this.timer) / this.profile.shockDuration;
     this.layoutShock(Math.min(1, Math.max(0, shockT)), player, onDamage);
     this.simSpikes(dt, player, onDamage);
     if (this.timer <= 0) this.hideBurstFx();
@@ -281,30 +303,54 @@ export class NucleusSpikeBurst {
 
   private fire(): void {
     this.phase = 'fire';
-    this.timer = CORE.spikeShockDuration;
+    this.timer = Math.max(
+      this.profile.shockDuration,
+      (this.profile.sprayWaves - 1) * 0.28 + 0.15
+    );
     this.shockHit = false;
+    this.wavesLeft = Math.max(1, this.profile.sprayWaves);
+    this.waveTimer = 0;
+    this.nextSpikeSlot = 0;
     for (const line of this.lines) line.visible = false;
     this.setOpacity(this.warnSphere, 0);
+    this.releaseWave();
+    bus.emit('core-spike-fire', { count: this.dirCount, waves: this.profile.sprayWaves });
+    bus.emit('camera-shake-request', { amount: 0.08 });
+  }
 
-    const speed = CORE.spikeSpeed;
-    for (let i = 0; i < this.dirCount; i++) {
-      const s = this.spikes[i];
+  private releaseWave(): void {
+    if (this.wavesLeft <= 0) return;
+    const waves = Math.max(1, this.profile.sprayWaves);
+    const waveIndex = waves - this.wavesLeft;
+    const perWave = Math.ceil(this.dirCount / waves);
+    const start = waveIndex * perWave;
+    const end = Math.min(this.dirCount, start + perWave);
+    const speed = this.profile.speed;
+    for (let i = start; i < end; i++) {
+      const slot = this.nextSpikeSlot++;
+      if (slot >= this.spikes.length) break;
+      const s = this.spikes[slot];
       const aimed = i === this.aimedIndex;
       s.active = true;
       s.aimed = aimed;
-      s.life = CORE.spikeLife;
+      s.airBurst = !aimed && Math.random() < this.profile.airBurstChance;
+      s.maxLife = this.profile.life;
+      s.life = this.profile.life;
+      s.burstAt = s.airBurst ? s.maxLife * (0.38 + Math.random() * 0.22) : -1;
       s.hp = aimed ? 24 : 16;
       s.pos.copy(this.origin).addScaledVector(this.dirs[i], 1.1);
       s.vel.copy(this.dirs[i]).multiplyScalar(aimed ? speed * 1.06 : speed);
       s.mesh.visible = true;
-      (s.mesh.material as THREE.MeshBasicMaterial).color.setHex(aimed ? 0xfff4cc : 0xff8844);
+      (s.mesh.material as THREE.MeshBasicMaterial).color.setHex(
+        s.airBurst ? 0xff66aa : aimed ? 0xfff4cc : 0xff8844
+      );
       (s.mesh.material as THREE.MeshBasicMaterial).opacity = 1;
       this.orient(s.mesh, s.vel);
       s.mesh.position.copy(s.pos);
-      s.mesh.scale.setScalar(aimed ? 1.35 : 1);
+      s.mesh.scale.setScalar(aimed ? 1.35 : s.airBurst ? 1.15 : 1);
     }
-    bus.emit('core-spike-fire', { count: this.dirCount });
-    bus.emit('camera-shake-request', { amount: 0.08 });
+    this.wavesLeft--;
+    this.waveTimer = 0.28;
   }
 
   private simSpikes(
@@ -312,7 +358,7 @@ export class NucleusSpikeBurst {
     player: THREE.Vector3,
     onDamage: (n: number) => void
   ): void {
-    const r = CORE.spikeHitRadius;
+    const r = this.profile.hitRadius;
     const r2 = r * r;
     for (const s of this.spikes) {
       if (!s.active) continue;
@@ -320,8 +366,17 @@ export class NucleusSpikeBurst {
       s.pos.addScaledVector(s.vel, dt);
       s.mesh.position.copy(s.pos);
       this.orient(s.mesh, s.vel);
+      if (s.airBurst && s.life <= s.burstAt) {
+        const d = s.pos.distanceTo(player);
+        if (d <= this.profile.airBurstRadius + 0.4) {
+          onDamage(this.profile.airBurstDamage);
+        }
+        s.mesh.scale.setScalar(2.4);
+        this.killSpike(s);
+        continue;
+      }
       if (s.pos.distanceToSquared(player) <= r2) {
-        onDamage(CORE.spikeDamage * (s.aimed ? 1.15 : 1));
+        onDamage(this.profile.damage * (s.aimed ? 1.15 : 1));
         this.killSpike(s);
         continue;
       }
@@ -350,7 +405,7 @@ export class NucleusSpikeBurst {
       mat.opacity = aimed ? 0.28 + u * 0.55 : 0.1 + u * 0.22;
     }
 
-    const warnR = 1.4 + u * CORE.spikeShockRadius;
+    const warnR = 1.4 + u * this.profile.shockRadius;
     this.warnSphere.position.copy(this.origin);
     this.warnSphere.scale.setScalar(warnR);
     this.setOpacity(this.warnSphere, 0.12 + u * 0.28);
@@ -366,7 +421,7 @@ export class NucleusSpikeBurst {
     player: THREE.Vector3,
     onDamage: (n: number) => void
   ): void {
-    const r = CORE.spikeShockRadius * Math.min(1, t * 1.15);
+    const r = this.profile.shockRadius * Math.min(1, t * 1.15);
     this.shockMesh.position.copy(this.origin);
     this.shockMesh.scale.setScalar(Math.max(0.2, r));
     this.setOpacity(this.shockMesh, (1 - t) * 0.35);
@@ -376,7 +431,7 @@ export class NucleusSpikeBurst {
 
     if (!this.shockHit && t > 0.12 && player.distanceTo(this.origin) <= r + 0.6) {
       this.shockHit = true;
-      onDamage(CORE.spikeShockDamage);
+      onDamage(this.profile.shockDamage);
     }
   }
 

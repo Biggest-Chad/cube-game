@@ -13,7 +13,7 @@ import {
 } from '../data/constraints';
 import type { CubeManager } from './CubeManager';
 
-export type EnemyDroneRole = 'attack' | 'repair';
+export type EnemyDroneRole = 'attack' | 'repair' | 'kamikaze';
 
 export interface EnemyDroneConfig {
   hp: number;
@@ -171,6 +171,17 @@ export class EnemyDrone {
       this.orbitHeight + Math.sin(this.orbitAngle * 1.3) * 0.8,
       Math.sin(this.orbitAngle) * this.orbitRadius
     );
+    if (this.role === 'kamikaze') {
+      this._pos.copy(playerPos);
+      this.group.lookAt(playerPos);
+      this.group.position.lerp(this._pos, 1 - Math.exp(-speed * 0.55 * dt));
+      if (this.group.position.distanceTo(playerPos) <= 1.45) {
+        onPlayerHit(this.cfg.damage);
+        this.applyDamage(1e9);
+      }
+      return;
+    }
+
     // Attack drones dive toward player; repair drones hug the shell
     if (this.role === 'attack') {
       const dive = Math.sin(this.orbitAngle * 0.5) > 0.7;

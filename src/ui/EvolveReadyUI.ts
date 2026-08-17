@@ -23,8 +23,8 @@ export class EvolveReadyUI {
     if (body) {
       body.textContent =
         `Ascension ${opts.nextTier} is ready (${opts.cost.toLocaleString()} FRAG). ` +
-        `You do not have to evolve immediately. ` +
-        `When you do, leftover fragments convert to Core Energy (${opts.fragPerCore.toLocaleString()} FRAG → 1 CORE) for Lattice research.`;
+        `Evolving retrains the combat shop, resets you to Chronobeacon 5, and skips 10 / 15 / 20… until your furthest checkpoint. ` +
+        `Leftover fragments convert to Core Energy (${opts.fragPerCore.toLocaleString()} FRAG → 1 CORE).`;
     }
     this.card.classList.remove('panel-hidden');
     this.visible = true;

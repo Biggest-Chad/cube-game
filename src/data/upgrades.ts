@@ -11,6 +11,8 @@ import {
   ARMOR_MAX_EFFECTIVE_REDUCTION,
   DRONE_ABSOLUTE_HARD_CAP,
   DRONE_ALLY_PROTOCOL_COST_FRAGMENTS,
+  REPEATABLE_UPGRADE_CAP_PER_EVOLUTION,
+  REPEATABLE_UPGRADE_GENERATED_RANKS,
   TECH_CORE_ENERGY_MULTIPLIER_CAP,
   TECH_CRIT_CHANCE_CAP,
   TECH_CRIT_MULT_CAP,
@@ -34,6 +36,7 @@ export type ShopTabId =
   | 'main_gun'
   | 'loadouts'
   | 'drone_bays'
+  | 'bases'
   | 'other';
 
 export type CostCurrency = 'fragments' | 'coreEnergy';
@@ -106,6 +109,8 @@ export interface UpgradeNodeDef {
   costCurrency: CostCurrency;
   prerequisites: string[];
   effects: UpgradeEffect;
+  /** Highly repeatable stat ranks — purchase cap scales with Evolution. */
+  repeatable?: boolean;
 }
 
 export interface ShopTabDef {
@@ -122,6 +127,7 @@ export const SHOP_TABS: ShopTabDef[] = [
   { id: 'main_gun', label: 'GUN', icon: '⚡', branches: ['offense'] },
   { id: 'loadouts', label: 'LOAD', icon: '◎', branches: ['loadouts'] },
   { id: 'drone_bays', label: 'DRONES', icon: '⬡', branches: ['drones'] },
+  { id: 'bases', label: 'BASE', icon: '▲', branches: [] },
   { id: 'other', label: 'OTHER', icon: '✶', branches: ['analysis', 'idle', 'global'] },
 ];
 
@@ -150,7 +156,14 @@ export function normalizeShopTabId(tab: string | undefined | null): ShopTabId | 
   if (!tab) return undefined;
   if (tab === 'drones') return 'drone_bays';
   if (tab === 'economy' || tab === 'global') return 'other';
-  if (tab === 'main_gun' || tab === 'loadouts' || tab === 'drone_bays' || tab === 'ship' || tab === 'other') {
+  if (
+    tab === 'main_gun' ||
+    tab === 'loadouts' ||
+    tab === 'drone_bays' ||
+    tab === 'bases' ||
+    tab === 'ship' ||
+    tab === 'other'
+  ) {
     return tab;
   }
   return undefined;
@@ -191,7 +204,8 @@ function chainNodes(
     costCurrency?: CostCurrency;
     effects: UpgradeEffect;
     extraPrereq?: string[];
-  }>
+  }>,
+  repeatable = false
 ): UpgradeNodeDef[] {
   return ranks.map((r, i) => {
     const prereqs: string[] = i === 0 ? [...(r.extraPrereq ?? [])] : [ranks[i - 1].id, ...(r.extraPrereq ?? [])];
@@ -206,53 +220,89 @@ function chainNodes(
       costCurrency: r.costCurrency,
       prerequisites: prereqs,
       effects: r.effects,
+      repeatable,
     });
   });
+}
+
+function tableThenGeo(table: number[], growth: number, rank: number): number {
+  if (rank <= table.length) return table[rank - 1];
+  return Math.round(table[table.length - 1] * Math.pow(growth, rank - table.length));
+}
+
+function repeatableChain(
+  chain: string,
+  branch: UpgradeBranch,
+  spec: {
+    name: string;
+    extraPrereq?: string[];
+    cost: (rank: number) => number;
+    describe: (rank: number) => { description: string; effects: UpgradeEffect };
+  }
+): UpgradeNodeDef[] {
+  const ranks = [];
+  for (let i = 1; i <= REPEATABLE_UPGRADE_GENERATED_RANKS; i++) {
+    const d = spec.describe(i);
+    ranks.push({
+      id: `${chain}_${i}`,
+      name: spec.name,
+      description: d.description,
+      cost: spec.cost(i),
+      effects: d.effects,
+      extraPrereq: i === 1 ? spec.extraPrereq : undefined,
+    });
+  }
+  return chainNodes(chain, branch, ranks, true);
 }
 
 export const UPGRADES: UpgradeNodeDef[] = [
   // ═══════════════════════════════════════════
   // SHIP — speed, accel, hull, shield, armor, zoom
   // ═══════════════════════════════════════════
-  ...chainNodes('ship_speed', 'ship', [
-    { id: 'ship_speed_1', name: 'Thrusters', description: '+10% orbit speed', cost: 45, effects: { orbitSpeedAdd: 0.1 } },
-    { id: 'ship_speed_2', name: 'Thrusters', description: '+11% orbit speed', cost: 100, effects: { orbitSpeedAdd: 0.11 } },
-    { id: 'ship_speed_3', name: 'Thrusters', description: '+12% orbit speed', cost: 200, effects: { orbitSpeedAdd: 0.12 } },
-    { id: 'ship_speed_4', name: 'Thrusters', description: '+12% orbit speed', cost: 360, effects: { orbitSpeedAdd: 0.12 } },
-    { id: 'ship_speed_5', name: 'Thrusters', description: '+13% orbit speed', cost: 600, effects: { orbitSpeedAdd: 0.13 } },
-    { id: 'ship_speed_6', name: 'Thrusters', description: '+13% orbit speed', cost: 950, effects: { orbitSpeedAdd: 0.13 } },
-    { id: 'ship_speed_7', name: 'Thrusters', description: '+14% orbit speed (cap band)', cost: 1400, effects: { orbitSpeedAdd: 0.14 } },
-  ]),
-  ...chainNodes('ship_accel', 'ship', [
-    { id: 'ship_accel_1', name: 'Vector Coils', description: '+14% angular accel', cost: 55, effects: { accelAdd: 0.14 } },
-    { id: 'ship_accel_2', name: 'Vector Coils', description: '+14% angular accel', cost: 130, effects: { accelAdd: 0.14 } },
-    { id: 'ship_accel_3', name: 'Vector Coils', description: '+16% angular accel', cost: 280, effects: { accelAdd: 0.16 } },
-    { id: 'ship_accel_4', name: 'Vector Coils', description: '+16% angular accel', cost: 480, effects: { accelAdd: 0.16 } },
-    { id: 'ship_accel_5', name: 'Vector Coils', description: '+18% angular accel', cost: 780, effects: { accelAdd: 0.18 } },
-  ]),
-  ...chainNodes('ship_hull', 'ship', [
-    { id: 'ship_hull_1', name: 'Hull Plating', description: '+40 max hull', cost: 55, effects: { maxHullAdd: 40 } },
-    { id: 'ship_hull_2', name: 'Hull Plating', description: '+50 max hull', cost: 130, effects: { maxHullAdd: 50 } },
-    { id: 'ship_hull_3', name: 'Hull Plating', description: '+65 max hull', cost: 260, effects: { maxHullAdd: 65 } },
-    { id: 'ship_hull_4', name: 'Hull Plating', description: '+80 max hull', cost: 450, effects: { maxHullAdd: 80 } },
-    { id: 'ship_hull_5', name: 'Hull Plating', description: '+100 max hull', cost: 750, effects: { maxHullAdd: 100 } },
-    { id: 'ship_hull_6', name: 'Hull Plating', description: '+120 max hull', cost: 1100, effects: { maxHullAdd: 120 } },
-  ]),
-  ...chainNodes('ship_shield', 'ship', [
-    { id: 'ship_shield_1', name: 'Shield Matrix', description: '+30 max shield · +2 regen', cost: 70, effects: { maxShieldAdd: 30, shieldRegenAdd: 2 } },
-    { id: 'ship_shield_2', name: 'Shield Matrix', description: '+40 max shield · +2 regen', cost: 150, effects: { maxShieldAdd: 40, shieldRegenAdd: 2 } },
-    { id: 'ship_shield_3', name: 'Shield Matrix', description: '+50 max shield · +3 regen', cost: 300, effects: { maxShieldAdd: 50, shieldRegenAdd: 3 } },
-    { id: 'ship_shield_4', name: 'Shield Matrix', description: '+65 max shield · +3 regen', cost: 520, effects: { maxShieldAdd: 65, shieldRegenAdd: 3 } },
-    { id: 'ship_shield_5', name: 'Shield Matrix', description: '+80 max shield · +4 regen', cost: 850, effects: { maxShieldAdd: 80, shieldRegenAdd: 4 } },
-  ]),
-  ...chainNodes('ship_armor', 'ship', [
-    { id: 'ship_armor_1', name: 'Ablative Weave', description: '+25 armor rating', cost: 80, effects: { armorRatingAdd: 25 } },
-    { id: 'ship_armor_2', name: 'Ablative Weave', description: '+28 armor rating', cost: 170, effects: { armorRatingAdd: 28 } },
-    { id: 'ship_armor_3', name: 'Ablative Weave', description: '+32 armor rating', cost: 320, effects: { armorRatingAdd: 32 } },
-    { id: 'ship_armor_4', name: 'Ablative Weave', description: '+36 armor rating', cost: 560, effects: { armorRatingAdd: 36 } },
-    { id: 'ship_armor_5', name: 'Ablative Weave', description: '+40 armor rating', cost: 880, effects: { armorRatingAdd: 40 } },
-    { id: 'ship_armor_6', name: 'Ablative Weave', description: '+45 armor rating', cost: 1300, effects: { armorRatingAdd: 45 } },
-  ]),
+  ...repeatableChain('ship_speed', 'ship', {
+    name: 'Thrusters',
+    cost: (r) => tableThenGeo([45, 100, 200, 360, 600, 950, 1400], 1.4, r),
+    describe: (r) => {
+      const add = r <= 3 ? 0.1 + (r - 1) * 0.01 : r <= 7 ? 0.13 : 0.06;
+      return { description: `+${Math.round(add * 100)}% orbit speed`, effects: { orbitSpeedAdd: add } };
+    },
+  }),
+  ...repeatableChain('ship_accel', 'ship', {
+    name: 'Vector Coils',
+    cost: (r) => tableThenGeo([55, 130, 280, 480, 780], 1.42, r),
+    describe: (r) => {
+      const add = r <= 5 ? 0.14 + (r > 2 ? 0.02 : 0) : 0.08;
+      return { description: `+${Math.round(add * 100)}% angular accel`, effects: { accelAdd: add } };
+    },
+  }),
+  ...repeatableChain('ship_hull', 'ship', {
+    name: 'Hull Plating',
+    cost: (r) => tableThenGeo([55, 130, 260, 450, 750, 1100], 1.42, r),
+    describe: (r) => {
+      const add = r <= 6 ? 30 + r * 15 : 28;
+      return { description: `+${add} max hull`, effects: { maxHullAdd: add } };
+    },
+  }),
+  ...repeatableChain('ship_shield', 'ship', {
+    name: 'Shield Matrix',
+    cost: (r) => tableThenGeo([70, 150, 300, 520, 850], 1.42, r),
+    describe: (r) => {
+      const shield = r <= 5 ? 20 + r * 10 : 24;
+      const regen = r <= 5 ? 2 + Math.floor((r - 1) / 2) : 2;
+      return {
+        description: `+${shield} max shield · +${regen} regen`,
+        effects: { maxShieldAdd: shield, shieldRegenAdd: regen },
+      };
+    },
+  }),
+  ...repeatableChain('ship_armor', 'ship', {
+    name: 'Ablative Weave',
+    cost: (r) => tableThenGeo([80, 170, 320, 560, 880, 1300], 1.4, r),
+    describe: (r) => {
+      const add = r <= 6 ? 22 + r * 4 : 18;
+      return { description: `+${add} armor rating`, effects: { armorRatingAdd: add } };
+    },
+  }),
   ...chainNodes('ship_zoom', 'ship', [
     { id: 'ship_zoom_1', name: 'Long Lens', description: 'Extended zoom range', cost: 90, effects: { zoomRangeAdd: 12 } },
     { id: 'ship_zoom_2', name: 'Deep Focus', description: 'More zoom for large cubes', cost: 240, effects: { zoomRangeAdd: 16 } },
@@ -266,24 +316,22 @@ export const UPGRADES: UpgradeNodeDef[] = [
   // ═══════════════════════════════════════════
   // MAIN GUN — damage, rate, unique modifiers
   // ═══════════════════════════════════════════
-  ...chainNodes('off_damage', 'offense', [
-    { id: 'off_damage_1', name: 'Pulse Amp', description: '+14% main gun damage', cost: 40, effects: { damageAdd: 0.14 } },
-    { id: 'off_damage_2', name: 'Pulse Amp', description: '+14% main gun damage', cost: 95, effects: { damageAdd: 0.14 } },
-    { id: 'off_damage_3', name: 'Pulse Amp', description: '+15% main gun damage', cost: 200, effects: { damageAdd: 0.15 } },
-    { id: 'off_damage_4', name: 'Pulse Amp', description: '+15% main gun damage', cost: 380, effects: { damageAdd: 0.15 } },
-    { id: 'off_damage_5', name: 'Pulse Amp', description: '+16% main gun damage', cost: 650, effects: { damageAdd: 0.16 } },
-    { id: 'off_damage_6', name: 'Pulse Amp', description: '+16% main gun damage', cost: 1000, effects: { damageAdd: 0.16 } },
-    { id: 'off_damage_7', name: 'Pulse Amp', description: '+18% main gun damage', cost: 1500, effects: { damageAdd: 0.18 } },
-    { id: 'off_damage_8', name: 'Pulse Amp', description: '+18% main gun damage', cost: 2200, effects: { damageAdd: 0.18 } },
-  ]),
-  ...chainNodes('off_rate', 'offense', [
-    { id: 'off_rate_1', name: 'Cycle Boost', description: '+12% fire rate', cost: 50, effects: { fireRateAdd: 0.12 } },
-    { id: 'off_rate_2', name: 'Cycle Boost', description: '+12% fire rate', cost: 130, effects: { fireRateAdd: 0.12 } },
-    { id: 'off_rate_3', name: 'Cycle Boost', description: '+13% fire rate', cost: 280, effects: { fireRateAdd: 0.13 } },
-    { id: 'off_rate_4', name: 'Cycle Boost', description: '+14% fire rate', cost: 500, effects: { fireRateAdd: 0.14 } },
-    { id: 'off_rate_5', name: 'Cycle Boost', description: '+14% fire rate', cost: 820, effects: { fireRateAdd: 0.14 } },
-    { id: 'off_rate_6', name: 'Cycle Boost', description: '+15% fire rate', cost: 1200, effects: { fireRateAdd: 0.15 } },
-  ]),
+  ...repeatableChain('off_damage', 'offense', {
+    name: 'Pulse Amp',
+    cost: (r) => tableThenGeo([40, 95, 200, 380, 650, 1000, 1500, 2200], 1.42, r),
+    describe: (r) => {
+      const add = r <= 4 ? 0.14 : r <= 8 ? 0.16 : 0.06;
+      return { description: `+${Math.round(add * 100)}% main gun damage`, effects: { damageAdd: add } };
+    },
+  }),
+  ...repeatableChain('off_rate', 'offense', {
+    name: 'Cycle Boost',
+    cost: (r) => tableThenGeo([50, 130, 280, 500, 820, 1200], 1.42, r),
+    describe: (r) => {
+      const add = r <= 6 ? 0.12 + Math.floor((r - 1) / 2) * 0.01 : 0.06;
+      return { description: `+${Math.round(add * 100)}% fire rate`, effects: { fireRateAdd: add } };
+    },
+  }),
   ...chainNodes('off_multi', 'offense', [
     { id: 'off_multi_1', name: 'Split Beam', description: '+1 concurrent bolt', cost: 180, effects: { multiShotAdd: 1 }, extraPrereq: ['off_rate_1'] },
     { id: 'off_multi_2', name: 'Tri-Beam', description: '+1 concurrent bolt', cost: 480, effects: { multiShotAdd: 1 } },
@@ -309,12 +357,18 @@ export const UPGRADES: UpgradeNodeDef[] = [
     { id: 'off_splash_2', name: 'Nova Ring', description: 'Larger splash', cost: 520, effects: { splashAdd: 1.3 } },
     { id: 'off_splash_3', name: 'Cascade Halo', description: 'Wide detonation ring', cost: 1000, effects: { splashAdd: 1.4 } },
   ]),
-  ...chainNodes('off_crit', 'offense', [
-    { id: 'off_crit_1', name: 'Overcharge', description: '+7% crit chance', cost: 260, effects: { critChance: 0.07 }, extraPrereq: ['off_damage_2'] },
-    { id: 'off_crit_2', name: 'Overcharge', description: '+7% crit chance', cost: 480, effects: { critChance: 0.07 } },
-    { id: 'off_crit_3', name: 'Overcharge', description: '+7% crit chance', cost: 820, effects: { critChance: 0.07 } },
-    { id: 'off_crit_4', name: 'Overcharge', description: '+6% crit chance (soft cap)', cost: 1300, effects: { critChance: 0.06 } },
-  ]),
+  ...repeatableChain('off_crit', 'offense', {
+    name: 'Overcharge',
+    extraPrereq: ['off_damage_2'],
+    cost: (r) => tableThenGeo([260, 480, 820, 1300], 1.38, r),
+    describe: (r) => {
+      const add = r <= 3 ? 0.07 : r === 4 ? 0.06 : 0.015;
+      return {
+        description: `+${Math.round(add * 1000) / 10}% crit chance`,
+        effects: { critChance: add },
+      };
+    },
+  }),
 
   // LOADOUTS tab: hardpoint bays unlock via Ascension (Evolve) + Core Energy in the loadout UI.
   // Weapon catalog / branches live in ShopUI loadout panel — no fragment hardpoint chain here.
@@ -334,15 +388,24 @@ export const UPGRADES: UpgradeNodeDef[] = [
     },
   ]),
   // Hull / respawn / shield upgrades remain sequential chains
-  ...chainNodes('drone_dmg', 'drones', [
-    { id: 'drone_dmg_1', name: 'Drone Lens', description: '+20% drone damage', cost: 150, effects: { droneDamageAdd: 0.2 }, extraPrereq: ['drone_unlock'] },
-    { id: 'drone_dmg_2', name: 'Drone Lens', description: '+22% drone damage', cost: 338, effects: { droneDamageAdd: 0.22 } },
-    { id: 'drone_dmg_3', name: 'Drone Lens', description: '+25% drone damage', cost: 600, effects: { droneDamageAdd: 0.25 } },
-  ]),
-  ...chainNodes('drone_rate', 'drones', [
-    { id: 'drone_rate_1', name: 'Swarm Cycle', description: '+18% drone fire rate', cost: 180, effects: { droneFireRateAdd: 0.18 }, extraPrereq: ['drone_dmg_1'] },
-    { id: 'drone_rate_2', name: 'Swarm Cycle', description: '+20% drone fire rate', cost: 390, effects: { droneFireRateAdd: 0.2 } },
-  ]),
+  ...repeatableChain('drone_dmg', 'drones', {
+    name: 'Drone Lens',
+    extraPrereq: ['drone_unlock'],
+    cost: (r) => tableThenGeo([150, 338, 600], 1.48, r),
+    describe: (r) => {
+      const add = r <= 3 ? 0.18 + r * 0.02 : 0.08;
+      return { description: `+${Math.round(add * 100)}% drone damage`, effects: { droneDamageAdd: add } };
+    },
+  }),
+  ...repeatableChain('drone_rate', 'drones', {
+    name: 'Swarm Cycle',
+    extraPrereq: ['drone_dmg_1'],
+    cost: (r) => tableThenGeo([180, 390], 1.5, r),
+    describe: (r) => {
+      const add = r <= 2 ? 0.16 + r * 0.02 : 0.07;
+      return { description: `+${Math.round(add * 100)}% drone fire rate`, effects: { droneFireRateAdd: add } };
+    },
+  }),
   ...chainNodes('drone_prio_core', 'drones', [
     {
       id: 'drone_prio_core',
@@ -363,18 +426,15 @@ export const UPGRADES: UpgradeNodeDef[] = [
       extraPrereq: ['drone_prio_core'],
     },
   ]),
-  ...chainNodes('drone_hp', 'drones', [
-    {
-      id: 'drone_hp_1',
-      name: 'Hull Plates',
-      description: '+20% drone max HP',
-      cost: 165,
-      effects: { droneHpAdd: 0.2 },
-      extraPrereq: ['drone_unlock'],
+  ...repeatableChain('drone_hp', 'drones', {
+    name: 'Hull Plates',
+    extraPrereq: ['drone_unlock'],
+    cost: (r) => tableThenGeo([165, 360, 675], 1.48, r),
+    describe: (r) => {
+      const add = r <= 3 ? 0.15 + r * 0.05 : 0.08;
+      return { description: `+${Math.round(add * 100)}% drone max HP`, effects: { droneHpAdd: add } };
     },
-    { id: 'drone_hp_2', name: 'Hull Plates', description: '+25% drone max HP', cost: 360, effects: { droneHpAdd: 0.25 } },
-    { id: 'drone_hp_3', name: 'Hull Plates', description: '+30% drone max HP', cost: 675, effects: { droneHpAdd: 0.3 } },
-  ]),
+  }),
   ...chainNodes('drone_respawn', 'drones', [
     {
       id: 'drone_respawn_1',
@@ -409,21 +469,26 @@ export const UPGRADES: UpgradeNodeDef[] = [
   // ═══════════════════════════════════════════
   // ECONOMY — analysis + idle
   // ═══════════════════════════════════════════
-  ...chainNodes('ana_frag', 'analysis', [
-    { id: 'ana_frag_1', name: 'Fragment Scan', description: '+10% Data Fragments', cost: 65, effects: { fragmentAdd: 0.1 } },
-    { id: 'ana_frag_2', name: 'Deep Extract', description: '+12% Data Fragments', cost: 180, effects: { fragmentAdd: 0.12 } },
-    { id: 'ana_frag_3', name: 'Parity Harvest', description: '+14% Data Fragments', cost: 400, effects: { fragmentAdd: 0.14 } },
-    { id: 'ana_frag_4', name: 'Lattice Siphon', description: '+14% Data Fragments (cap band)', cost: 800, effects: { fragmentAdd: 0.14 } },
-  ]),
+  ...repeatableChain('ana_frag', 'analysis', {
+    name: 'Fragment Scan',
+    cost: (r) => tableThenGeo([65, 180, 400, 800], 1.45, r),
+    describe: (r) => {
+      const add = r <= 4 ? 0.08 + r * 0.02 : 0.05;
+      return { description: `+${Math.round(add * 100)}% Data Fragments`, effects: { fragmentAdd: add } };
+    },
+  }),
   ...chainNodes('ana_core', 'analysis', [
     { id: 'ana_core_1', name: 'Core Reader', description: '+12% Core Energy on clear', cost: 160, effects: { coreEnergyAdd: 0.12 }, extraPrereq: ['ana_frag_1'] },
     { id: 'ana_core_2', name: 'Energy Lattice', description: '+15% Core Energy', cost: 480, effects: { coreEnergyAdd: 0.15 } },
   ]),
-  ...chainNodes('idle_rate', 'idle', [
-    { id: 'idle_rate_1', name: 'Background Tick', description: '+25% idle clear rate', cost: 100, effects: { idleRateAdd: 0.25 } },
-    { id: 'idle_rate_2', name: 'Ghost Protocol', description: '+30% idle clear rate', cost: 280, effects: { idleRateAdd: 0.3 } },
-    { id: 'idle_rate_3', name: 'Autonomous Siege', description: '+35% idle clear rate', cost: 650, effects: { idleRateAdd: 0.35 }, extraPrereq: ['drone_unlock'] },
-  ]),
+  ...repeatableChain('idle_rate', 'idle', {
+    name: 'Background Tick',
+    cost: (r) => tableThenGeo([100, 280, 650], 1.45, r),
+    describe: (r) => {
+      const add = r <= 3 ? 0.2 + r * 0.05 : 0.1;
+      return { description: `+${Math.round(add * 100)}% idle clear rate`, effects: { idleRateAdd: add } };
+    },
+  }),
   ...chainNodes('idle_cap', 'idle', [
     { id: 'idle_cap_1', name: 'Cache Buffer', description: '+40% offline time cap', cost: 150, effects: { idleCapAdd: 0.4 }, extraPrereq: ['idle_rate_1'] },
     { id: 'idle_cap_2', name: 'Deep Sleep', description: '+60% offline time cap', cost: 450, effects: { idleCapAdd: 0.6 } },
@@ -475,62 +540,6 @@ export const UPGRADES: UpgradeNodeDef[] = [
     },
   ]),
 
-  // Late-tier sinks until EVOLVE / prestige ships — expensive, diminishing
-  ...chainNodes('off_damage_late', 'offense', [
-    {
-      id: 'off_damage_late_1',
-      name: 'Overclock Lattice',
-      description: '+6% main damage (late)',
-      cost: 2200,
-      effects: { damageAdd: 0.06 },
-      extraPrereq: ['off_damage_8'],
-    },
-    {
-      id: 'off_damage_late_2',
-      name: 'Overclock Lattice',
-      description: '+6% main damage (late)',
-      cost: 5500,
-      effects: { damageAdd: 0.06 },
-    },
-    {
-      id: 'off_damage_late_3',
-      name: 'Overclock Lattice',
-      description: '+7% main damage (late)',
-      cost: 12000,
-      effects: { damageAdd: 0.07 },
-    },
-    {
-      id: 'off_damage_late_4',
-      name: 'Overclock Lattice',
-      description: '+7% main damage (soft cap)',
-      cost: 28000,
-      effects: { damageAdd: 0.07 },
-    },
-  ]),
-  ...chainNodes('ship_hull_late', 'ship', [
-    {
-      id: 'ship_hull_late_1',
-      name: 'Deep Plating',
-      description: '+25 max hull (late)',
-      cost: 1800,
-      effects: { maxHullAdd: 25 },
-      extraPrereq: ['ship_hull_6'],
-    },
-    {
-      id: 'ship_hull_late_2',
-      name: 'Deep Plating',
-      description: '+30 max hull (late)',
-      cost: 4800,
-      effects: { maxHullAdd: 30 },
-    },
-    {
-      id: 'ship_hull_late_3',
-      name: 'Deep Plating',
-      description: '+35 max hull (late)',
-      cost: 11000,
-      effects: { maxHullAdd: 35 },
-    },
-  ]),
   // Extra bay slots are purchased in the DRONES stock panel (not sequential chains).
 ];
 
@@ -577,7 +586,8 @@ export interface SequentialVisibleNode {
 export function getSequentialVisibleNodes(
   owned: Set<string> | string[],
   _currency?: { dataFragments: number; coreEnergy: number },
-  tabId?: ShopTabId
+  tabId?: ShopTabId,
+  repeatableCap = REPEATABLE_UPGRADE_CAP_PER_EVOLUTION
 ): SequentialVisibleNode[] {
   const ownedSet = owned instanceof Set ? owned : new Set(owned);
   const chains = tabId
@@ -599,9 +609,16 @@ export function getSequentialVisibleNodes(
   for (const chain of chains) {
     const ranks = getChainNodes(chain);
     if (ranks.length === 0) continue;
-    const maxRank = ranks.length;
+    const generated = ranks.length;
+    const capped = ranks[0]?.repeatable
+      ? Math.min(generated, Math.max(1, repeatableCap))
+      : generated;
+    const maxRank = capped;
     let ownedCount = 0;
-    for (const r of ranks) if (ownedSet.has(r.id)) ownedCount++;
+    for (const r of ranks) {
+      if (r.rank > maxRank) break;
+      if (ownedSet.has(r.id)) ownedCount++;
+    }
 
     if (ownedCount >= maxRank) {
       const last = ranks[maxRank - 1];

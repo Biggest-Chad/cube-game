@@ -98,6 +98,8 @@ export class Ship {
       metalness: metal,
       roughness: rough,
       envMapIntensity: 0.9,
+      emissive: 0x143040,
+      emissiveIntensity: 0.22,
     });
   }
 

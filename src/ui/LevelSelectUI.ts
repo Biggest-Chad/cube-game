@@ -1,4 +1,5 @@
-import { LEVELS } from '../data/levels';
+import { getLevel, LEVELS } from '../data/levels';
+import { isChronobeacon } from '../data/evolve';
 
 export class LevelSelectUI {
   private root: HTMLElement;
@@ -19,7 +20,7 @@ export class LevelSelectUI {
         <div class="panel-chrome">
           <div class="panel-chrome-left">
             <h2 class="panel-title">SECTORS</h2>
-            <p class="panel-sub">Select a cleared sector to redeploy</p>
+            <p class="panel-sub">Chronobeacons every 5 sectors · skip them after Evolve</p>
           </div>
           <div class="panel-chrome-right">
             ${
@@ -34,20 +35,24 @@ export class LevelSelectUI {
         </div>
         <div class="level-grid landscape-grid">
     `;
-    for (const l of LEVELS) {
+    const maxId = Math.max(LEVELS.length, highest, current, 30);
+    for (let id = 1; id <= maxId; id++) {
+      const l = getLevel(id);
       const unlocked = l.id <= highest;
+      const beacon = isChronobeacon(l.id);
       const cls = [
         'level-card',
         'ui-btn',
         !unlocked ? 'locked' : '',
         l.id === current ? 'current' : '',
         unlocked && l.id < highest ? 'cleared' : '',
+        beacon ? 'beacon' : '',
       ]
         .filter(Boolean)
         .join(' ');
       html += `
         <button class="${cls}" data-id="${l.id}" type="button" ${!unlocked ? 'disabled' : ''}>
-          <div class="lv">${String(l.id).padStart(2, '0')}</div>
+          <div class="lv">${String(l.id).padStart(2, '0')}${beacon ? ' ◆' : ''}</div>
           <div class="meta">${l.size}³</div>
           <div class="meta name">${l.name}</div>
         </button>`;
