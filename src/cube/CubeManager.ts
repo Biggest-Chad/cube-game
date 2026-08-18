@@ -742,6 +742,41 @@ export class CubeManager {
     return { instanceId: bestId, distance: bestDist };
   }
 
+  /** Nearest live voxel to a world point. Distance-only — no peel / type score. */
+  findClosestLive(
+    from: THREE.Vector3,
+    maxDist: number,
+    allowNucleus = true
+  ): { instanceId: number; distance: number } | null {
+    if (!this.mesh && !this.nucleus.isActive) return null;
+    let bestId = -1;
+    let bestDist = maxDist;
+    if (this.mesh) {
+      for (let id = 0; id < this.mesh.count; id++) {
+        const t = this.getBlockType(id);
+        if (t === BlockType.Empty || t === BlockType.Core) continue;
+        this.mesh.getMatrixAt(id, _matrix);
+        _pos.setFromMatrixPosition(_matrix);
+        const d = from.distanceTo(_pos);
+        if (d < bestDist) {
+          bestDist = d;
+          bestId = id;
+        }
+      }
+    }
+    if (allowNucleus && this.nucleus.isActive) {
+      this.nucleus.getWorldCenter(_pos);
+      const d = from.distanceTo(_pos);
+      const snap = this.nucleus.snapshot();
+      if (d < bestDist && (snap.exposed || !isLiveTargetId(bestId))) {
+        bestDist = d;
+        bestId = NUCLEUS_HIT_ID;
+      }
+    }
+    if (!isLiveTargetId(bestId)) return null;
+    return { instanceId: bestId, distance: bestDist };
+  }
+
   getBlockWorldPos(instanceId: number, out = new THREE.Vector3()): THREE.Vector3 {
     if (instanceId === NUCLEUS_HIT_ID) return this.nucleus.getWorldCenter(out);
     if (!this.mesh || instanceId < 0 || instanceId >= this.mesh.count) return out.copy(_zero);

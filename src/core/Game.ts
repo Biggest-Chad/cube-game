@@ -59,6 +59,7 @@ import { PauseUI } from '../ui/PauseUI';
 import { AdsOfferUI } from '../ui/AdsOfferUI';
 import { TutorialDirector } from '../ui/TutorialDirector';
 import { EvolveReadyUI } from '../ui/EvolveReadyUI';
+import { EvolveConfirmUI } from '../ui/EvolveConfirmUI';
 import { ScreenTransition } from '../ui/ScreenTransition';
 import {
   UI_CLICK_LOCK_MS,
@@ -76,8 +77,10 @@ import {
   EVOLVE_RESET_LEVEL,
   evolveCoreGrant,
   evolveCost,
+  furthestCompletedBeacon,
   isChronobeacon,
   nextStageAfterClear,
+  repeatableUpgradeCap,
 } from '../data/evolve';
 import { EVOLVE_FRAG_PER_CORE, getResearchNode } from '../data/research';
 import {
@@ -171,6 +174,7 @@ export class Game {
   private adsUI: AdsOfferUI;
   private tutorial!: TutorialDirector;
   private evolveReady!: EvolveReadyUI;
+  private evolveConfirm!: EvolveConfirmUI;
   private screenFx!: ScreenTransition;
   private overlay: HTMLElement;
   private toastRoot: HTMLElement;
@@ -317,7 +321,7 @@ export class Game {
     this.scene.add(this.cinematic.group);
     this.orientLock = document.getElementById('orientation-lock');
 
-    // Sky wash + key/rim. Combat PointLights stay gone; searchlights live on the pads.
+    // Sky wash + key/rim. Combat PointLights stay gone.
     const amb = new THREE.AmbientLight(LIGHTING_AMBIENT_COLOR, LIGHTING_AMBIENT_INTENSITY);
     this.scene.add(amb);
     const hemi = new THREE.HemisphereLight(
@@ -375,6 +379,9 @@ export class Game {
     this.evolveReady = new EvolveReadyUI(document.getElementById('ui-root')!);
     this.evolveReady.onOpenShop = () => this.openTech();
     this.evolveReady.onDismiss = () => undefined;
+    this.evolveConfirm = new EvolveConfirmUI(document.getElementById('ui-root')!);
+    this.evolveConfirm.onConfirm = () => this.performEvolve();
+    this.evolveConfirm.onCancel = () => undefined;
     this.screenFx = new ScreenTransition(document.getElementById('app') ?? document.body);
 
     const els = this.hud.elements;
@@ -618,7 +625,7 @@ export class Game {
       this.audio.playPurchase();
       return true;
     };
-    this.shopUI.onEvolve = () => this.performEvolve();
+    this.shopUI.onRequestEvolveModal = () => this.openEvolveConfirm();
     this.shopUI.onUnlockDroneBay = () => {
       if (!this.tech.stats.dronesUnlocked && !this.tech.owned.has('drone_unlock')) {
         this.toast('BUY ALLY PROTOCOL FIRST');
@@ -1014,6 +1021,29 @@ export class Game {
     return Math.max(this.save.data.highestLevel, this.save.data.lifetimeHighestLevel ?? 1);
   }
 
+  private openEvolveConfirm(): void {
+    const tier = this.save.data.ascensionTier;
+    const check = canEvolve(
+      this.currency.dataFragments,
+      this.save.data.highestLevel,
+      tier
+    );
+    const cost = check.cost;
+    const leftover = Math.max(0, this.currency.dataFragments - cost);
+    this.evolveConfirm.show({
+      cost,
+      nextTier: tier + 1,
+      grant: evolveCoreGrant(tier + 1),
+      leftover,
+      convertCores: Math.floor(leftover / EVOLVE_FRAG_PER_CORE),
+      fragPerCore: EVOLVE_FRAG_PER_CORE,
+      resetSector: EVOLVE_RESET_LEVEL,
+      furthestBeacon: furthestCompletedBeacon(this.save.data.lifetimeHighestLevel ?? 1),
+      canConfirm: check.ok,
+      reason: check.reason,
+    });
+  }
+
   /** Evolve hull: spend FRAG, reset combat shop, permanent baseline, Core grant. */
   private performEvolve(): boolean {
     const tier = this.save.data.ascensionTier;
@@ -1050,6 +1080,12 @@ export class Game {
     this.tech.setAscensionTier(newTier);
     this.tech.setBaseline(this.save.data.baseline);
     this.tech.setResearch(this.research.bonuses);
+    this.loadout.resetBranchRanks();
+    this.groundBays.resetRanks();
+    this.groundBays.setRankCap(repeatableUpgradeCap(newTier));
+    this.hardpoints.rebuildFromLoadout();
+    this.syncGroundStations();
+    this.syncDronesFromBays();
 
     const grant = evolveCoreGrant(newTier);
     this.currency.addCoreEnergy(grant, 1);
@@ -1667,6 +1703,7 @@ export class Game {
       unlockedTypes: data.baseUnlockedTypes as never,
       ranks: data.baseRanks as never,
     });
+    this.groundBays.setRankCap(tier);
     this.syncGroundStations();
 
     this.tutorial.setFlags(
@@ -2116,6 +2153,7 @@ export class Game {
     }
     if (this.mode === 'levelclear') this.returnToClear = true;
     this.evolveReady.hide();
+    this.evolveConfirm.hide();
 
     void this.audio.resume();
     this.audio.playUi();

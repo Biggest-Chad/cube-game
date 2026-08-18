@@ -2,6 +2,7 @@ import {
   GROUND_STATION_COUNT,
   GROUND_WEAPON_UPGRADE_MAX_RANK,
 } from '../data/constraints';
+import { repeatableUpgradeCap } from '../data/evolve';
 import {
   GROUND_WEAPONS,
   freeGroundInventory,
@@ -14,6 +15,7 @@ import { bus } from '../core/EventBus';
 
 export class GroundStationController {
   state: GroundStationState = normalizeGroundStationState(null);
+  private rankCap = GROUND_WEAPON_UPGRADE_MAX_RANK;
 
   load(raw: Partial<GroundStationState> | null | undefined): void {
     this.state = normalizeGroundStationState(raw);
@@ -76,8 +78,24 @@ export class GroundStationController {
     return true;
   }
 
+  setRankCap(ascensionTier: number): void {
+    this.rankCap = Math.min(
+      GROUND_WEAPON_UPGRADE_MAX_RANK,
+      repeatableUpgradeCap(ascensionTier)
+    );
+  }
+
+  getRankCap(): number {
+    return this.rankCap;
+  }
+
+  resetRanks(): void {
+    this.state.ranks = { sam: 0, artillery: 0, ciws: 0 };
+    bus.emit('ground-ranks-reset', {});
+  }
+
   canUpgrade(id: GroundWeaponId): boolean {
-    return this.isTypeUnlocked(id) && this.state.ranks[id] < GROUND_WEAPON_UPGRADE_MAX_RANK;
+    return this.isTypeUnlocked(id) && this.state.ranks[id] < this.rankCap;
   }
 
   nextUpgradeCost(id: GroundWeaponId): number {

@@ -393,7 +393,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     extraPrereq: ['drone_unlock'],
     cost: (r) => tableThenGeo([150, 338, 600], 1.48, r),
     describe: (r) => {
-      const add = r <= 3 ? 0.18 + r * 0.02 : 0.08;
+      const add = r <= 10 ? 0.12 : r <= 20 ? 0.06 : 0.03;
       return { description: `+${Math.round(add * 100)}% drone damage`, effects: { droneDamageAdd: add } };
     },
   }),
@@ -402,7 +402,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     extraPrereq: ['drone_dmg_1'],
     cost: (r) => tableThenGeo([180, 390], 1.5, r),
     describe: (r) => {
-      const add = r <= 2 ? 0.16 + r * 0.02 : 0.07;
+      const add = r <= 10 ? 0.1 : r <= 20 ? 0.05 : 0.025;
       return { description: `+${Math.round(add * 100)}% drone fire rate`, effects: { droneFireRateAdd: add } };
     },
   }),
@@ -431,7 +431,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     extraPrereq: ['drone_unlock'],
     cost: (r) => tableThenGeo([165, 360, 675], 1.48, r),
     describe: (r) => {
-      const add = r <= 3 ? 0.15 + r * 0.05 : 0.08;
+      const add = r <= 10 ? 0.1 : r <= 20 ? 0.05 : 0.025;
       return { description: `+${Math.round(add * 100)}% drone max HP`, effects: { droneHpAdd: add } };
     },
   }),

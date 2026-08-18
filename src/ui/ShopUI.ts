@@ -37,10 +37,7 @@ import {
   freeInventory,
   type DroneRole,
 } from '../data/drones';
-import {
-  GROUND_STATION_COUNT,
-  GROUND_WEAPON_UPGRADE_MAX_RANK,
-} from '../data/constraints';
+import { GROUND_STATION_COUNT } from '../data/constraints';
 import {
   GROUND_WEAPONS,
   GROUND_WEAPON_IDS,
@@ -172,8 +169,8 @@ export class ShopUI {
   onEquipWeapon: ((slot: number, defId: string | null) => void) | null = null;
   onUpgradeBranch: ((slot: number, branchId: string) => boolean) | null = null;
   onUnlockHardpoint: ((slot: number) => boolean) | null = null;
-  /** Returns true if evolve succeeded. */
-  onEvolve: (() => boolean) | null = null;
+  /** Open the dedicated Evolve confirmation modal. */
+  onRequestEvolveModal: (() => void) | null = null;
   onUnlockDroneBay: (() => boolean) | null = null;
   onUnlockDroneType: ((role: DroneRole) => boolean) | null = null;
   onBuyDroneUnit: ((role: DroneRole) => boolean) | null = null;
@@ -543,20 +540,7 @@ export class ShopUI {
       this.render(tree, currency);
     });
     this.root.querySelector('#evolve-open')?.addEventListener('click', () => {
-      this.confirmEvolve = true;
-      this.evolveExpanded = true;
-      this.render(tree, currency);
-    });
-    this.root.querySelector('#evolve-cancel')?.addEventListener('click', () => {
-      this.confirmEvolve = false;
-      this.render(tree, currency);
-    });
-    this.root.querySelector('#evolve-confirm')?.addEventListener('click', () => {
-      if (this.onEvolve?.()) {
-        this.confirmEvolve = false;
-        this.evolveExpanded = false;
-        this.render(tree, currency);
-      }
+      this.onRequestEvolveModal?.();
     });
     this.root.querySelectorAll('[data-reco-branch]').forEach((el) => {
       el.addEventListener('click', () => {
@@ -984,9 +968,9 @@ export class ShopUI {
         <div class="lo-slot bay-slot ${id ? 'filled' : 'empty'}"
           style="${def ? `--accent:${def.colorCss}` : ''}"
           data-base-slot="${i}" data-base-role="${id ?? ''}"
-          title="${def ? def.name : `Pad ${i + 1} — searchlight only`}">
+          title="${def ? def.name : `Pad ${i + 1} — empty`}">
           <span class="lo-slot-idx">P${i + 1}</span>
-          <span class="lo-slot-name">${def ? def.name : 'Searchlight'}</span>
+          <span class="lo-slot-name">${def ? def.name : 'Empty'}</span>
           ${
             def
               ? `<button type="button" class="lo-slot-x" data-clear-base="${i}" title="Clear">×</button>`
@@ -1022,7 +1006,7 @@ export class ShopUI {
       return `
         <div class="lo-card" style="--accent:${def.colorCss}">
           <div class="lo-card-title">${def.name}</div>
-          <div class="lo-card-sub">Free ${free} · Own ${owned} · R${rank}/${GROUND_WEAPON_UPGRADE_MAX_RANK}</div>
+          <div class="lo-card-sub">Free ${free} · Own ${owned} · R${rank}/${B.getRankCap()}</div>
           <p class="lo-card-desc">${def.description}</p>
           <div class="lo-card-actions">
             <button type="button" class="loadout-equip-btn ${canAssign ? '' : 'equipped'}"
@@ -1046,7 +1030,7 @@ export class ShopUI {
         <div class="lo-slot-row" aria-label="Ground pads">
           ${pads}
         </div>
-        <p class="dim" style="padding:6px 2px 10px">Each pad mounts a live searchlight that sweeps the cube. Unlock a battery, buy a unit, arm a pad. CIWS is point defense vs nucleus shots.</p>
+        <p class="dim" style="padding:6px 2px 10px">Unlock a battery, buy a unit, arm a pad. SAM missiles trail and home. CIWS is point defense vs nucleus shots. Ranks reset on Evolve and the cap scales 10 → 20 → 30.</p>
         <div class="lo-card-grid">${cards}</div>
       </div>`;
   }
@@ -1109,31 +1093,6 @@ export class ShopUI {
           <span>ASC ${this.ascensionTier} · Evolve ${cost.toLocaleString()} FRAG · +${grant} CORE</span>
           <span class="evolve-chip-caret">${ratio >= EVOLVE_UI_PREVIEW_RATIO ? '▸ expand' : `${Math.floor(ratio * 100)}%`}</span>
         </button>`;
-    }
-
-    if (this.confirmEvolve) {
-      return `
-        <div class="evolve-panel confirm">
-          <div class="evolve-title">EVOLVE HULL?</div>
-          <p class="evolve-desc">
-            Spend <strong>${cost.toLocaleString()} FRAG</strong>. Retrain combat shop.
-            Ascension <strong>${this.ascensionTier + 1}</strong> · grant <strong>${grant} CORE</strong>.
-            ${
-              convertCores > 0
-                ? `Leftover converts ≈ <strong>${convertCores} CORE</strong> (1000 FRAG → 1).`
-                : 'Leftover FRAG convert at 1000 → 1 CORE.'
-            }
-            Weapons &amp; Research kept.
-          </p>
-          <div class="evolve-actions">
-            <button type="button" class="menu-btn" id="evolve-cancel">Cancel</button>
-            <button type="button" class="menu-btn primary" id="evolve-confirm"
-              ${check.ok ? '' : 'disabled'}>
-              CONFIRM EVOLVE
-            </button>
-          </div>
-          ${check.reason ? `<div class="evolve-warn">${check.reason}</div>` : ''}
-        </div>`;
     }
 
     return `

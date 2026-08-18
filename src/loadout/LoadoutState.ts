@@ -249,6 +249,14 @@ export class LoadoutState {
   /**
    * Apply branch rank. Caller spends fragments first.
    */
+  /** Evolve retrain — keep owned weapons, wipe branch ranks. */
+  resetBranchRanks(): void {
+    for (const s of this.slots) {
+      if (s) s.branchRanks = {};
+    }
+    bus.emit('loadout-changed', this.toJSON());
+  }
+
   upgradeBranch(slot: number, branchId: string): boolean {
     const check = this.canUpgradeBranch(slot, branchId, Infinity);
     if (!check.nextRank) return false;

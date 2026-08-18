@@ -1,6 +1,6 @@
 /**
- * Four military pads. Each mounts a real SpotLight that searches the cube.
- * Weapons are optional loadout (SAM / plasma / CIWS). CIWS is point defense.
+ * Four military pads. Weapons are optional loadout (SAM / plasma / CIWS).
+ * Searchlights were removed — they fought the cube lighting budget.
  */
 import * as THREE from 'three';
 import {
@@ -14,16 +14,6 @@ import {
   GROUND_SAM_HOMING,
   GROUND_SAM_LIFE,
   GROUND_SAM_SPEED,
-  GROUND_SEARCHLIGHT_ANGLE,
-  GROUND_SEARCHLIGHT_COLOR,
-  GROUND_SEARCHLIGHT_DECAY,
-  GROUND_SEARCHLIGHT_DISTANCE,
-  GROUND_SEARCHLIGHT_INTENSITY,
-  GROUND_SEARCHLIGHT_PENUMBRA,
-  GROUND_SEARCHLIGHT_RETARGET_MAX_SECONDS,
-  GROUND_SEARCHLIGHT_RETARGET_MIN_SECONDS,
-  GROUND_SEARCHLIGHT_SLEW_MAX,
-  GROUND_SEARCHLIGHT_SLEW_MIN,
   GROUND_STATION_COUNT,
   GROUND_STATION_PAD_HEIGHT,
   GROUND_STATION_RING_RADIUS,
@@ -45,13 +35,6 @@ interface Station {
   turret: THREE.Group;
   housing: THREE.Group;
   muzzle: THREE.Vector3;
-  light: THREE.SpotLight;
-  beam: THREE.Mesh;
-  lightTarget: THREE.Object3D;
-  aim: THREE.Vector3;
-  aimGoal: THREE.Vector3;
-  retargetIn: number;
-  slew: number;
   weapon: GroundWeaponId | null;
   cooldown: number;
   burstLeft: number;
@@ -68,6 +51,8 @@ interface Bolt {
   splash: number;
   targetId: number;
   interceptId: string | null;
+  trail: THREE.Line | null;
+  trailPts: Float32Array | null;
 }
 
 const SAM_POOL = 24;
@@ -88,11 +73,9 @@ export class GroundStationField {
   private interceptHit: ((id: string, dmg: number) => void) | null = null;
   private enemies: Array<{ id: string; position: THREE.Vector3; radius: number }> = [];
   private intercepts: InterceptTarget[] = [];
-  private readonly beamGeo = new THREE.CylinderGeometry(0.06, 1, 1, 12, 1, true);
 
   constructor() {
     this.group.name = 'GroundStations';
-    this.beamGeo.rotateX(Math.PI / 2);
     this.buildPads();
     this.buildPools();
   }
@@ -122,7 +105,6 @@ export class GroundStationField {
 
   update(dt: number, now: number, armed: boolean, stats: PlayerStats): void {
     this.elapsed += dt;
-    this.updateSearchlights(dt);
     if (armed && this.cube) this.tryFire(dt, now, stats);
     this.simBolts(dt, now);
   }
@@ -139,7 +121,6 @@ export class GroundStationField {
     });
     this.group.clear();
     this.stations = [];
-    this.beamGeo.dispose();
   }
 
   private buildPads(): void {
@@ -206,47 +187,7 @@ export class GroundStationField {
       drum.rotation.x = Math.PI / 2;
       drum.position.z = -0.18;
       housing.add(drum);
-      const lens = new THREE.Mesh(
-        new THREE.SphereGeometry(0.2, 10, 8),
-        new THREE.MeshBasicMaterial({
-          color: GROUND_SEARCHLIGHT_COLOR,
-          transparent: true,
-          opacity: 0.95,
-        })
-      );
-      lens.position.z = -0.42;
-      housing.add(lens);
       root.add(housing);
-
-      const lightTarget = new THREE.Object3D();
-      lightTarget.position.set(0, 2, 0);
-      this.group.add(lightTarget);
-
-      const light = new THREE.SpotLight(
-        GROUND_SEARCHLIGHT_COLOR,
-        GROUND_SEARCHLIGHT_INTENSITY,
-        GROUND_SEARCHLIGHT_DISTANCE,
-        GROUND_SEARCHLIGHT_ANGLE,
-        GROUND_SEARCHLIGHT_PENUMBRA,
-        GROUND_SEARCHLIGHT_DECAY
-      );
-      light.castShadow = false;
-      light.target = lightTarget;
-      this.group.add(light);
-
-      const beam = new THREE.Mesh(
-        this.beamGeo.clone(),
-        new THREE.MeshBasicMaterial({
-          color: GROUND_SEARCHLIGHT_COLOR,
-          transparent: true,
-          opacity: 0.13,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          side: THREE.DoubleSide,
-        })
-      );
-      beam.frustumCulled = false;
-      this.group.add(beam);
 
       this.group.add(root);
       this.stations.push({
@@ -254,13 +195,6 @@ export class GroundStationField {
         turret,
         housing,
         muzzle: new THREE.Vector3(),
-        light,
-        beam,
-        lightTarget,
-        aim: new THREE.Vector3(0, 2, 0),
-        aimGoal: new THREE.Vector3(0, 2, 0),
-        retargetIn: 0.2 + i * 0.35,
-        slew: 1,
         weapon: null,
         cooldown: 0.4 + i * 0.2,
         burstLeft: 0,
@@ -283,82 +217,87 @@ export class GroundStationField {
         splash: 0,
         targetId: -1,
         interceptId: null,
+        trail: null,
+        trailPts: null,
       });
     };
-    const samGeo = new THREE.ConeGeometry(0.07, 0.55, 6);
-    samGeo.rotateX(Math.PI / 2);
-    const samMat = new THREE.MeshBasicMaterial({ color: 0x88ff66 });
+    const samBody = new THREE.Group();
+    const samCone = new THREE.ConeGeometry(0.11, 0.72, 7);
+    samCone.rotateX(Math.PI / 2);
+    samBody.add(
+      new THREE.Mesh(
+        samCone,
+        new THREE.MeshBasicMaterial({ color: 0xb8ff88, toneMapped: false })
+      )
+    );
+    const samGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 8, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0x66ff44,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      })
+    );
+    samGlow.position.z = 0.22;
+    samBody.add(samGlow);
     for (let i = 0; i < SAM_POOL; i++) {
-      addBolt('sam', new THREE.Mesh(samGeo, samMat));
+      const g = i === 0 ? samBody : samBody.clone();
+      addBolt('sam', g);
+      const pts = new Float32Array(12 * 3);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+      const line = new THREE.Line(
+        geo,
+        new THREE.LineBasicMaterial({
+          color: 0x88ff55,
+          transparent: true,
+          opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false,
+        })
+      );
+      line.visible = false;
+      line.frustumCulled = false;
+      this.group.add(line);
+      const bolt = this.bolts[this.bolts.length - 1];
+      bolt.trail = line;
+      bolt.trailPts = pts;
     }
-    const shellMat = new THREE.MeshBasicMaterial({ color: 0xff66cc });
+    const shellMat = new THREE.MeshBasicMaterial({
+      color: 0xff66cc,
+      toneMapped: false,
+    });
+    const shellHalo = new THREE.MeshBasicMaterial({
+      color: 0xff99ee,
+      transparent: true,
+      opacity: 0.45,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
     for (let i = 0; i < SHELL_POOL; i++) {
       const g = new THREE.Group();
-      g.add(new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), shellMat));
+      g.add(new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 10), shellMat));
+      g.add(new THREE.Mesh(new THREE.SphereGeometry(0.52, 10, 10), shellHalo));
       addBolt('artillery', g);
     }
-    const trMat = new THREE.MeshBasicMaterial({ color: 0xffe080 });
-    const trGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.55, 4);
+    const trMat = new THREE.MeshBasicMaterial({
+      color: 0xffe080,
+      toneMapped: false,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const trGeo = new THREE.CylinderGeometry(0.045, 0.02, 1.15, 5);
     trGeo.rotateX(Math.PI / 2);
     for (let i = 0; i < TRACER_POOL; i++) {
       addBolt('ciws', new THREE.Mesh(trGeo, trMat));
     }
-  }
-
-  private updateSearchlights(dt: number): void {
-    const he = Math.max(4, this.cube?.halfExtent ?? 6);
-    for (let i = 0; i < this.stations.length; i++) {
-      const s = this.stations[i];
-      s.retargetIn -= dt;
-      if (s.retargetIn <= 0) {
-        this.pickSearchPoint(s.aimGoal, he, i);
-        s.retargetIn =
-          GROUND_SEARCHLIGHT_RETARGET_MIN_SECONDS +
-          Math.random() *
-            (GROUND_SEARCHLIGHT_RETARGET_MAX_SECONDS - GROUND_SEARCHLIGHT_RETARGET_MIN_SECONDS);
-        s.slew =
-          GROUND_SEARCHLIGHT_SLEW_MIN +
-          Math.random() * (GROUND_SEARCHLIGHT_SLEW_MAX - GROUND_SEARCHLIGHT_SLEW_MIN);
-      }
-      const k = 1 - Math.exp(-s.slew * dt);
-      s.aim.lerp(s.aimGoal, k);
-      s.lightTarget.position.copy(s.aim);
-
-      s.housing.lookAt(s.aim);
-      const lampWorld = this._tmp.set(0, 0, -0.42);
-      s.housing.localToWorld(lampWorld);
-      s.light.position.copy(lampWorld);
-
-      const dist = Math.max(0.8, lampWorld.distanceTo(s.aim));
-      const farR = Math.tan(GROUND_SEARCHLIGHT_ANGLE) * dist;
-      s.beam.position.copy(lampWorld).lerp(s.aim, 0.5);
-      s.beam.lookAt(s.aim);
-      s.beam.scale.set(farR, farR, dist);
-      const mat = s.beam.material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.09 + Math.min(0.08, 4 / dist);
-    }
-  }
-
-  /** Random point on a cube face (or near-center) so the disc crawls the voxels. */
-  private pickSearchPoint(out: THREE.Vector3, he: number, pad: number): void {
-    if (Math.random() < 0.72) {
-      const face = (Math.floor(Math.random() * 6) + pad) % 6;
-      const a = (Math.random() * 2 - 1) * he;
-      const b = (Math.random() * 2 - 1) * he;
-      const f = he * (0.88 + Math.random() * 0.28);
-      if (face === 0) out.set(f, a, b);
-      else if (face === 1) out.set(-f, a, b);
-      else if (face === 2) out.set(a, f, b);
-      else if (face === 3) out.set(a, -f * 0.55, b);
-      else if (face === 4) out.set(a, b, f);
-      else out.set(a, b, -f);
-      return;
-    }
-    out.set(
-      (Math.random() - 0.5) * he * 1.15,
-      (Math.random() - 0.35) * he * 1.1,
-      (Math.random() - 0.5) * he * 1.15
-    );
   }
 
   private tryFire(dt: number, now: number, stats: PlayerStats): void {
@@ -429,6 +368,15 @@ export class GroundStationField {
       b.splash = splash;
       b.targetId = tid;
       b.mesh.position.copy(b.pos);
+      if (b.trail && b.trailPts) {
+        for (let t = 0; t < 12; t++) {
+          b.trailPts[t * 3] = b.pos.x;
+          b.trailPts[t * 3 + 1] = b.pos.y;
+          b.trailPts[t * 3 + 2] = b.pos.z;
+        }
+        (b.trail.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+        b.trail.visible = true;
+      }
     }
     bus.emit('weapon-fire', { family: 'missile', slot: -2 });
   }
@@ -495,7 +443,8 @@ export class GroundStationField {
     b.damage = damage;
     b.splash = 0;
     b.mesh.position.copy(b.pos);
-    b.mesh.lookAt(b.pos.clone().add(b.vel));
+    this._aim.copy(b.pos).add(b.vel);
+    b.mesh.lookAt(this._aim);
   }
 
   private simBolts(dt: number, now: number): void {
@@ -519,7 +468,21 @@ export class GroundStationField {
       }
       b.pos.addScaledVector(b.vel, dt);
       b.mesh.position.copy(b.pos);
-      if (b.kind !== 'artillery') b.mesh.lookAt(b.pos.clone().add(b.vel));
+      if (b.kind !== 'artillery') {
+        this._aim.copy(b.pos).add(b.vel);
+        b.mesh.lookAt(this._aim);
+      }
+      if (b.trail && b.trailPts) {
+        for (let t = 11; t > 0; t--) {
+          b.trailPts[t * 3] = b.trailPts[(t - 1) * 3];
+          b.trailPts[t * 3 + 1] = b.trailPts[(t - 1) * 3 + 1];
+          b.trailPts[t * 3 + 2] = b.trailPts[(t - 1) * 3 + 2];
+        }
+        b.trailPts[0] = b.pos.x;
+        b.trailPts[1] = b.pos.y;
+        b.trailPts[2] = b.pos.z;
+        (b.trail.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      }
 
       if (b.kind === 'ciws' && b.targetId === -4 && this.interceptHit && b.interceptId) {
         const t = this.intercepts.find((x) => x.id === b.interceptId);
@@ -602,5 +565,6 @@ export class GroundStationField {
   private killBolt(b: Bolt): void {
     b.active = false;
     b.mesh.visible = false;
+    if (b.trail) b.trail.visible = false;
   }
 }

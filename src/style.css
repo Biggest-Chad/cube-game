@@ -4403,6 +4403,121 @@ body.orientation-portrait #rotate-overlay {
   gap: 8px;
   margin-bottom: 6px;
 }
+.evo-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+.evo-modal-root.panel-hidden {
+  display: none;
+}
+.evo-modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 4, 10, 0.72);
+}
+.evo-modal-card {
+  position: relative;
+  width: min(520px, 92vw);
+  max-height: 88vh;
+  overflow: auto;
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(255, 0, 170, 0.55);
+  background: linear-gradient(165deg, rgba(18, 0, 22, 0.96), rgba(0, 12, 22, 0.96));
+  box-shadow: 0 0 40px rgba(255, 0, 170, 0.22);
+}
+.evo-modal-kicker {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: var(--cyan);
+  margin-bottom: 4px;
+}
+.evo-modal-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  letter-spacing: 0.16em;
+  color: var(--magenta);
+}
+.evo-modal-lead,
+.evo-modal-convert {
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+.evo-modal-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+.evo-track {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.evo-node {
+  min-width: 44px;
+  text-align: center;
+  padding: 6px 4px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+}
+.evo-node.reset {
+  border-color: var(--cyan);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+}
+.evo-node.skip {
+  border-color: rgba(255, 0, 170, 0.55);
+  color: #ff9ad4;
+}
+.evo-node.later {
+  opacity: 0.55;
+}
+.evo-node-n {
+  display: block;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+.evo-node-l {
+  display: block;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  opacity: 0.75;
+}
+.evo-arrow {
+  opacity: 0.4;
+  font-size: 12px;
+}
+.evo-diagram-cap {
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.8;
+  margin: 0 0 8px;
+}
+.evo-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.evo-modal-actions .menu-btn {
+  flex: 1;
+  min-height: 42px;
+}
+.evolve-chip.collapsible.ready {
+  animation: evo-ready-pulse 1.6s ease-in-out infinite;
+}
+@keyframes evo-ready-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(0, 240, 255, 0); }
+  50% { box-shadow: 0 0 16px rgba(0, 240, 255, 0.45); }
+}
 .evolve-collapse {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.2);

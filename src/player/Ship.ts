@@ -28,68 +28,86 @@ export class Ship {
   private accentMats: THREE.MeshStandardMaterial[] = [];
   private runningLights: THREE.Mesh[] = [];
   private readonly _thrusterWorld = new THREE.Vector3();
+  private readonly _aft = new THREE.Vector3();
 
   constructor() {
     this.body = this.buildMesh();
     this.group.add(this.body);
     this.setupLights();
     this.setupThrusterLights();
-    void this.adoptV2Visual();
+    void this.adoptHeroVisual();
   }
 
-  /** Swap in the Blender interceptor when the GLB is available. Mounts stay fixed. */
-  async adoptV2Visual(): Promise<void> {
-    try {
-      const gltf = await new GLTFLoader().loadAsync('./ships/interceptor-v2.glb');
-      const next = gltf.scene;
-      next.name = 'InterceptorV2';
-      this.engineGlow = [];
-      this.plumeMeshes = [];
-      this.accentMats = [];
-      this.runningLights = [];
-      next.updateMatrixWorld(true);
-      next.traverse((o) => {
-        if (!(o instanceof THREE.Mesh)) return;
-        o.frustumCulled = true;
-        o.castShadow = false;
-        o.receiveShadow = false;
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of mats) {
-          if (!m || !('emissive' in m)) continue;
-          const std = m as THREE.MeshStandardMaterial;
-          std.toneMapped = false;
-          std.envMapIntensity = 0.35;
-        }
-        const live =
-          o.name.startsWith('EngineGlow') ||
-          o.name.startsWith('Plume') ||
-          o.name.includes('Nozzle');
-        if (live) {
-          if (o.name.startsWith('EngineGlow') || o.name.includes('Nozzle')) {
-            this.engineGlow.push(o);
-          }
-          if (o.name.startsWith('Plume')) {
-            this.engineGlow.push(o);
-            this.plumeMeshes.push(o);
-          }
-        } else {
-          o.matrixAutoUpdate = false;
-          o.updateMatrix();
-        }
-      });
-      this.group.remove(this.body);
-      this.body.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
-          o.geometry.dispose();
-          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-          else o.material.dispose();
-        }
-      });
-      this.body = next;
-      this.group.add(this.body);
-    } catch {
-      // Procedural hull remains
+  /**
+   * Prefer the 3DHaupt Intergalactic hull (CC-BY-NC). Fall back to interceptor-v2.
+   * Mounts stay on `ship.group` (see ShipMounts).
+   */
+  async adoptHeroVisual(): Promise<void> {
+    const loader = new GLTFLoader();
+    const tryUrls = ['./ships/intergalactic.glb', './ships/interceptor-v2.glb'];
+    for (const url of tryUrls) {
+      try {
+        const gltf = await loader.loadAsync(url);
+        this.installHeroVisual(gltf.scene, url.includes('intergalactic') ? 'Intergalactic' : 'InterceptorV2');
+        return;
+      } catch {
+        // next candidate
+      }
     }
+  }
+
+  private installHeroVisual(next: THREE.Group, name: string): void {
+    next.name = name;
+    this.engineGlow = [];
+    this.plumeMeshes = [];
+    this.accentMats = [];
+    this.runningLights = [];
+    next.updateMatrixWorld(true);
+    next.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      o.frustumCulled = true;
+      o.castShadow = false;
+      o.receiveShadow = false;
+      if (o.name.startsWith('Plume')) {
+        o.visible = false;
+        return;
+      }
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m || !('emissive' in m)) continue;
+        const std = m as THREE.MeshStandardMaterial;
+        std.toneMapped = false;
+        std.envMapIntensity = 0.35;
+        if (o.name.startsWith('EngineGlow') || o.name.includes('Nozzle')) {
+          std.transparent = true;
+          std.depthWrite = false;
+          std.emissive.copy(std.color);
+          std.emissiveIntensity = Math.max(std.emissiveIntensity, 1.2);
+        }
+      }
+      const live =
+        o.name.startsWith('EngineGlow') ||
+        o.name.includes('Nozzle') ||
+        o.name.startsWith('Torus');
+      if (live) {
+        this.engineGlow.push(o);
+      } else {
+        o.matrixAutoUpdate = false;
+        o.updateMatrix();
+      }
+    });
+    this.group.remove(this.body);
+    this.body.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else o.material.dispose();
+      }
+    });
+    this.body = next;
+    this.group.add(this.body);
+    this.muzzleLocal.copy(SHIP_MUZZLE);
+    this.thrusterLocals = SHIP_THRUSTERS.map((v) => v.clone());
   }
 
   private hull(color = 0x1a2430, metal = 0.82, rough = 0.26): THREE.MeshStandardMaterial {
@@ -524,6 +542,17 @@ export class Ship {
         speed?: number,
         style?: 'spark' | 'debris' | 'glow' | 'ember'
       ) => void;
+      spray?: (
+        x: number,
+        y: number,
+        z: number,
+        nx: number,
+        ny: number,
+        nz: number,
+        color: number,
+        count: number,
+        speed?: number
+      ) => void;
     } | null
   ): void {
     camera.getShipPosition(this._desired);
@@ -584,27 +613,40 @@ export class Ship {
         n.material.opacity = 0.35 + flicker * 0.45 + boost * 0.25;
       }
     }
-    // Exhaust particles while moving / turning
-    if (particles && this.group.visible && boost > 0.15) {
-      const rate = 18 + boost * 45;
-      if (Math.random() < rate * dt) {
-        const idx = Math.floor(Math.random() * this.thrusterLocals.length);
-        const local = this.thrusterLocals[idx] ?? this.thrusterLocals[0];
+    if (particles && this.group.visible) {
+      const aft = this._aft.set(0, 0, 1).applyQuaternion(this.group.quaternion);
+      const n = this.thrusterLocals.length || 1;
+      const puffs = boost > 0.2 ? 1 + (Math.random() < boost * 0.7 ? 1 : 0) : Math.random() < 0.35 ? 1 : 0;
+      for (let p = 0; p < puffs; p++) {
+        const local = this.thrusterLocals[(Math.random() * n) | 0];
+        if (!local) continue;
         this._thrusterWorld.copy(local);
         this.group.localToWorld(this._thrusterWorld);
-        // Slight rearward bias in world (ship +Z is aft)
-        const aft = new THREE.Vector3(0, 0, 1).applyQuaternion(this.group.quaternion);
-        this._thrusterWorld.addScaledVector(aft, 0.15 + Math.random() * 0.2);
-        const col = Math.random() < 0.55 ? COLORS.magenta : 0xff66cc;
-        particles.spawn(
-          this._thrusterWorld.x,
-          this._thrusterWorld.y,
-          this._thrusterWorld.z,
-          col,
-          1 + (boost > 0.7 ? 1 : 0),
-          2 + boost * 5,
-          Math.random() < 0.4 ? 'glow' : 'ember'
-        );
+        this._thrusterWorld.addScaledVector(aft, 0.08 + Math.random() * 0.22);
+        const col = Math.random() < 0.45 ? 0xffaa44 : Math.random() < 0.5 ? COLORS.magenta : 0x66e8ff;
+        if (particles.spray) {
+          particles.spray(
+            this._thrusterWorld.x,
+            this._thrusterWorld.y,
+            this._thrusterWorld.z,
+            aft.x,
+            aft.y,
+            aft.z,
+            col,
+            2 + (boost > 0.6 ? 2 : 1),
+            5 + boost * 9
+          );
+        } else {
+          particles.spawn(
+            this._thrusterWorld.x,
+            this._thrusterWorld.y,
+            this._thrusterWorld.z,
+            col,
+            2,
+            4 + boost * 6,
+            Math.random() < 0.5 ? 'glow' : 'ember'
+          );
+        }
       }
     }
   }

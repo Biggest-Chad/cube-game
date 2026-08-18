@@ -27,7 +27,6 @@ import { applyToBlock } from '../combat/DamageModel';
 import {
   pickBestEnemy,
   pickBestIntercept,
-  targetPriority,
   type EnemyUnitRef,
   type InterceptTarget,
 } from './DroneAI';
@@ -79,7 +78,8 @@ export class Drone {
   private beamCore: THREE.Mesh;
   private beamGlow: THREE.Mesh;
   private beamLife = 0;
-  private bombMesh: THREE.Mesh | null = null;
+  private bombMesh: THREE.Object3D | null = null;
+  private bombHalo: THREE.Mesh | null = null;
   private bombActive = false;
   private bombPos = new THREE.Vector3();
   private bombVel = new THREE.Vector3();
@@ -126,10 +126,11 @@ export class Drone {
     this.group.add(this.beamGlow, this.beamCore);
 
     if (role === 'bomber') {
-      this.bombMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.14, 10, 10),
-        addMat(0xff8844, 0.9)
-      );
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), addMat(0xff6622, 1)));
+      this.bombHalo = new THREE.Mesh(new THREE.SphereGeometry(0.44, 12, 12), addMat(0xffcc55, 0.5));
+      g.add(this.bombHalo);
+      this.bombMesh = g;
       this.bombMesh.visible = false;
       this.group.add(this.bombMesh);
     }
@@ -299,9 +300,12 @@ export class Drone {
     // Bomber projectile travel
     if (this.bombActive && this.bombMesh) {
       this.bombPos.addScaledVector(this.bombVel, dt);
-      this.bombMesh.position.copy(
-        this.group.worldToLocal(this.bombPos.clone())
-      );
+      this.bombMesh.position.copy(this.group.worldToLocal(this._mid.copy(this.bombPos)));
+      const pulse = 1 + Math.sin(now * 18) * 0.18;
+      this.bombMesh.scale.setScalar(pulse);
+      if (this.bombHalo?.material instanceof THREE.MeshBasicMaterial) {
+        this.bombHalo.material.opacity = 0.35 + Math.sin(now * 22) * 0.2;
+      }
       // Hit check vs cube centerish — raycast
       const bombPrev = this.bombPos.clone().addScaledVector(this.bombVel, -dt);
       const hit = cube.raycast(
@@ -404,12 +408,15 @@ export class Drone {
           return;
         }
       }
-      const peel = this.acquirePeelTarget(dt, cube, stats, 78, true);
+      const peel = this.acquireClosestTarget(dt, cube, 78, true);
       if (peel === -1) return;
       cube.getBlockWorldPos(peel, this._target);
       this.markFireLook(this._target);
+      const hitId = this.firstBlockOnLine(cube, this.group.position, this._target);
+      const aimId = hitId !== -1 ? hitId : peel;
+      cube.getBlockWorldPos(aimId, this._target);
       this.showBeam(this.group.position, this._target);
-      const type = cube.getBlockType(peel);
+      const type = cube.getBlockType(aimId);
       const raw =
         DRONE_BASE_DAMAGE *
         DRONE_FIGHTER_BLOCK_DAMAGE_FRACTION *
@@ -419,14 +426,14 @@ export class Drone {
         { raw, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
         type
       );
-      const result = cube.applyDamage(peel, applied.finalDamage, now);
+      const result = cube.applyDamage(aimId, applied.finalDamage, now);
       if (result) bus.emit('beam-hit', { ...result, style: 'beam' as const });
       return;
     }
 
-    // —— Bomber: peel outer armor first; nucleus only once the hull is thin ——
+    // —— Bomber: closest live block, reassess often ——
     if (this.bombActive) return;
-    const peel = this.acquirePeelTarget(dt, cube, stats, 110, true);
+    const peel = this.acquireClosestTarget(dt, cube, 110, true);
     if (peel === -1 || !this.bombMesh) return;
     cube.getBlockWorldPos(peel, this._target);
     this.markFireLook(this._target);
@@ -443,11 +450,10 @@ export class Drone {
     this.hasFireLook = true;
   }
 
-  /** Stick to an outer-shell block briefly, then retarget slightly inward. */
-  private acquirePeelTarget(
+  /** Closest live voxel, reassessed often so we do not tunnel through a nearer face. */
+  private acquireClosestTarget(
     dt: number,
     cube: CubeManager,
-    stats: PlayerStats,
     maxDist: number,
     allowNucleus: boolean
   ): number {
@@ -455,14 +461,24 @@ export class Drone {
     if (this.peelT > 0 && this.peelId !== -1 && cube.hasInstance(this.peelId)) {
       return this.peelId;
     }
-    this.peelT = 0.4 + Math.random() * 0.95;
-    const hit = cube.findPeelTarget(this.group.position, maxDist, {
-      prefer: (t) => targetPriority(t, stats, this.role),
-      seed: this.seed + ((this.wanderT * 10) | 0),
-      allowNucleus,
-    });
+    this.peelT = 0.22 + Math.random() * 0.18;
+    const hit = cube.findClosestLive(this.group.position, maxDist, allowNucleus);
     this.peelId = hit?.instanceId ?? -1;
     return this.peelId;
+  }
+
+  /** First voxel on the shot line — prevents firing through occluders. */
+  private firstBlockOnLine(
+    cube: CubeManager,
+    from: THREE.Vector3,
+    to: THREE.Vector3
+  ): number {
+    this._dir.copy(to).sub(from);
+    const dist = this._dir.length();
+    if (dist < 1e-4) return -1;
+    this._dir.multiplyScalar(1 / dist);
+    const hit = cube.raycast(from, this._dir, dist + 0.35, -1, 0.42);
+    return hit?.instanceId ?? -1;
   }
 
   private updateDefenderSeat(dt: number, ship: THREE.Vector3, now: number): void {

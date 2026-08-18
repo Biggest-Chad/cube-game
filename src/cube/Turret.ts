@@ -98,33 +98,61 @@ export class Turret {
     this.head.add(this.barrel);
     this.group.add(this.head);
 
-    // Charge ring (telegraph)
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.4, 0.03, 6, 16),
+      new THREE.TorusGeometry(0.62, 0.055, 8, 22),
       new THREE.MeshBasicMaterial({
         color: this.cfg.color,
         transparent: true,
         opacity: 0,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        toneMapped: false,
       })
     );
     ring.name = 'charge_ring';
     ring.rotation.x = Math.PI / 2;
     this.group.add(ring);
+    const ring2 = new THREE.Mesh(
+      new THREE.TorusGeometry(0.38, 0.03, 6, 16),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      })
+    );
+    ring2.name = 'charge_ring_inner';
+    ring2.rotation.x = Math.PI / 2;
+    this.group.add(ring2);
 
-    const pGeo = new THREE.SphereGeometry(0.12, 8, 8);
+    const pGeo = new THREE.SphereGeometry(0.2, 10, 10);
+    const glowGeo = new THREE.SphereGeometry(0.38, 10, 10);
     for (let i = 0; i < 8; i++) {
       const mesh = new THREE.Mesh(
         pGeo,
         new THREE.MeshBasicMaterial({
           color: this.cfg.color,
           transparent: true,
-          opacity: 0.9,
+          opacity: 0.95,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
+          toneMapped: false,
         })
       );
+      const halo = new THREE.Mesh(
+        glowGeo,
+        new THREE.MeshBasicMaterial({
+          color: this.cfg.color,
+          transparent: true,
+          opacity: 0.35,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false,
+        })
+      );
+      mesh.add(halo);
       mesh.visible = false;
       // projectiles parented to world via group parent — add to root when fired from manager
       this.projectiles.push({
@@ -183,17 +211,29 @@ export class Turret {
 
     this.cooldown = Math.max(0, this.cooldown - dt);
     const ring = this.group.getObjectByName('charge_ring') as THREE.Mesh | undefined;
+    const ringIn = this.group.getObjectByName('charge_ring_inner') as THREE.Mesh | undefined;
     const chargeT = this.cooldown > 0 ? 1 - this.cooldown * this.cfg.fireRate : 1;
 
     if (allowFire && dist <= this.cfg.range && this.cooldown <= 0) {
       this.fire(toPlayer);
       this.cooldown = 1 / this.cfg.fireRate;
+      if (ring) {
+        (ring.material as THREE.MeshBasicMaterial).opacity = 0.95;
+        ring.scale.setScalar(1.55);
+      }
     } else if (ring && allowFire && dist <= this.cfg.range) {
       const mat = ring.material as THREE.MeshBasicMaterial;
-      mat.opacity = Math.max(0, 0.15 + (1 - Math.min(1, this.cooldown * this.cfg.fireRate)) * 0.5);
-      ring.scale.setScalar(0.8 + chargeT * 0.4);
+      mat.opacity = 0.25 + chargeT * 0.7;
+      ring.scale.setScalar(0.75 + chargeT * 0.85);
+      ring.rotation.z += dt * (2 + chargeT * 8);
+      if (ringIn) {
+        (ringIn.material as THREE.MeshBasicMaterial).opacity = 0.15 + chargeT * 0.55;
+        ringIn.scale.setScalar(0.6 + chargeT * 0.5);
+        ringIn.rotation.z -= dt * 6;
+      }
     } else if (ring) {
       (ring.material as THREE.MeshBasicMaterial).opacity = 0;
+      if (ringIn) (ringIn.material as THREE.MeshBasicMaterial).opacity = 0;
     }
 
     this.simProjectiles(dt, playerPos, onPlayerHit);
