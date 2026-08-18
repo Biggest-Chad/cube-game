@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import type { CubeManager } from '../cube/CubeManager';
 import type { WeaponStats } from '../data/weapons';
 import type { PlayerStats } from '../progression/TechTree';
+import type { MainGunAmmoId } from '../data/ammo';
 
 export interface WeaponFireContext {
   dt: number;
@@ -23,6 +24,8 @@ export interface WeaponFireContext {
   /** Main gun: exact world point crosshair is locked on */
   aimTarget?: THREE.Vector3;
   aimLocked?: boolean;
+  /** Main-gun magazine. Hardpoints ignore this. */
+  ammo?: MainGunAmmoId;
 }
 
 export interface WeaponBehavior {

@@ -18,6 +18,11 @@ import { bus } from '../core/EventBus';
 import type { WeaponStats } from '../data/weapons';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import type { WeaponBehavior, WeaponFireContext } from './WeaponBehavior';
+import {
+  MAIN_GUN_AMMO,
+  resolveMainGunAmmo,
+  type MainGunAmmoId,
+} from '../data/ammo';
 
 interface Bolt {
   active: boolean;
@@ -36,6 +41,7 @@ interface Bolt {
   armorPierce: number;
   penLeft: number;
   lastHitId: number;
+  ammo: MainGunAmmoId;
 }
 
 function makePlasmaBoltGeometry(): {
@@ -166,6 +172,7 @@ export class MainBeamWeapon implements WeaponBehavior {
         armorPierce: 0,
         penLeft: 0,
         lastHitId: -1,
+        ammo: 'standard',
       });
     }
 
@@ -215,11 +222,22 @@ export class MainBeamWeapon implements WeaponBehavior {
     this.updateFlashes(ctx.dt);
     this.updateBeams(ctx.dt);
 
-    this.heat = Math.max(0, this.heat - this.stats.heatCoolRate * ctx.dt);
+    const coolMul = 1 + (ctx.slot < 0 ? ctx.playerStats.heatCoolAdd ?? 0 : 0);
+    this.heat = Math.max(0, this.heat - this.stats.heatCoolRate * coolMul * ctx.dt);
     this.cooldown = Math.max(0, this.cooldown - ctx.dt);
     if (!ctx.firing || this.cooldown > 0 || this.heat >= 0.98) return;
 
     const isMain = ctx.slot < 0;
+    const ammo = isMain ? (ctx.ammo ?? 'standard') : 'standard';
+    const magazine = isMain
+      ? resolveMainGunAmmo(ammo, {
+          splashAdd: this.stats.splashRadius + ctx.playerStats.splashAdd,
+          penetrationAdd: (this.stats.penetration ?? 0) + ctx.playerStats.penetrationAdd,
+          armorPierceAdd: ctx.playerStats.armorPierceAdd ?? 0,
+          ammoApPenAdd: ctx.playerStats.ammoApPenAdd ?? 0,
+          ammoHeSplashAdd: ctx.playerStats.ammoHeSplashAdd ?? 0,
+        })
+      : null;
     const rate =
       this.stats.fireRate *
       (isMain ? ctx.playerStats.fireRateMul : 1) *
@@ -230,18 +248,19 @@ export class MainBeamWeapon implements WeaponBehavior {
       1,
       this.stats.projectileCount + (isMain ? Math.floor(ctx.playerStats.multiShotAdd) : 0)
     );
-    const baseDmg = this.stats.damage * (isMain ? ctx.playerStats.damageMul : 1);
+    const ammoDmg = magazine?.damageMul ?? 1;
+    const baseDmg = this.stats.damage * (isMain ? ctx.playerStats.damageMul : 1) * ammoDmg;
     const critChance = this.stats.critChance + (isMain ? ctx.playerStats.critChance : 0);
-    const splash = this.stats.splashRadius + (isMain ? ctx.playerStats.splashAdd : 0);
+    const splash = magazine ? magazine.splash : this.stats.splashRadius;
     // Main gun: ignore random spread for reliability (only gentle multi-shot fan)
     const spreadExtra = isMain
       ? 0
       : (this.stats.spread ?? 0) + (ctx.playerStats.spreadAdd ?? 0);
-    const pen =
-      (this.stats.penetration ?? 0) +
-      (isMain ? Math.floor(ctx.playerStats.penetrationAdd ?? 0) : 0);
+    const pen = magazine
+      ? magazine.pen
+      : (this.stats.penetration ?? 0);
     const armorPierce =
-      this.stats.armorPierce + (isMain ? ctx.playerStats.armorPierceAdd ?? 0 : 0);
+      this.stats.armorPierce + (magazine ? magazine.armorPierceAdd : ctx.playerStats.armorPierceAdd ?? 0);
 
     // Primary direction: exact aim (to locked target if provided)
     const primaryDir = ctx.direction.clone().normalize();
@@ -276,7 +295,7 @@ export class MainBeamWeapon implements WeaponBehavior {
       // Spawn slightly past muzzle so mesh never embeds in hull
       const spawn = this.tmp.copy(ctx.origin).addScaledVector(dir, 0.15);
       this.muzzleFlash(spawn, dir);
-      this.fireBolt(spawn, dir, rolled.damage, splash, rolled.crit, armorPierce, pen);
+      this.fireBolt(spawn, dir, rolled.damage, splash, rolled.crit, armorPierce, pen, ammo);
 
       // Preview beam: for primary main shot use aim target / same ray as crosshair
       let end: THREE.Vector3;
@@ -310,10 +329,12 @@ export class MainBeamWeapon implements WeaponBehavior {
     splash: number,
     crit: boolean,
     armorPierce: number,
-    penLeft = 0
+    penLeft = 0,
+    ammo: MainGunAmmoId = 'standard'
   ): void {
     const b = this.bolts[this.nextBolt % this.bolts.length];
     this.nextBolt++;
+    const profile = MAIN_GUN_AMMO[ammo];
     b.active = true;
     b.pos.copy(from);
     b.vel.copy(dir).multiplyScalar(this.stats.projectileSpeed);
@@ -325,13 +346,14 @@ export class MainBeamWeapon implements WeaponBehavior {
     b.armorPierce = armorPierce;
     b.penLeft = penLeft;
     b.lastHitId = -1;
+    b.ammo = ammo;
     b.root.visible = true;
     b.trail.visible = true;
-    // Punchier scale for satisfying plasma lances
-    b.root.scale.set(1.35, 1.35, 1.15);
+    const fat = ammo === 'he' ? 1.18 : ammo === 'ap' ? 0.88 : 1;
+    b.root.scale.set(1.35 * fat, 1.35 * fat, ammo === 'ap' ? 1.28 : 1.15);
 
-    const coreCol = crit ? 0xffddff : 0xffffff;
-    const sheathCol = crit ? COLORS.magenta : COLORS.cyan;
+    const coreCol = crit ? 0xffddff : profile.coreColor;
+    const sheathCol = crit ? COLORS.magenta : profile.sheathColor;
     (b.core.material as THREE.MeshBasicMaterial).color.setHex(coreCol);
     (b.core.material as THREE.MeshBasicMaterial).opacity = 1;
     (b.sheath.material as THREE.MeshBasicMaterial).color.setHex(sheathCol);
@@ -483,15 +505,25 @@ export class MainBeamWeapon implements WeaponBehavior {
       impactNz: point.z,
     });
 
+    const profile = MAIN_GUN_AMMO[b.ammo];
+    const glowColor = b.ammo === 'he' ? 0xff6622 : b.ammo === 'ap' ? 0xffe088 : 0x88f0ff;
+    cube.applyImpactGlow(
+      point,
+      b.splash > 0 ? b.splash + 0.7 : 1.25,
+      glowColor,
+      b.ammo === 'he' ? 0.95 : b.ammo === 'ap' ? 0.7 : 0.48
+    );
+
     if (result.destroyed && result.explosive) {
       const chain = cube.applyExplosiveChain(result.x, result.y, result.z, now);
       for (const c of chain) if (c.destroyed) bus.emit('beam-hit', c);
     }
-    if (b.splash > 0 && result.destroyed) {
+    const splashNow = b.splash > 0 && (result.destroyed || profile.splashOnChip);
+    if (splashNow) {
       const splash = cube.applySplash(
         new THREE.Vector3(result.x, result.y, result.z),
         b.splash,
-        b.damage * 0.35,
+        b.damage * (b.ammo === 'he' ? 0.42 : 0.35),
         now,
         instanceId
       );

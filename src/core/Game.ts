@@ -105,6 +105,12 @@ import {
   GROUND_WEAPONS,
   type GroundWeaponId,
 } from '../data/groundStations';
+import {
+  MAIN_GUN_AMMO,
+  nextMainGunAmmo,
+  normalizeMainGunAmmo,
+  type MainGunAmmoId,
+} from '../data/ammo';
 
 type Mode =
   | 'menu'
@@ -139,6 +145,7 @@ export class Game {
   private ship = new Ship();
   private vitals = new ShipVitals();
   private weapon = new Weapon();
+  private mainGunAmmo: MainGunAmmoId = 'standard';
   private hardpoints = new HardpointSystem();
   private loadout = new LoadoutState();
   private droneBays = new DroneBayController();
@@ -554,6 +561,7 @@ export class Game {
       this.shopHintShown = true;
       this.openTech();
     });
+    els.btnAmmo?.addEventListener('click', () => this.cycleMainGunAmmo());
 
     this.shopUI.onClose = () => {
       this.shopUI.hide();
@@ -1086,6 +1094,7 @@ export class Game {
     this.hardpoints.rebuildFromLoadout();
     this.syncGroundStations();
     this.syncDronesFromBays();
+    this.clampMainGunAmmo();
 
     const grant = evolveCoreGrant(newTier);
     this.currency.addCoreEnergy(grant, 1);
@@ -1548,6 +1557,41 @@ export class Game {
     this.hardpoints.bindLoadout(this.loadout);
     this.syncDronesFromBays();
     this.updateHudVitals();
+    this.clampMainGunAmmo();
+  }
+
+  private ammoFlags(): { ammoAp: boolean; ammoHe: boolean } {
+    return { ammoAp: this.tech.stats.ammoAp, ammoHe: this.tech.stats.ammoHe };
+  }
+
+  private clampMainGunAmmo(): void {
+    this.mainGunAmmo = normalizeMainGunAmmo(this.mainGunAmmo, this.ammoFlags());
+    this.refreshAmmoHud();
+  }
+
+  private cycleMainGunAmmo(): void {
+    const next = nextMainGunAmmo(this.mainGunAmmo, this.ammoFlags());
+    if (next === this.mainGunAmmo) {
+      this.toast('UNLOCK AP / HE IN THE GUN SHOP');
+      return;
+    }
+    this.mainGunAmmo = next;
+    const p = MAIN_GUN_AMMO[next];
+    this.toast(`${p.short} · ${p.name.toUpperCase()}`);
+    this.refreshAmmoHud();
+    this.persist();
+  }
+
+  private refreshAmmoHud(): void {
+    const p = MAIN_GUN_AMMO[this.mainGunAmmo];
+    const flags = this.ammoFlags();
+    this.hud.updateAmmo({
+      short: p.short,
+      name: p.name,
+      hint: p.hint,
+      id: p.id,
+      canCycle: flags.ammoAp || flags.ammoHe,
+    });
   }
 
   private syncDronesFromBays(): void {
@@ -1663,6 +1707,11 @@ export class Game {
     this.music.setMasterVolume(Math.min(1, data.masterVolume * 0.85));
     this.hud.setMuted(data.muted);
     this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+    this.mainGunAmmo = normalizeMainGunAmmo(data.mainGunAmmo, {
+      ammoAp: this.tech.stats.ammoAp,
+      ammoHe: this.tech.stats.ammoHe,
+    });
+    this.refreshAmmoHud();
     this.graphicsQuality = data.graphicsQuality ?? DEFAULT_GRAPHICS_QUALITY;
     this.effectiveQuality = this.graphicsQuality;
 
@@ -1824,6 +1873,7 @@ export class Game {
     this.save.data.researchRanks = snapR.ranks;
     this.save.data.cosmeticTrail =
       !!this.save.data.cosmeticTrail || this.research.bonuses.cosmeticTrail;
+    this.save.data.mainGunAmmo = this.mainGunAmmo;
     const db = this.droneBays.toJSON();
     this.save.data.droneBays = db.bays;
     this.save.data.droneOwned = db.owned;
@@ -3103,6 +3153,7 @@ export class Game {
         this.vitals.update(dt);
         this.updateHudVitals();
         this.updateCombatWarmup(dt);
+        if (this.input.consumeAmmoCycle()) this.cycleMainGunAmmo();
         const allowFire = this.canFireWeapons() && this.input.isFiring;
 
         // Always update aim (so crosshair tracks); fire only when armed
@@ -3128,6 +3179,7 @@ export class Game {
           {
             enemyTargets: this.cubeDefense.getEnemyTargetsForWeapons(),
             onEnemyHit: (id, dmg) => this.cubeDefense.damageEnemy(id, dmg),
+            ammo: this.mainGunAmmo,
           }
         );
 

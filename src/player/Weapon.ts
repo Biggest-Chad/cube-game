@@ -18,6 +18,7 @@ import {
   MAIN_GUN_ENEMY_LOCK_ANGULAR_SLACK,
 } from '../data/constraints';
 import { getWeaponDef, computeWeaponStats } from '../data/weapons';
+import type { MainGunAmmoId } from '../data/ammo';
 
 export class Weapon {
   readonly group = new THREE.Group();
@@ -65,6 +66,7 @@ export class Weapon {
     extras?: {
       enemyTargets?: Array<{ position: THREE.Vector3; radius: number; id: string }>;
       onEnemyHit?: (id: string, dmg: number) => void;
+      ammo?: MainGunAmmoId;
     }
   ): void {
     this.enemyTargets = extras?.enemyTargets ?? [];
@@ -86,6 +88,7 @@ export class Weapon {
       aimLocked: this._locked,
       enemyTargets: this.enemyTargets,
       onEnemyHit: this.onEnemyHit ?? undefined,
+      ammo: extras?.ammo ?? 'standard',
     });
   }
 

@@ -40,6 +40,14 @@ interface Station {
   burstLeft: number;
 }
 
+interface LivingLight {
+  mesh: THREE.Mesh;
+  baseOpacity: number;
+  baseScale: number;
+  speed: number;
+  phase: number;
+}
+
 interface Bolt {
   active: boolean;
   kind: GroundWeaponId;
@@ -69,6 +77,7 @@ export class GroundStationField {
   private readonly _tmp = new THREE.Vector3();
   private readonly _up = new THREE.Vector3(0, 1, 0);
   private elapsed = 0;
+  private livingLights: LivingLight[] = [];
   private enemyHit: ((id: string, dmg: number) => void) | null = null;
   private interceptHit: ((id: string, dmg: number) => void) | null = null;
   private enemies: Array<{ id: string; position: THREE.Vector3; radius: number }> = [];
@@ -105,6 +114,7 @@ export class GroundStationField {
 
   update(dt: number, now: number, armed: boolean, stats: PlayerStats): void {
     this.elapsed += dt;
+    this.pulseLivingLights();
     if (armed && this.cube) this.tryFire(dt, now, stats);
     this.simBolts(dt, now);
   }
@@ -121,6 +131,37 @@ export class GroundStationField {
     });
     this.group.clear();
     this.stations = [];
+    this.livingLights = [];
+  }
+
+  private addLivingLight(
+    parent: THREE.Object3D,
+    mesh: THREE.Mesh,
+    speed: number,
+    phase: number,
+    baseOpacity: number
+  ): void {
+    parent.add(mesh);
+    this.livingLights.push({
+      mesh,
+      baseOpacity,
+      baseScale: 1,
+      speed,
+      phase,
+    });
+  }
+
+  private pulseLivingLights(): void {
+    const t = this.elapsed;
+    for (const L of this.livingLights) {
+      const pulse = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(t * L.speed + L.phase));
+      const mat = L.mesh.material;
+      if (mat instanceof THREE.MeshBasicMaterial) {
+        mat.opacity = L.baseOpacity * pulse;
+      }
+      const s = 0.82 + 0.28 * pulse;
+      L.mesh.scale.setScalar(s);
+    }
   }
 
   private buildPads(): void {
@@ -132,25 +173,21 @@ export class GroundStationField {
       [-r, -r],
     ];
     const y = ARENA_FLOOR_WORLD_Y + GROUND_STATION_PAD_HEIGHT;
-    const padMat = new THREE.MeshStandardMaterial({
-      color: 0x1a242c,
-      metalness: 0.55,
-      roughness: 0.4,
-      emissive: 0x062018,
-      emissiveIntensity: 0.25,
-    });
-    const steel = new THREE.MeshStandardMaterial({
-      color: 0x2a3238,
-      metalness: 0.7,
-      roughness: 0.32,
-    });
-    const accent = new THREE.MeshStandardMaterial({
-      color: 0x44ffaa,
-      emissive: 0x22aa66,
-      emissiveIntensity: 0.7,
-      metalness: 0.3,
-      roughness: 0.35,
-    });
+    // Unlit pads — city + cube keep the lighting budget. Additive beads read as activity.
+    const deck = new THREE.MeshBasicMaterial({ color: 0x151c22 });
+    const steel = new THREE.MeshBasicMaterial({ color: 0x2a333b });
+    const dark = new THREE.MeshBasicMaterial({ color: 0x0c1014 });
+    const stripe = new THREE.MeshBasicMaterial({ color: 0x3a4a44 });
+    const accent = new THREE.MeshBasicMaterial({ color: 0x3de8a0 });
+    const glow = (color: number, opacity: number) =>
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      });
 
     for (let i = 0; i < GROUND_STATION_COUNT; i++) {
       const [x, z] = corners[i];
@@ -159,35 +196,114 @@ export class GroundStationField {
       root.lookAt(0, y, 0);
       root.rotateY(Math.PI);
 
-      const pad = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.6, 0.35, 10), padMat);
-      pad.position.y = 0.1;
+      const apron = new THREE.Mesh(new THREE.CylinderGeometry(4.55, 4.95, 0.18, 12), dark);
+      apron.position.y = 0.02;
+      root.add(apron);
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(3.85, 4.15, 0.28, 12), deck);
+      pad.position.y = 0.16;
       root.add(pad);
-      const bunker = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.1, 2.4), steel);
-      bunker.position.set(0, 0.75, 0.15);
+      const lip = new THREE.Mesh(new THREE.TorusGeometry(4.05, 0.07, 6, 16), steel);
+      lip.rotation.x = Math.PI / 2;
+      lip.position.y = 0.3;
+      root.add(lip);
+      const inner = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.7, 0.12, 10), stripe);
+      inner.position.y = 0.32;
+      root.add(inner);
+
+      for (let k = 0; k < 4; k++) {
+        const chev = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.04, 1.15), accent);
+        const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+        chev.position.set(Math.cos(a) * 2.55, 0.34, Math.sin(a) * 2.55);
+        chev.rotation.y = -a;
+        root.add(chev);
+      }
+
+      const bunker = new THREE.Mesh(new THREE.BoxGeometry(3.9, 1.25, 2.75), steel);
+      bunker.position.set(0, 0.88, 0.2);
       root.add(bunker);
-      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 2.4, 6), steel);
-      mast.position.set(-1.15, 1.9, -0.6);
+      const brow = new THREE.Mesh(new THREE.BoxGeometry(4.1, 0.16, 0.55), dark);
+      brow.position.set(0, 1.55, -1.05);
+      root.add(brow);
+      const slit = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.12, 0.08), glow(0x44ffaa, 0.7));
+      slit.position.set(0, 1.28, -1.18);
+      this.addLivingLight(root, slit, 2.4, i * 0.7, 0.7);
+
+      for (const side of [-1, 1]) {
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.55), dark);
+        crate.position.set(side * 2.15, 0.55, 1.35);
+        root.add(crate);
+        const crate2 = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.38, 0.42), steel);
+        crate2.position.set(side * 2.15, 1.0, 1.35);
+        root.add(crate2);
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 1.8), steel);
+        rail.position.set(side * 3.15, 0.62, 0.15);
+        root.add(rail);
+      }
+
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 3.05, 8), steel);
+      mast.position.set(-1.45, 2.2, -0.72);
       root.add(mast);
+      const dish = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8, 0, Math.PI * 2, 0, 1.2), dark);
+      dish.position.set(-1.45, 3.72, -0.55);
+      dish.rotation.x = 0.7;
+      root.add(dish);
+      const dishCore = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), glow(0x66eeff, 0.85));
+      dishCore.position.set(-1.45, 3.78, -0.42);
+      this.addLivingLight(root, dishCore, 5.2, i * 1.3, 0.85);
+
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.42, 0.55), dark);
+      vent.position.set(1.35, 1.65, 0.85);
+      root.add(vent);
+      for (let v = 0; v < 3; v++) {
+        const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.55, 6), steel);
+        stack.position.set(1.15 + v * 0.2, 2.05, 0.85);
+        root.add(stack);
+      }
 
       const turret = new THREE.Group();
-      turret.position.set(0.2, 1.45, -0.1);
-      const cupola = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), steel);
+      turret.position.set(0.25, 1.62, -0.15);
+      const cupola = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 10), steel);
       turret.add(cupola);
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.4, 6), accent);
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.42, 0.22, 10), dark);
+      collar.position.y = 0.42;
+      turret.add(collar);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 1.65, 8), accent);
       barrel.rotation.x = Math.PI / 2;
-      barrel.position.z = -0.85;
+      barrel.position.z = -0.95;
       turret.add(barrel);
+      const brake = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.22, 8), steel);
+      brake.rotation.x = Math.PI / 2;
+      brake.position.z = -1.62;
+      turret.add(brake);
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), glow(0xff8844, 0.9));
+      led.position.set(0.28, 0.22, 0.35);
+      this.addLivingLight(turret, led, 7.5, i * 2.1, 0.9);
       root.add(turret);
 
       const housing = new THREE.Group();
-      housing.position.set(-1.15, 3.15, -0.6);
-      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.42, 0.18), steel);
+      housing.position.set(-1.45, 3.55, -0.72);
+      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.48, 0.2), steel);
       housing.add(yoke);
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.55, 10), steel);
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.62, 10), steel);
       drum.rotation.x = Math.PI / 2;
-      drum.position.z = -0.18;
+      drum.position.z = -0.2;
       housing.add(drum);
       root.add(housing);
+
+      // Perimeter beads — cheap "alive" running lights, not SpotLights
+      for (let b = 0; b < 8; b++) {
+        const a = (b / 8) * Math.PI * 2;
+        const bead = new THREE.Mesh(
+          new THREE.SphereGeometry(0.055, 6, 6),
+          glow(b % 2 === 0 ? 0x44ffaa : 0x66d8ff, 0.75)
+        );
+        bead.position.set(Math.cos(a) * 4.15, 0.38, Math.sin(a) * 4.15);
+        this.addLivingLight(root, bead, 3.1 + (b % 3) * 0.4, i + b * 0.55, 0.75);
+      }
+
+      const strobe = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), glow(0xfff2c0, 0.8));
+      strobe.position.set(1.55, 2.15, -0.85);
+      this.addLivingLight(root, strobe, 9.5, i * 0.4, 0.8);
 
       this.group.add(root);
       this.stations.push({
@@ -333,7 +449,7 @@ export class GroundStationField {
   }
 
   private muzzleWorld(s: Station, out: THREE.Vector3): THREE.Vector3 {
-    out.set(0.2, 1.45, -1.5);
+    out.set(0.25, 1.62, -1.75);
     s.root.localToWorld(out);
     return out;
   }

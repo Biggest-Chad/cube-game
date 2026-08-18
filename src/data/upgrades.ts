@@ -77,6 +77,16 @@ export interface UpgradeEffect {
   penetrationAdd?: number;
   /** Main gun armor pierce 0–1 */
   armorPierceAdd?: number;
+  /** Unlock armor-piercing magazine. */
+  unlockAmmoAp?: boolean;
+  /** Unlock high-explosive magazine. */
+  unlockAmmoHe?: boolean;
+  /** Extra AP pierce ranks (only while AP is loaded). */
+  ammoApPenAdd?: number;
+  /** Extra HE splash ranks (only while HE is loaded). */
+  ammoHeSplashAdd?: number;
+  /** Main-gun heat bleed add (fraction of base cool rate). */
+  heatCoolAdd?: number;
   unlockDrones?: boolean;
   unlockAutoFire?: boolean;
   /** Ship vitals */
@@ -356,6 +366,35 @@ export const UPGRADES: UpgradeNodeDef[] = [
     { id: 'off_splash_1', name: 'Shock Halo', description: 'Small splash radius', cost: 220, effects: { splashAdd: 1.1 }, extraPrereq: ['off_damage_2'] },
     { id: 'off_splash_2', name: 'Nova Ring', description: 'Larger splash', cost: 520, effects: { splashAdd: 1.3 } },
     { id: 'off_splash_3', name: 'Cascade Halo', description: 'Wide detonation ring', cost: 1000, effects: { splashAdd: 1.4 } },
+  ]),
+  ...chainNodes('off_ammo_ap', 'offense', [
+    {
+      id: 'off_ammo_ap_1',
+      name: 'AP Magazine',
+      description: 'Unlock armor-piercing rounds (HUD / R). Extra pierce, no splash.',
+      cost: 260,
+      effects: { unlockAmmoAp: true, ammoApPenAdd: 1 },
+      extraPrereq: ['off_damage_2'],
+    },
+    { id: 'off_ammo_ap_2', name: 'Tungsten Core', description: 'AP: +1 block pierce', cost: 540, effects: { ammoApPenAdd: 1 } },
+    { id: 'off_ammo_ap_3', name: 'Depleted Tip', description: 'AP: +1 pierce · +6% armor pierce', cost: 980, effects: { ammoApPenAdd: 1, armorPierceAdd: 0.06 } },
+  ]),
+  ...chainNodes('off_ammo_he', 'offense', [
+    {
+      id: 'off_ammo_he_1',
+      name: 'HE Magazine',
+      description: 'Unlock explosive rounds (HUD / R). Extra splash, no pierce.',
+      cost: 260,
+      effects: { unlockAmmoHe: true, ammoHeSplashAdd: 0.7 },
+      extraPrereq: ['off_damage_2'],
+    },
+    { id: 'off_ammo_he_2', name: 'Burst Sleeve', description: 'HE: +0.8 splash radius', cost: 540, effects: { ammoHeSplashAdd: 0.8 } },
+    { id: 'off_ammo_he_3', name: 'Thermobaric Mix', description: 'HE: +1.0 splash radius', cost: 980, effects: { ammoHeSplashAdd: 1.0 } },
+  ]),
+  ...chainNodes('off_vent', 'offense', [
+    { id: 'off_vent_1', name: 'Vent Coils', description: '+18% main gun heat bleed', cost: 180, effects: { heatCoolAdd: 0.18 }, extraPrereq: ['off_rate_1'] },
+    { id: 'off_vent_2', name: 'Vent Coils', description: '+16% heat bleed', cost: 420, effects: { heatCoolAdd: 0.16 } },
+    { id: 'off_vent_3', name: 'Cryo Jacket', description: '+14% heat bleed', cost: 780, effects: { heatCoolAdd: 0.14 } },
   ]),
   ...repeatableChain('off_crit', 'offense', {
     name: 'Overcharge',

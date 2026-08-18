@@ -30,9 +30,17 @@ const _hitNormal = new THREE.Vector3();
 const _trueHitPt = new THREE.Vector3();
 const _trueBestPoint = new THREE.Vector3();
 const _white = new THREE.Color(0xffffff);
+const _flashCol = new THREE.Color();
 const _sphere = new THREE.Sphere();
 const _raycastSeenIds = new Set<number>();
 const _raycastCandidates: number[] = [];
+const _queryPos = new THREE.Vector3();
+const _glowLatent = new THREE.Color(0x082028);
+
+interface BlockFlash {
+  t: number;
+  color: number;
+}
 
 /** Brute-force the instance loop below this count (L1-safe; hash optional). */
 const RAYCAST_HASH_BRUTE_LIMIT = 64;
@@ -91,7 +99,9 @@ export class CubeManager {
   aliveBlocks = 0;
   totalBlocks = 0;
   private regenTimer = 0;
-  private flashMap = new Map<number, number>();
+  private flashMap = new Map<number, BlockFlash>();
+  private glowPulse = 0;
+  private readonly glowTint = new THREE.Color(0x082028);
   /** When true, core block hits route through shared nucleus (prevent re-entry). */
   private coreRouting = true;
   private deadShells: DeadShell[] = [];
@@ -101,6 +111,8 @@ export class CubeManager {
   private raycastHashCount = 0;
   private raycastHashDirty = true;
   private raycastHashMW = new THREE.Matrix4();
+  /** Parallel to instance id: world-cell key used by the spatial hash. */
+  private instanceHashCell: string[] = [];
 
   constructor() {
     // Per-instance color carries hue; Standard keeps cube lighting/readability
@@ -229,7 +241,7 @@ export class CubeManager {
     // Preserve current instance position (scramble moves blocks; never snap back to spawn lattice)
     this.mesh.getMatrixAt(instanceId, _matrix);
     _pos.setFromMatrixPosition(_matrix);
-    const flash = this.flashMap.get(instanceId) ?? 0;
+    const flash = this.flashMap.get(instanceId);
     const hpRatio = chunk.health[i] / Math.max(1, chunk.maxHealth[i]);
     const s = 0.55 + 0.45 * Math.min(1, hpRatio);
     _scale.set(s, s, s);
@@ -237,8 +249,9 @@ export class CubeManager {
     _matrix.compose(_pos, _quat, _scale);
     this.mesh.setMatrixAt(instanceId, _matrix);
     _color.setHex(colorForType(t));
-    if (flash > 0) {
-      _color.lerp(_white, flash * 0.55);
+    if (flash && flash.t > 0) {
+      _flashCol.setHex(flash.color);
+      _color.lerp(_flashCol, Math.min(1, flash.t) * 0.7);
     } else {
       _color.multiplyScalar(0.42 + 0.28 * Math.min(1, hpRatio));
     }
@@ -252,6 +265,7 @@ export class CubeManager {
     if (!ref) return;
     this.lookup.delete(this.key(ref.chunk, ref.localIndex));
     this.flashMap.delete(instanceId);
+    this.hashUnindexId(instanceId);
 
     if (instanceId !== last) {
       const moved = this.refs[last];
@@ -269,16 +283,17 @@ export class CubeManager {
         this.flashMap.delete(last);
         this.flashMap.set(instanceId, flash);
       }
+      this.hashRemapId(last, instanceId);
     }
     this.refs.pop();
     this.mesh.count = last;
     this.aliveBlocks = last;
+    this.instanceHashCell.length = last;
+    this.raycastHashCount = last;
     if (!opts?.deferGpu) {
       this.mesh.instanceMatrix.needsUpdate = true;
       if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
-    // Swap-remove remaps the last id onto this slot — rebuild both mappings.
-    this.rebuildRaycastHash();
   }
 
   /** Wipe remaining instances without N GPU uploads (one flush at the end). */
@@ -294,6 +309,7 @@ export class CubeManager {
     this.raycastHash.clear();
     this.raycastHashCount = 0;
     this.raycastHashDirty = false;
+    this.instanceHashCell.length = 0;
     if (!this.mesh || this.mesh.count <= 0) {
       this.raycastHashMW.identity();
       return;
@@ -301,21 +317,119 @@ export class CubeManager {
     this.group.updateWorldMatrix(true, false);
     const mw = this.group.matrixWorld;
     this.raycastHashMW.copy(mw);
-    const cell = PERFORMANCE_RAYCAST_HASH_CELL_SIZE;
     const n = this.mesh.count;
     for (let id = 0; id < n; id++) {
-      this.mesh.getMatrixAt(id, _matrix);
-      _pos.setFromMatrixPosition(_matrix);
-      _pos.applyMatrix4(mw);
-      const key = `${Math.floor(_pos.x / cell)},${Math.floor(_pos.y / cell)},${Math.floor(_pos.z / cell)}`;
-      let bucket = this.raycastHash.get(key);
-      if (!bucket) {
-        bucket = [];
-        this.raycastHash.set(key, bucket);
-      }
-      bucket.push(id);
+      this.hashIndexId(id, mw);
     }
     this.raycastHashCount = n;
+  }
+
+  private hashCellKey(wx: number, wy: number, wz: number): string {
+    const cell = PERFORMANCE_RAYCAST_HASH_CELL_SIZE;
+    return `${Math.floor(wx / cell)},${Math.floor(wy / cell)},${Math.floor(wz / cell)}`;
+  }
+
+  private hashIndexId(id: number, mw?: THREE.Matrix4): void {
+    if (!this.mesh) return;
+    this.mesh.getMatrixAt(id, _matrix);
+    _queryPos.setFromMatrixPosition(_matrix);
+    if (mw) _queryPos.applyMatrix4(mw);
+    else {
+      this.group.updateWorldMatrix(true, false);
+      _queryPos.applyMatrix4(this.group.matrixWorld);
+    }
+    const key = this.hashCellKey(_queryPos.x, _queryPos.y, _queryPos.z);
+    this.instanceHashCell[id] = key;
+    let bucket = this.raycastHash.get(key);
+    if (!bucket) {
+      bucket = [];
+      this.raycastHash.set(key, bucket);
+    }
+    bucket.push(id);
+  }
+
+  private hashUnindexId(id: number): void {
+    const key = this.instanceHashCell[id];
+    if (!key) return;
+    const bucket = this.raycastHash.get(key);
+    if (bucket) {
+      const i = bucket.indexOf(id);
+      if (i >= 0) {
+        bucket[i] = bucket[bucket.length - 1];
+        bucket.pop();
+        if (bucket.length === 0) this.raycastHash.delete(key);
+      }
+    }
+    this.instanceHashCell[id] = '';
+  }
+
+  /** After swap-remove: `fromId` now lives at `toId`. */
+  private hashRemapId(fromId: number, toId: number): void {
+    const key = this.instanceHashCell[fromId];
+    if (!key) {
+      this.instanceHashCell[toId] = '';
+      return;
+    }
+    const bucket = this.raycastHash.get(key);
+    if (bucket) {
+      const i = bucket.indexOf(fromId);
+      if (i >= 0) bucket[i] = toId;
+    }
+    this.instanceHashCell[toId] = key;
+    this.instanceHashCell[fromId] = '';
+  }
+
+  /**
+   * Visit live instance ids whose centers sit inside a world sphere.
+   * Small radii walk cells; large radii iterate occupied buckets.
+   */
+  private forEachHashInRadius(
+    center: THREE.Vector3,
+    radius: number,
+    fn: (id: number, wx: number, wy: number, wz: number) => void
+  ): boolean {
+    if (!this.mesh || this.mesh.count <= 0) return false;
+    const hashReady = this.ensureRaycastHash();
+    this.group.updateWorldMatrix(true, false);
+    const mw = this.group.matrixWorld;
+    const r2 = radius * radius;
+    const consider = (id: number): void => {
+      this.mesh!.getMatrixAt(id, _matrix);
+      _queryPos.setFromMatrixPosition(_matrix);
+      _queryPos.applyMatrix4(mw);
+      const dx = _queryPos.x - center.x;
+      const dy = _queryPos.y - center.y;
+      const dz = _queryPos.z - center.z;
+      if (dx * dx + dy * dy + dz * dz <= r2) fn(id, _queryPos.x, _queryPos.y, _queryPos.z);
+    };
+    if (!hashReady || this.mesh.count < RAYCAST_HASH_BRUTE_LIMIT) {
+      for (let id = 0; id < this.mesh.count; id++) consider(id);
+      return true;
+    }
+    const cell = PERFORMANCE_RAYCAST_HASH_CELL_SIZE;
+    const minX = Math.floor((center.x - radius) / cell);
+    const maxX = Math.floor((center.x + radius) / cell);
+    const minY = Math.floor((center.y - radius) / cell);
+    const maxY = Math.floor((center.y + radius) / cell);
+    const minZ = Math.floor((center.z - radius) / cell);
+    const maxZ = Math.floor((center.z + radius) / cell);
+    const volume = (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+    if (volume > this.raycastHash.size) {
+      for (const bucket of this.raycastHash.values()) {
+        for (let i = 0; i < bucket.length; i++) consider(bucket[i]);
+      }
+      return true;
+    }
+    for (let cz = minZ; cz <= maxZ; cz++) {
+      for (let cy = minY; cy <= maxY; cy++) {
+        for (let cx = minX; cx <= maxX; cx++) {
+          const bucket = this.raycastHash.get(`${cx},${cy},${cz}`);
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i++) consider(bucket[i]);
+        }
+      }
+    }
+    return true;
   }
 
   /** Rebuild if dirty, count-mismatched, or the cube group moved. */
@@ -651,16 +765,12 @@ export class CubeManager {
     let bestDist = maxDist;
 
     if (this.mesh) {
-      for (let id = 0; id < this.mesh.count; id++) {
+      this.forEachHashInRadius(from, maxDist, (id, wx, wy, wz) => {
         const t = this.getBlockType(id);
-        if (t === BlockType.Empty || t === BlockType.Core) continue;
-        this.mesh.getMatrixAt(id, _matrix);
-        _pos.setFromMatrixPosition(_matrix);
-        const d = from.distanceTo(_pos);
-        if (d > maxDist) continue;
-        const radial = Math.hypot(_pos.x, _pos.y, _pos.z);
+        if (t === BlockType.Empty || t === BlockType.Core) return;
+        const d = Math.hypot(wx - from.x, wy - from.y, wz - from.z);
+        const radial = Math.hypot(wx, wy, wz);
         const typePrio = prefer ? prefer(t) : BLOCK_DEFS[t]?.priority ?? 1;
-        // Cheap per-drone hash so adjacent craft pick different faces
         const jitter = ((id * 2654435761 + seed * 97) >>> 0) % 1000 / 1000;
         const score = radial * 9 + typePrio * 2.4 - d * 0.28 + jitter * 3.2;
         if (score > bestScore) {
@@ -668,7 +778,7 @@ export class CubeManager {
           bestId = id;
           bestDist = d;
         }
-      }
+      });
     }
 
     if (opts?.allowNucleus && this.nucleus.isActive) {
@@ -709,11 +819,8 @@ export class CubeManager {
     let bestId = -1;
     let bestDist = maxDist;
     if (this.mesh) {
-      for (let id = 0; id < this.mesh.count; id++) {
-        this.mesh.getMatrixAt(id, _matrix);
-        _pos.setFromMatrixPosition(_matrix);
-        const d = world.distanceTo(_pos);
-        if (d > maxDist) continue;
+      this.forEachHashInRadius(world, maxDist, (id, wx, wy, wz) => {
+        const d = Math.hypot(wx - world.x, wy - world.y, wz - world.z);
         const ref = this.refs[id];
         const t = ref.chunk.types[ref.localIndex] as BlockType;
         const prio = prefer ? prefer(t) : BLOCK_DEFS[t]?.priority ?? 1;
@@ -723,7 +830,7 @@ export class CubeManager {
           bestId = id;
           bestDist = d;
         }
-      }
+      });
     }
     if (this.nucleus.isActive) {
       this.nucleus.getWorldCenter(_pos);
@@ -752,16 +859,58 @@ export class CubeManager {
     let bestId = -1;
     let bestDist = maxDist;
     if (this.mesh) {
-      for (let id = 0; id < this.mesh.count; id++) {
-        const t = this.getBlockType(id);
-        if (t === BlockType.Empty || t === BlockType.Core) continue;
-        this.mesh.getMatrixAt(id, _matrix);
-        _pos.setFromMatrixPosition(_matrix);
-        const d = from.distanceTo(_pos);
-        if (d < bestDist) {
-          bestDist = d;
-          bestId = id;
+      const hashReady = this.ensureRaycastHash();
+      if (hashReady && this.mesh.count >= RAYCAST_HASH_BRUTE_LIMIT) {
+        this.group.updateWorldMatrix(true, false);
+        const mw = this.group.matrixWorld;
+        const cell = PERFORMANCE_RAYCAST_HASH_CELL_SIZE;
+        const sx = Math.floor(from.x / cell);
+        const sy = Math.floor(from.y / cell);
+        const sz = Math.floor(from.z / cell);
+        const maxRing = Math.ceil(maxDist / cell) + 2;
+        const takeCell = (cx: number, cy: number, cz: number): void => {
+          const bucket = this.raycastHash.get(`${cx},${cy},${cz}`);
+          if (!bucket) return;
+          for (let i = 0; i < bucket.length; i++) {
+            const id = bucket[i];
+            const t = this.getBlockType(id);
+            if (t === BlockType.Empty || t === BlockType.Core) continue;
+            this.mesh!.getMatrixAt(id, _matrix);
+            _queryPos.setFromMatrixPosition(_matrix);
+            _queryPos.applyMatrix4(mw);
+            const d = Math.hypot(_queryPos.x - from.x, _queryPos.y - from.y, _queryPos.z - from.z);
+            if (d < bestDist) {
+              bestDist = d;
+              bestId = id;
+            }
+          }
+        };
+        for (let ring = 0; ring <= maxRing; ring++) {
+          if (ring * cell > maxDist + cell) break;
+          if (ring === 0) {
+            takeCell(sx, sy, sz);
+          } else {
+            for (let dx = -ring; dx <= ring; dx++) {
+              for (let dy = -ring; dy <= ring; dy++) {
+                for (let dz = -ring; dz <= ring; dz++) {
+                  if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== ring) continue;
+                  takeCell(sx + dx, sy + dy, sz + dz);
+                }
+              }
+            }
+          }
+          if (ring >= 2 && bestDist <= (ring - 1) * cell) break;
         }
+      } else {
+        this.forEachHashInRadius(from, maxDist, (id, wx, wy, wz) => {
+          const t = this.getBlockType(id);
+          if (t === BlockType.Empty || t === BlockType.Core) return;
+          const d = Math.hypot(wx - from.x, wy - from.y, wz - from.z);
+          if (d < bestDist) {
+            bestDist = d;
+            bestId = id;
+          }
+        });
       }
     }
     if (allowNucleus && this.nucleus.isActive) {
@@ -864,7 +1013,7 @@ export class CubeManager {
 
     chunk.health[i] = Math.max(0, chunk.health[i] - damage);
     chunk.lastHitTime = now;
-    this.flashMap.set(instanceId, 1);
+    this.setBlockFlash(instanceId, 1, 0xd8f6ff);
 
     this.mesh.getMatrixAt(instanceId, _matrix);
     _pos.setFromMatrixPosition(_matrix);
@@ -1074,8 +1223,9 @@ export class CubeManager {
     this.lookup.set(key, id);
     this.mesh.count = id + 1;
     this.aliveBlocks = this.mesh.count;
-    this.flashMap.set(id, 1);
-    this.rebuildRaycastHash();
+    this.setBlockFlash(id, 1, 0xb8ffe0);
+    this.hashIndexId(id);
+    this.raycastHashCount = this.mesh.count;
     bus.emit('block-resurrected', {
       type: grave.type,
       x: grave.x,
@@ -1143,13 +1293,11 @@ export class CubeManager {
     // collect ids first (mutation shifts ids)
     const hits: number[] = [];
     if (this.mesh) {
-      for (let id = 0; id < this.mesh.count; id++) {
-        if (id === ignoreId) continue;
-        this.mesh.getMatrixAt(id, _matrix);
-        _pos.setFromMatrixPosition(_matrix);
-        if (center.distanceTo(_pos) <= radius) hits.push(id);
-      }
+      this.forEachHashInRadius(center, radius, (id) => {
+        if (id !== ignoreId) hits.push(id);
+      });
     }
+    this.applyImpactGlow(center, radius + 0.85, 0xff7a32, 0.82);
     // Also include solid nucleus if blast overlaps the hitbox but no core voxel was in range
     // (and primary impact was not already a core hit)
     if (this.nucleus.isActive) {
@@ -1179,21 +1327,55 @@ export class CubeManager {
   }
 
   applyExplosiveChain(x: number, y: number, z: number, now: number): DamageResult[] {
-    return this.applySplash(new THREE.Vector3(x, y, z), 1.8, 40, now);
+    const origin = new THREE.Vector3(x, y, z);
+    this.applyImpactGlow(origin, 2.6, 0xff6622, 1);
+    return this.applySplash(origin, 1.8, 40, now);
+  }
+
+  /**
+   * Gentle per-block + material glow from explosions and bright weapons.
+   * Uses instanceColor (no extra lights) so the cube stays one draw.
+   */
+  applyImpactGlow(center: THREE.Vector3, radius: number, color: number, strength: number): void {
+    if (!this.mesh || radius <= 0 || strength <= 0) return;
+    const fall = Math.max(0.15, radius);
+    this.forEachHashInRadius(center, radius, (id, wx, wy, wz) => {
+      const d = Math.hypot(wx - center.x, wy - center.y, wz - center.z);
+      const t = strength * (1 - d / fall);
+      if (t > 0.04) this.setBlockFlash(id, t, color);
+    });
+    this.glowPulse = Math.min(0.85, this.glowPulse + strength * 0.2);
+    this.glowTint.lerp(_flashCol.setHex(color), Math.min(0.55, strength * 0.4));
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  private setBlockFlash(id: number, t: number, color: number): void {
+    const prev = this.flashMap.get(id);
+    const next = Math.min(1.15, t);
+    if (!prev || next >= prev.t) this.flashMap.set(id, { t: next, color });
+    else this.flashMap.set(id, { t: prev.t, color: prev.color });
+    this.updateInstanceVisual(id);
   }
 
   update(dt: number, now: number): void {
     if (!this.mesh || !this.level) return;
 
+    if (this.glowPulse > 0 || this.glowTint.r !== _glowLatent.r) {
+      this.glowPulse = Math.max(0, this.glowPulse - dt * 2.4);
+      this.glowTint.lerp(_glowLatent, 1 - Math.exp(-2.6 * dt));
+      this.material.emissive.copy(this.glowTint);
+      this.material.emissiveIntensity = CUBE_LATENT_EMISSIVE_INTENSITY + this.glowPulse * 0.4;
+    }
+
     // Flash decay
     if (this.flashMap.size > 0) {
       for (const [id, v] of this.flashMap) {
-        const nv = v - dt * 4;
+        const nv = v.t - dt * 3.6;
         if (nv <= 0) {
           this.flashMap.delete(id);
           this.updateInstanceVisual(id);
         } else {
-          this.flashMap.set(id, nv);
+          v.t = nv;
           this.updateInstanceVisual(id);
         }
       }
@@ -1441,6 +1623,11 @@ export class CubeManager {
     this.raycastHash.clear();
     this.raycastHashCount = 0;
     this.raycastHashDirty = true;
+    this.instanceHashCell.length = 0;
+    this.glowPulse = 0;
+    this.glowTint.copy(_glowLatent);
+    this.material.emissive.copy(_glowLatent);
+    this.material.emissiveIntensity = CUBE_LATENT_EMISSIVE_INTENSITY;
     if (this.mesh) {
       this.mesh.geometry.dispose();
       this.group.remove(this.mesh);

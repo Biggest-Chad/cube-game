@@ -24,6 +24,8 @@ export class InputController {
   private aimActive = false;
   private pinchStartDist = 0;
   private zoomDelta = 0;
+  private ammoQueued = false;
+  private ammoHeld = false;
   private bound = false;
 
   private joyZone: HTMLElement | null = null;
@@ -64,10 +66,15 @@ export class InputController {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     this.keys.add(e.code);
+    if (e.code === 'KeyR' && !this.ammoHeld) {
+      this.ammoQueued = true;
+      this.ammoHeld = true;
+    }
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
+    if (e.code === 'KeyR') this.ammoHeld = false;
   };
 
   private onJoyDown = (e: PointerEvent): void => {
@@ -221,6 +228,8 @@ export class InputController {
     this.aimX = 0;
     this.aimY = 0;
     this.zoomDelta = 0;
+    this.ammoQueued = false;
+    this.ammoHeld = false;
     this.keys.clear();
     this.setStick(this.stickEl, 0, 0);
     this.setStick(this.aimStickEl, 0, 0);
@@ -230,6 +239,12 @@ export class InputController {
     const z = this.zoomDelta;
     this.zoomDelta = 0;
     return z;
+  }
+
+  consumeAmmoCycle(): boolean {
+    const v = this.ammoQueued;
+    this.ammoQueued = false;
+    return v;
   }
 
   get isFiring(): boolean {

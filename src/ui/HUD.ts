@@ -47,6 +47,7 @@ export class HUD {
   private lastNucleusOverload: boolean | null = null;
   private lastNucleusDecaying: boolean | null = null;
   private lastNucleusLaser: boolean | null = null;
+  private lastAmmoKey = '';
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -77,6 +78,17 @@ export class HUD {
             </div>
           </div>
           <div class="hud-top-spacer" aria-hidden="true"></div>
+        </div>
+
+        <div class="hud-ammo" id="hud-ammo">
+          <button class="hud-ammo-btn interactive ui-btn" id="hud-ammo-btn" type="button" aria-label="Cycle main gun ammo">
+            <span class="hud-ammo-tag" id="hud-ammo-tag">STD</span>
+            <span class="hud-ammo-copy">
+              <span class="hud-ammo-name" id="hud-ammo-name">STANDARD</span>
+              <span class="hud-ammo-hint" id="hud-ammo-hint">Balanced pierce / splash</span>
+            </span>
+            <span class="hud-ammo-key">R</span>
+          </button>
         </div>
 
         <div class="hud-vitals" id="hud-vitals" aria-label="Ship integrity">
@@ -159,7 +171,7 @@ export class HUD {
           </div>
         </div>
 
-        <div class="desktop-hint">WASD ORBIT · IJKL / RIGHT STICK AIM · AUTO-FIRE · SCROLL ZOOM</div>
+        <div class="desktop-hint">WASD ORBIT · IJKL / RIGHT STICK AIM · R AMMO · AUTO-FIRE · SCROLL ZOOM</div>
       </div>
     `;
     this.fragEl = this.root.querySelector('#hud-frag')!;
@@ -203,7 +215,31 @@ export class HUD {
       btnMenu: this.btnMenu,
       btnLoadout: this.btnLoadout,
       shopHintOpen: this.root.querySelector('#shop-hint-open') as HTMLElement,
+      btnAmmo: this.root.querySelector('#hud-ammo-btn') as HTMLElement,
     };
+  }
+
+  updateAmmo(info: {
+    short: string;
+    name: string;
+    hint: string;
+    id: string;
+    canCycle: boolean;
+  }): void {
+    const key = `${info.id}|${info.canCycle ? 1 : 0}`;
+    if (key === this.lastAmmoKey) return;
+    this.lastAmmoKey = key;
+    const tag = this.root.querySelector('#hud-ammo-tag');
+    const name = this.root.querySelector('#hud-ammo-name');
+    const hint = this.root.querySelector('#hud-ammo-hint');
+    const wrap = this.root.querySelector('#hud-ammo');
+    const btn = this.root.querySelector('#hud-ammo-btn');
+    if (tag) tag.textContent = info.short;
+    if (name) name.textContent = info.name.toUpperCase();
+    if (hint) hint.textContent = info.hint;
+    wrap?.classList.toggle('ap', info.id === 'ap');
+    wrap?.classList.toggle('he', info.id === 'he');
+    btn?.classList.toggle('locked', !info.canCycle);
   }
 
   setVisible(v: boolean): void {

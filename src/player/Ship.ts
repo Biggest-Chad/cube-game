@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { COLORS, ORBIT } from '../data/constants';
 import type { OrbitalCamera } from './OrbitalCamera';
 import { SHIP_MUZZLE, SHIP_THRUSTERS } from './ShipMounts';
@@ -64,38 +65,44 @@ export class Ship {
     this.runningLights = [];
     next.updateMatrixWorld(true);
     next.traverse((o) => {
-      if (!(o instanceof THREE.Mesh)) return;
-      o.frustumCulled = true;
-      o.castShadow = false;
-      o.receiveShadow = false;
-      if (o.name.startsWith('Plume')) {
-        o.visible = false;
+      const mesh = (o as THREE.Mesh).isMesh ? (o as THREE.Mesh) : null;
+      if (!mesh) return;
+      mesh.frustumCulled = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      if (mesh.name.startsWith('Plume')) {
+        mesh.visible = false;
         return;
       }
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const m of mats) {
         if (!m || !('emissive' in m)) continue;
         const std = m as THREE.MeshStandardMaterial;
         std.toneMapped = false;
         std.envMapIntensity = 0.35;
-        if (o.name.startsWith('EngineGlow') || o.name.includes('Nozzle')) {
+        if (mesh.name.startsWith('EngineGlow') || mesh.name.includes('Nozzle')) {
           std.transparent = true;
           std.depthWrite = false;
           std.emissive.copy(std.color);
           std.emissiveIntensity = Math.max(std.emissiveIntensity, 1.2);
         }
       }
-      const live =
-        o.name.startsWith('EngineGlow') ||
-        o.name.includes('Nozzle') ||
-        o.name.startsWith('Torus');
-      if (live) {
-        this.engineGlow.push(o);
-      } else {
-        o.matrixAutoUpdate = false;
-        o.updateMatrix();
+      if (mesh.name.startsWith('EngineGlow') || mesh.name.includes('Nozzle')) {
+        this.engineGlow.push(mesh);
       }
     });
+    try {
+      this.mergeStaticHull(next);
+    } catch (err) {
+      console.warn('[ship] hull merge failed', err);
+      next.userData.hullMergeError = String(err);
+      next.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.matrixAutoUpdate = false;
+          o.updateMatrix();
+        }
+      });
+    }
     this.group.remove(this.body);
     this.body.traverse((o) => {
       if (o instanceof THREE.Mesh) {
@@ -108,6 +115,133 @@ export class Ship {
     this.group.add(this.body);
     this.muzzleLocal.copy(SHIP_MUZZLE);
     this.thrusterLocals = SHIP_THRUSTERS.map((v) => v.clone());
+  }
+
+  /**
+   * Fold authored hull meshes that share a material into one Mesh per map.
+   * EngineGlow / Nozzle stay live for the thruster pulse. Maps are reused.
+   */
+  private mergeStaticHull(root: THREE.Object3D): void {
+    root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+    const bake = new THREE.Matrix4();
+    type Bucket = { material: THREE.Material; geos: THREE.BufferGeometry[]; meshes: THREE.Mesh[] };
+    const buckets = new Map<string, Bucket>();
+
+    const asMesh = (o: THREE.Object3D): THREE.Mesh | null =>
+      (o as THREE.Mesh).isMesh ? (o as THREE.Mesh) : null;
+    const isLive = (o: THREE.Mesh): boolean =>
+      o.name.startsWith('EngineGlow') ||
+      o.name.includes('Nozzle') ||
+      o.name.startsWith('Plume');
+
+    const materialKey = (mat: THREE.Material): string => {
+      const std = mat as THREE.MeshStandardMaterial;
+      const mapId = (t: THREE.Texture | null | undefined) => t?.uuid ?? '-';
+      return [
+        mat.type,
+        mapId(std.map),
+        mapId(std.emissiveMap),
+        mapId(std.normalMap),
+        mapId(std.roughnessMap),
+        mapId(std.metalnessMap),
+        mapId(std.aoMap),
+        std.transparent ? 1 : 0,
+        std.side ?? 0,
+      ].join('|');
+    };
+
+    root.traverse((o) => {
+      const mesh = asMesh(o);
+      if (!mesh || isLive(mesh)) return;
+      if (Array.isArray(mesh.material)) return;
+      const mat = mesh.material as THREE.Material;
+      const src = mesh.geometry;
+      if (!src) return;
+      const key = materialKey(mat);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { material: mat, geos: [], meshes: [] };
+        buckets.set(key, bucket);
+      }
+      const g = src.clone();
+      bake.copy(inv).multiply(o.matrixWorld);
+      g.applyMatrix4(bake);
+      for (const name of Object.keys(g.attributes)) {
+        if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+      }
+      if (!g.getAttribute('normal')) g.computeVertexNormals();
+      if (!g.getAttribute('uv')) {
+        const n = g.getAttribute('position')?.count ?? 0;
+        g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+      }
+      g.morphAttributes = {};
+      bucket.geos.push(g);
+      bucket.meshes.push(mesh);
+    });
+
+    const meshCount = [...buckets.values()].reduce((n, b) => n + b.meshes.length, 0);
+    if (meshCount < 2) {
+      for (const g of buckets.values()) g.geos.forEach((geo) => geo.dispose());
+      root.traverse((o) => {
+        const mesh = asMesh(o);
+        if (mesh && !isLive(mesh)) {
+          mesh.matrixAutoUpdate = false;
+          mesh.updateMatrix();
+        }
+      });
+      return;
+    }
+
+    const hull = new THREE.Group();
+    hull.name = 'MergedHull';
+    let mergedAny = false;
+    for (const bucket of buckets.values()) {
+      if (bucket.geos.length === 0) continue;
+      let merged: THREE.BufferGeometry | null = null;
+      try {
+        merged = bucket.geos.length > 1 ? mergeGeometries(bucket.geos, false) : null;
+      } catch {
+        merged = null;
+      }
+      for (const g of bucket.geos) g.dispose();
+      if (!merged) {
+        for (const mesh of bucket.meshes) {
+          mesh.matrixAutoUpdate = false;
+          mesh.updateMatrix();
+        }
+        continue;
+      }
+      const mesh = new THREE.Mesh(merged, bucket.material);
+      mesh.name = 'HullBatch';
+      mesh.frustumCulled = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      hull.add(mesh);
+      mergedAny = true;
+      for (const srcMesh of bucket.meshes) {
+        srcMesh.removeFromParent();
+        srcMesh.geometry.dispose();
+      }
+    }
+
+    const prune = (o: THREE.Object3D): void => {
+      const kids = o.children.slice();
+      for (const c of kids) prune(c);
+      const renderable =
+        (o as THREE.Mesh).isMesh ||
+        (o as THREE.Line).isLine ||
+        (o as THREE.Points).isPoints ||
+        (o as THREE.Sprite).isSprite ||
+        (o as THREE.Light).isLight;
+      if (o !== root && o !== hull && o.children.length === 0 && !renderable) {
+        o.removeFromParent();
+      }
+    };
+    prune(root);
+    if (mergedAny) root.add(hull);
   }
 
   private hull(color = 0x1a2430, metal = 0.82, rough = 0.26): THREE.MeshStandardMaterial {

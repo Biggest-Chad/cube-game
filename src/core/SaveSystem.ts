@@ -94,6 +94,9 @@ export interface SaveData {
   researchRanks: Record<string, number>;
   /** IAP / cosmetic: cyan trail unlocked outside research ids. */
   cosmeticTrail: boolean;
+
+  /** Selected main-gun magazine: standard | ap | he */
+  mainGunAmmo: string;
 }
 
 export function defaultSave(): SaveData {
@@ -148,6 +151,7 @@ export function defaultSave(): SaveData {
     researchOwned: [],
     researchRanks: {},
     cosmeticTrail: false,
+    mainGunAmmo: 'standard',
   };
 }
 
@@ -294,6 +298,10 @@ export class SaveSystem {
             ? { ...(parsed.researchRanks as Record<string, number>) }
             : base.researchRanks,
         cosmeticTrail: !!parsed.cosmeticTrail,
+        mainGunAmmo:
+          parsed.mainGunAmmo === 'ap' || parsed.mainGunAmmo === 'he' || parsed.mainGunAmmo === 'standard'
+            ? parsed.mainGunAmmo
+            : 'standard',
         dataFragments: sanitizeCurrency(parsed.dataFragments, base.dataFragments),
         coreEnergy: sanitizeCurrency(parsed.coreEnergy, base.coreEnergy),
         prestigeTokens: sanitizeCurrency(parsed.prestigeTokens, base.prestigeTokens),

@@ -43,6 +43,11 @@ export interface PlayerStats {
   penetrationAdd: number;
   /** Main gun armor pierce add */
   armorPierceAdd: number;
+  ammoAp: boolean;
+  ammoHe: boolean;
+  ammoApPenAdd: number;
+  ammoHeSplashAdd: number;
+  heatCoolAdd: number;
   dronesUnlocked: boolean;
   /** Vitals bonuses (consumed by ShipVitals.syncFromStats). */
   maxHullAdd: number;
@@ -84,6 +89,11 @@ export function defaultStats(): PlayerStats {
     spreadAdd: 0,
     penetrationAdd: 0,
     armorPierceAdd: 0,
+    ammoAp: false,
+    ammoHe: false,
+    ammoApPenAdd: 0,
+    ammoHeSplashAdd: 0,
+    heatCoolAdd: 0,
     dronesUnlocked: false,
     maxHullAdd: 0,
     maxShieldAdd: 0,
@@ -174,6 +184,11 @@ function applyEffect(stats: PlayerStats, acc: Accumulators, e: UpgradeEffect): v
   if (e.spreadAdd) stats.spreadAdd += e.spreadAdd;
   if (e.penetrationAdd) stats.penetrationAdd += e.penetrationAdd;
   if (e.armorPierceAdd) stats.armorPierceAdd += e.armorPierceAdd;
+  if (e.unlockAmmoAp) stats.ammoAp = true;
+  if (e.unlockAmmoHe) stats.ammoHe = true;
+  if (e.ammoApPenAdd) stats.ammoApPenAdd += e.ammoApPenAdd;
+  if (e.ammoHeSplashAdd) stats.ammoHeSplashAdd += e.ammoHeSplashAdd;
+  if (e.heatCoolAdd) stats.heatCoolAdd += e.heatCoolAdd;
   if (e.unlockDrones) stats.dronesUnlocked = true;
   if (e.maxHullAdd) stats.maxHullAdd += e.maxHullAdd;
   if (e.maxShieldAdd) stats.maxShieldAdd += e.maxShieldAdd;

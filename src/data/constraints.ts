@@ -78,6 +78,12 @@ export const MAIN_GUN_HEAT_PER_SHOT = 0.05;
 /** Heat bled per second while idle. */
 export const MAIN_GUN_HEAT_COOL_RATE = 0.35;
 
+/** Armor-piercing magazine: bonus blocks pierced (shop ranks stack on top). */
+export const MAIN_GUN_AMMO_AP_EXTRA_PIERCE = 2;
+
+/** Explosive magazine: bonus splash radius (shop ranks stack on top). */
+export const MAIN_GUN_AMMO_HE_EXTRA_SPLASH = 2.15;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. PLAYER DRONES
 // ═══════════════════════════════════════════════════════════════════════════
