@@ -9,6 +9,7 @@ import {
   NUCLEUS_DAMAGE_TRANSFER_TO_SHELL_FRACTION,
   NUCLEUS_DECAY_MINIMUM_PER_SECOND,
   NUCLEUS_DECAY_PER_SECOND_OF_MAX,
+  NUCLEUS_DESTABILIZE_SHELL_RATIO,
   NUCLEUS_EXPOSED_SHELL_RATIO,
   NUCLEUS_MAX_HP_AVG_HP_WEIGHT,
   NUCLEUS_MAX_HP_FLAT,
@@ -18,6 +19,7 @@ import {
   NUCLEUS_MAX_HP_VOLUME_WEIGHT,
   NUCLEUS_MAX_SHELL_DAMAGE_REDUCTION,
   NUCLEUS_MIN_DAMAGE_THROUGHPUT,
+  NUCLEUS_OVERLOAD_GROWTH_MULTIPLIER,
   NUCLEUS_OVERLOAD_THRESHOLDS,
   NUCLEUS_RAGE_ARC_COOLDOWN_SECONDS,
   NUCLEUS_RAGE_FIRE_RATE_MULTIPLIER,
@@ -69,12 +71,16 @@ export const CORE = {
   damageTransferPct: NUCLEUS_DAMAGE_TRANSFER_TO_SHELL_FRACTION,
   /** Shell remaining ratio below which core is EXPOSED. */
   exposedShellRatio: NUCLEUS_EXPOSED_SHELL_RATIO,
-  /** HP/sec lost when no shell remains (scales with max HP). */
+  /** Shell remaining ratio at or below which destablization (HP decay) starts. */
+  destabilizeShellRatio: NUCLEUS_DESTABILIZE_SHELL_RATIO,
+  /** HP/sec lost while destablizing (scales with max HP). */
   decayPerSecOfMax: NUCLEUS_DECAY_PER_SECOND_OF_MAX,
   /** Minimum absolute decay HP/sec when alone. */
   decayMinPerSec: NUCLEUS_DECAY_MINIMUM_PER_SECOND,
   /** Overload health thresholds (core HP ratio). */
   overloadThresholds: NUCLEUS_OVERLOAD_THRESHOLDS,
+  /** Size + damage multiply per overload stack. */
+  overloadGrowthMul: NUCLEUS_OVERLOAD_GROWTH_MULTIPLIER,
 
   /** Standard nucleus: telegraphed omni spike burst on overload (from stage 1). */
   spikeTelegraphSec: NUCLEUS_SPIKE_TELEGRAPH_SECONDS,

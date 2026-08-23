@@ -38,8 +38,8 @@ export class EvolveConfirmUI {
     set(
       'evo-modal-convert',
       opts.convertCores > 0
-        ? `Leftover <strong>${opts.leftover.toLocaleString()} FRAG</strong> converts to <strong>${opts.convertCores} CORE</strong> (${opts.fragPerCore.toLocaleString()} : 1). Remainder stays as FRAG.`
-        : `Leftover FRAG convert at ${opts.fragPerCore.toLocaleString()} : 1 CORE after the spend. Nothing extra this time.`
+        ? `Surplus <strong>${opts.leftover.toLocaleString()} FRAG</strong> → <strong>${opts.convertCores} CORE</strong> (${opts.fragPerCore.toLocaleString()}:1).`
+        : `Surplus FRAG converts at ${opts.fragPerCore.toLocaleString()}:1 CORE after the spend.`
     );
     const furthest = Math.max(opts.resetSector, opts.furthestBeacon);
     set(
@@ -73,8 +73,7 @@ export class EvolveConfirmUI {
       <div class="evo-diagram" aria-hidden="true">
         <div class="evo-track">${cells}</div>
         <p class="evo-diagram-cap">
-          Run resets to Chronobeacon <strong>${reset}</strong>. You skip every beacon you have already cleared
-          (up to ${furthest || reset}), then sequential sectors resume.
+          Restart at beacon <strong>${reset}</strong>. Skip cleared beacons (up to ${furthest || reset}).
         </p>
       </div>`;
   }
@@ -88,22 +87,24 @@ export class EvolveConfirmUI {
     el.setAttribute('aria-modal', 'true');
     el.innerHTML = `
       <div class="evo-modal-scrim" data-evo-cancel></div>
-      <div class="evo-modal-card">
-        <div class="evo-modal-kicker">HULL EVOLUTION</div>
-        <h2 class="evo-modal-title" id="evo-modal-tier">ASCENSION</h2>
-        <p class="evo-modal-lead" id="evo-modal-cost"></p>
-        <ul class="evo-modal-list">
-          <li>Combat shop ranks reset. You retrain them with a higher rank cap (10 → 20 → 30…).</li>
-          <li>Loadout branch ranks, drone shop ranks, and base weapon ranks reset the same way. Owned weapons, research, and pad/bay unlocks stay.</li>
-          <li>Campaign progress on this run returns to Chronobeacon 5. Lifetime checkpoints are kept so you skip 10 / 15 / 20… until the furthest beacon you have cleared.</li>
-        </ul>
-        <div id="evo-modal-diagram"></div>
-        <p class="evo-modal-convert" id="evo-modal-convert"></p>
-        <div class="evo-modal-actions">
+      <div class="evo-modal-card docked-actions-card">
+        <div class="card-body">
+          <div class="evo-modal-kicker">HULL EVOLUTION</div>
+          <h2 class="evo-modal-title" id="evo-modal-tier">ASCENSION</h2>
+          <p class="evo-modal-lead" id="evo-modal-cost"></p>
+          <ul class="evo-modal-list">
+            <li>Shop ranks reset. Rank cap rises (10 → 20 → 30…).</li>
+            <li>Owned weapons, research, pads, and bays stay. Branch ranks retrain.</li>
+            <li>Run restarts at beacon 5. Skip every beacon you already cleared.</li>
+          </ul>
+          <div id="evo-modal-diagram"></div>
+          <p class="evo-modal-convert" id="evo-modal-convert"></p>
+          <div class="evolve-warn" id="evo-modal-warn"></div>
+        </div>
+        <div class="evo-modal-actions card-actions">
           <button type="button" class="menu-btn" data-evo-cancel>Cancel</button>
           <button type="button" class="menu-btn primary" id="evo-modal-confirm">CONFIRM EVOLVE</button>
         </div>
-        <div class="evolve-warn" id="evo-modal-warn"></div>
       </div>
     `;
     this.root.appendChild(el);

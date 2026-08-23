@@ -13,7 +13,7 @@ import {
   MAIN_GUN_HEAT_PER_SHOT,
 } from '../data/constraints';
 import type { CubeManager } from '../cube/CubeManager';
-import { BlockType } from '../cube/BlockTypes';
+import { BLOCK_DEFS, BlockType } from '../cube/BlockTypes';
 import { bus } from '../core/EventBus';
 import type { WeaponStats } from '../data/weapons';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
@@ -105,6 +105,9 @@ export class MainBeamWeapon implements WeaponBehavior {
   private flashes: Array<{ mesh: THREE.Mesh; life: number }> = [];
   private beamLines: Array<{ line: THREE.Line; life: number }> = [];
   private nextBolt = 0;
+  private shotCounter = 0;
+  private focusId = -1;
+  private focusStacks = 0;
   private stats: WeaponStats & { flags: Set<string> };
   private readonly tmp = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
@@ -244,10 +247,14 @@ export class MainBeamWeapon implements WeaponBehavior {
       (1 - this.heat * 0.35);
     this.cooldown = 1 / Math.max(0.4, rate);
 
-    const shots = Math.max(
+    let shots = Math.max(
       1,
       this.stats.projectileCount + (isMain ? Math.floor(ctx.playerStats.multiShotAdd) : 0)
     );
+    if (isMain && ctx.playerStats.stutterEvery > 0) {
+      this.shotCounter++;
+      if (this.shotCounter % ctx.playerStats.stutterEvery === 0) shots += 1;
+    }
     const ammoDmg = magazine?.damageMul ?? 1;
     const baseDmg = this.stats.damage * (isMain ? ctx.playerStats.damageMul : 1) * ammoDmg;
     const critChance = this.stats.critChance + (isMain ? ctx.playerStats.critChance : 0);
@@ -451,7 +458,7 @@ export class MainBeamWeapon implements WeaponBehavior {
           MAIN_GUN_BOLT_BLOCK_HALF_EXTENT
         );
         if (hit) {
-          this.resolveHit(b, cube, hit.instanceId, hit.point, now);
+          this.resolveHit(b, cube, hit.instanceId, hit.point, now, ctx);
           continue;
         }
       }
@@ -464,12 +471,31 @@ export class MainBeamWeapon implements WeaponBehavior {
     cube: CubeManager,
     instanceId: number,
     point: THREE.Vector3,
-    now: number
+    now: number,
+    ctx?: WeaponFireContext
   ): void {
     const type = cube.getBlockType(instanceId);
+    const stats = ctx?.playerStats;
+    const isMain = ctx?.slot === -1;
+    let raw = b.damage;
+    if (isMain && stats) {
+      if (stats.focusLockAdd > 0) {
+        if (instanceId === this.focusId) {
+          this.focusStacks = Math.min(stats.focusLockAdd >= 0.12 ? 4 : 3, this.focusStacks + 1);
+        } else {
+          this.focusId = instanceId;
+          this.focusStacks = 1;
+        }
+        raw *= 1 + stats.focusLockAdd * Math.max(0, this.focusStacks - 1);
+      }
+      const armor = BLOCK_DEFS[type]?.armorClass;
+      if (stats.shredMul > 0 && armor && armor !== 'none') {
+        raw *= 1 + stats.shredMul;
+      }
+    }
     const applied = applyToBlock(
       {
-        raw: b.damage,
+        raw,
         armorPierce: b.armorPierce,
         forceCrit: b.crit,
         critChance: 0,
@@ -477,7 +503,11 @@ export class MainBeamWeapon implements WeaponBehavior {
       },
       type
     );
-    const result = cube.applyDamage(instanceId, applied.finalDamage, now);
+    let hitDamage = applied.finalDamage;
+    const result = cube.applyDamage(instanceId, hitDamage, now);
+    if (isMain && stats?.phaseNucleusAdd && result?.coreHit) {
+      cube.applyNucleusHit(hitDamage * stats.phaseNucleusAdd, now);
+    }
     b.lastHitId = instanceId;
     // Penetration: stop on shared nucleus (multi-core voxels would re-hit the pool)
     const hitNucleus =
@@ -506,13 +536,7 @@ export class MainBeamWeapon implements WeaponBehavior {
     });
 
     const profile = MAIN_GUN_AMMO[b.ammo];
-    const glowColor = b.ammo === 'he' ? 0xff6622 : b.ammo === 'ap' ? 0xffe088 : 0x88f0ff;
-    cube.applyImpactGlow(
-      point,
-      b.splash > 0 ? b.splash + 0.7 : 1.25,
-      glowColor,
-      b.ammo === 'he' ? 0.95 : b.ammo === 'ap' ? 0.7 : 0.48
-    );
+    const shipBurstGlow = b.ammo === 'he' && b.splash >= 1.2;
 
     if (result.destroyed && result.explosive) {
       const chain = cube.applyExplosiveChain(result.x, result.y, result.z, now);
@@ -525,12 +549,40 @@ export class MainBeamWeapon implements WeaponBehavior {
         b.splash,
         b.damage * (b.ammo === 'he' ? 0.42 : 0.35),
         now,
-        instanceId
+        instanceId,
+        { glow: shipBurstGlow }
       );
       for (const c of splash) if (c.destroyed) bus.emit('beam-hit', c);
     }
     if (result.destroyed && result.type === BlockType.DataNode) {
       bus.emit('data-node', { x: result.x, y: result.y, z: result.z });
+    }
+
+    if (isMain && stats) {
+      if (result.destroyed && stats.leechOnKill > 0) {
+        bus.emit('player-leech', { amount: hitDamage * stats.leechOnKill });
+      }
+      if (stats.ionChance > 0 && b.splash <= 0 && Math.random() < stats.ionChance) {
+        const bloom = cube.applySplash(point, 1.35, hitDamage * 0.28, now, instanceId);
+        for (const c of bloom) if (c.destroyed) bus.emit('beam-hit', { ...c, style: 'bolt' as const });
+      }
+      const hops = Math.floor(stats.chainJumpsAdd);
+      if (hops > 0) {
+        let from = point.clone();
+        let ignore = instanceId;
+        let chainDmg = hitDamage * 0.55;
+        for (let h = 0; h < hops; h++) {
+          const next = cube.findNearest(from, 2.35, undefined, ignore);
+          if (!next) break;
+          const np = cube.getInstanceWorldPos(next.instanceId, new THREE.Vector3());
+          const cr = cube.applyDamage(next.instanceId, chainDmg, now);
+          this.showBeam(from, np, h % this.beamLines.length, true);
+          if (cr) bus.emit('beam-hit', { ...cr, style: 'bolt' as const });
+          ignore = next.instanceId;
+          from.copy(np);
+          chainDmg *= 0.7;
+        }
+      }
     }
   }
 
@@ -597,6 +649,9 @@ export class MainBeamWeapon implements WeaponBehavior {
   reset(): void {
     this.cooldown = 0;
     this.heat = 0;
+    this.shotCounter = 0;
+    this.focusId = -1;
+    this.focusStacks = 0;
     for (const b of this.bolts) this.deactivateBolt(b);
     for (const f of this.flashes) {
       f.life = 0;

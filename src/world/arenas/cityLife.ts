@@ -5,9 +5,9 @@ import { addCitySkyline } from './citySkyline';
 /**
  * Distant floor fade + cheap circuit deck + instanced skyline / metro.
  */
-export function addCityAmbience(root: THREE.Group): void {
+export async function addCityAmbience(root: THREE.Group): Promise<void> {
   addCircuitFloor(root);
-  addCitySkyline(root);
+  await addCitySkyline(root);
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     if (o.name !== 'CityStreets' && o.name !== 'CityLots' && o.name !== 'Ground' && o.name !== 'GroundApron' && o.name !== 'HorizonCore') {

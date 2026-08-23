@@ -374,7 +374,11 @@ export class Drone {
         }
       }
       if (combat?.enemies?.length && combat.onEnemyHit) {
-        const e = pickBestEnemy(combat.enemies, this.group.position, 40);
+        const e = pickBestEnemy(
+          combat.enemies.filter((u) => u.kind !== 'cube-fighter'),
+          this.group.position,
+          40
+        );
         if (e) {
           this._target.set(e.position.x, e.position.y, e.position.z);
           this.showBeam(this.group.position, this._target);

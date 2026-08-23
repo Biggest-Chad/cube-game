@@ -67,7 +67,7 @@ export class OrbitalCamera {
   private floorClearance = SHIP_FLOOR_CLEARANCE;
 
   constructor(aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(52, aspect, 0.1, 500);
+    this.camera = new THREE.PerspectiveCamera(55, aspect, 0.1, 500);
     this.radius = ORBIT.defaultRadius;
     this.targetRadius = ORBIT.defaultRadius;
     this.minR = ORBIT.minRadius;
@@ -481,12 +481,12 @@ export class OrbitalCamera {
    */
   private cameraLagRate(): number {
     const base =
-      this.mode === 'cinematic' ? Math.max(1.4, this.scriptedLag) : ORBIT.cameraLag * 0.85;
+      this.mode === 'cinematic' ? Math.max(1.4, this.scriptedLag) : ORBIT.cameraLag;
     const omega = Math.hypot(this.velYaw, this.velPitch);
-    // Peak yawSpeed * maxMul ≈ 1.0; map high ω → up to ~45% less snappy
     const peak = ORBIT.yawSpeed * maxOrbitSpeedMul;
     const t = peak > 0 ? THREE.MathUtils.clamp(omega / peak, 0, 1) : 0;
-    return base * (1 - 0.45 * t);
+    // Stay with the ship on hard turns so it does not slide off-frame.
+    return base * (1 + 0.4 * t);
   }
 
   private sync(snap: boolean, dt = 1 / 60): void {
@@ -507,14 +507,14 @@ export class OrbitalCamera {
       this.desiredCam.lerpVectors(this.cinematicCam, this.gameplayCam, this.blend);
       this.focus
         .copy(this.lookTarget)
-        .multiplyScalar(THREE.MathUtils.lerp(1, 0.78, this.blend))
-        .addScaledVector(this.shipPos, THREE.MathUtils.lerp(0, 0.22, this.blend));
+        .multiplyScalar(THREE.MathUtils.lerp(1, 0.68, this.blend))
+        .addScaledVector(this.shipPos, THREE.MathUtils.lerp(0, 0.32, this.blend));
     } else {
       this.desiredCam.copy(this.gameplayCam);
       this.focus
         .copy(this.lookTarget)
-        .multiplyScalar(0.78)
-        .addScaledVector(this.shipPos, 0.22);
+        .multiplyScalar(0.68)
+        .addScaledVector(this.shipPos, 0.32);
     }
 
     if (snap) {
@@ -554,8 +554,7 @@ export class OrbitalCamera {
     const omega = Math.hypot(this.velYaw, this.velPitch);
     const peak = ORBIT.yawSpeed * maxOrbitSpeedMul;
     const t = peak > 0 ? THREE.MathUtils.clamp(omega / peak, 0, 1) : 0;
-    // Up to ~2.2× snappier position tracking when spinning hard
-    return baseLag * (1 + 1.2 * t);
+    return baseLag * (1 + 0.55 * t);
   }
 
   get isCinematic(): boolean {

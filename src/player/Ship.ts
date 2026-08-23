@@ -13,6 +13,7 @@ export class Ship {
   readonly group = new THREE.Group();
   private body: THREE.Group;
   private engineGlow: THREE.Mesh[] = [];
+  private engineGlowRest: number[] = [];
   /** Local-space muzzle tip (nose cannon aperture). */
   private muzzleLocal = SHIP_MUZZLE.clone();
   private _muzzleWorld = new THREE.Vector3();
@@ -26,6 +27,13 @@ export class Ship {
   /** Local-space thruster exhaust origins (rear of ship). */
   private thrusterLocals: THREE.Vector3[] = [];
   private plumeMeshes: THREE.Mesh[] = [];
+  private plumeRest: THREE.Vector3[] = [];
+  private plumeStretchAxis: number[] = [];
+  private exhaustTrails: Array<{
+    root: THREE.Group;
+    core: THREE.Mesh;
+    wash: THREE.Mesh;
+  }> = [];
   private accentMats: THREE.MeshStandardMaterial[] = [];
   private runningLights: THREE.Mesh[] = [];
   private readonly _thrusterWorld = new THREE.Vector3();
@@ -36,6 +44,7 @@ export class Ship {
     this.group.add(this.body);
     this.setupLights();
     this.setupThrusterLights();
+    this.buildExhaustTrails();
     void this.adoptHeroVisual();
   }
 
@@ -60,7 +69,10 @@ export class Ship {
   private installHeroVisual(next: THREE.Group, name: string): void {
     next.name = name;
     this.engineGlow = [];
+    this.engineGlowRest = [];
     this.plumeMeshes = [];
+    this.plumeRest = [];
+    this.plumeStretchAxis = [];
     this.accentMats = [];
     this.runningLights = [];
     next.updateMatrixWorld(true);
@@ -70,25 +82,39 @@ export class Ship {
       mesh.frustumCulled = true;
       mesh.castShadow = false;
       mesh.receiveShadow = false;
-      if (mesh.name.startsWith('Plume')) {
-        mesh.visible = false;
-        return;
-      }
+      const name = mesh.name;
+      const isGlow = name.startsWith('EngineGlow') || name.includes('Nozzle');
+      const isPlume = name.startsWith('Plume') || name.toLowerCase().includes('exhaust');
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const m of mats) {
         if (!m || !('emissive' in m)) continue;
         const std = m as THREE.MeshStandardMaterial;
         std.toneMapped = false;
         std.envMapIntensity = 0.35;
-        if (mesh.name.startsWith('EngineGlow') || mesh.name.includes('Nozzle')) {
+        if (isGlow || isPlume) {
           std.transparent = true;
           std.depthWrite = false;
-          std.emissive.copy(std.color);
-          std.emissiveIntensity = Math.max(std.emissiveIntensity, 1.2);
+          if (std.emissive.getHex() === 0) std.emissive.copy(std.color);
+          std.emissiveIntensity = Math.max(std.emissiveIntensity, isPlume ? 1.6 : 1.25);
+          std.blending = THREE.AdditiveBlending;
         }
       }
-      if (mesh.name.startsWith('EngineGlow') || mesh.name.includes('Nozzle')) {
+      if (isGlow) {
         this.engineGlow.push(mesh);
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        this.engineGlowRest.push(mat.emissiveIntensity || 1.2);
+      }
+      if (isPlume) {
+        mesh.visible = true;
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 2;
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        const size = new THREE.Vector3();
+        mesh.geometry.boundingBox?.getSize(size);
+        const axis = size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
+        this.plumeMeshes.push(mesh);
+        this.plumeRest.push(mesh.scale.clone());
+        this.plumeStretchAxis.push(axis);
       }
     });
     try {
@@ -115,6 +141,7 @@ export class Ship {
     this.group.add(this.body);
     this.muzzleLocal.copy(SHIP_MUZZLE);
     this.thrusterLocals = SHIP_THRUSTERS.map((v) => v.clone());
+    this.buildExhaustTrails();
   }
 
   /**
@@ -657,7 +684,42 @@ export class Ship {
   }
 
   private setupThrusterLights(): void {
-    // No thruster PointLights — plume/engine glow meshes remain.
+    // No thruster PointLights — authored glow + additive trail stay.
+  }
+
+  /** Short additive wash behind the authored nozzles (local +Z is aft). */
+  private buildExhaustTrails(): void {
+    for (const t of this.exhaustTrails) {
+      this.group.remove(t.root);
+      t.core.geometry.dispose();
+      (t.core.material as THREE.Material).dispose();
+      t.wash.geometry.dispose();
+      (t.wash.material as THREE.Material).dispose();
+    }
+    this.exhaustTrails = [];
+    const addMat = (color: number, opacity: number) =>
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+      });
+    for (const local of SHIP_THRUSTERS) {
+      const root = new THREE.Group();
+      root.position.copy(local);
+      const core = new THREE.Mesh(new THREE.ConeGeometry(0.034, 0.42, 7, 1, true), addMat(0xffe8ff, 0.0));
+      core.rotation.x = Math.PI / 2;
+      core.position.z = 0.22;
+      const wash = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.7, 8, 1, true), addMat(0x66e8ff, 0.0));
+      wash.rotation.x = Math.PI / 2;
+      wash.position.z = 0.38;
+      root.add(core, wash);
+      this.group.add(root);
+      this.exhaustTrails.push({ root, core, wash });
+    }
   }
 
   /**
@@ -717,28 +779,55 @@ export class Ship {
     const mK = 1 - Math.exp(-6 * dt);
     this.motionIntensity += (targetMotion - this.motionIntensity) * mK;
 
-    this.thrusterPulse += dt * (5 + this.motionIntensity * 10);
+    this.thrusterPulse += dt * (6 + this.motionIntensity * 8);
     const flicker =
-      0.85 +
-      Math.sin(this.thrusterPulse) * 0.15 +
-      Math.sin(this.thrusterPulse * 2.3) * 0.08;
+      0.88 +
+      Math.sin(this.thrusterPulse) * 0.08 +
+      Math.sin(this.thrusterPulse * 2.15) * 0.05;
     const boost = this.motionIntensity;
+    const throttle = THREE.MathUtils.clamp(0.22 + boost * 0.85, 0.18, 1.35);
 
-    for (const m of this.engineGlow) {
+    for (let i = 0; i < this.engineGlow.length; i++) {
+      const m = this.engineGlow[i];
+      const rest = this.engineGlowRest[i] ?? 1.2;
       if (m.material instanceof THREE.MeshStandardMaterial) {
-        m.material.emissiveIntensity = 0.7 + flicker * 0.65 + boost * 1.35;
+        m.material.emissiveIntensity = rest * (0.55 + flicker * 0.35 + throttle * 0.95);
       } else if (m.material instanceof THREE.MeshBasicMaterial) {
-        m.material.opacity = 0.4 + flicker * 0.4 + boost * 0.45;
+        m.material.opacity = 0.35 + flicker * 0.25 + throttle * 0.4;
       }
     }
-    for (const p of this.plumeMeshes) {
-      const s = 0.75 + boost * 1.35 + Math.sin(this.thrusterPulse * 1.7) * 0.14;
-      p.scale.set(s * 0.9, s * 0.9, s * (1.15 + boost * 1.05));
-      if (p.material instanceof THREE.MeshBasicMaterial) {
-        p.material.opacity = 0.3 + boost * 0.6 + flicker * 0.18;
+    for (let i = 0; i < this.plumeMeshes.length; i++) {
+      const p = this.plumeMeshes[i];
+      const rest = this.plumeRest[i];
+      const axis = this.plumeStretchAxis[i] ?? 1;
+      const pulse = Math.sin(this.thrusterPulse * 1.6 + i) * 0.06;
+      const len = 0.72 + throttle * 0.95 + pulse;
+      const rad = 0.88 + throttle * 0.22 + pulse * 0.4;
+      const sx = axis === 0 ? len : rad;
+      const sy = axis === 1 ? len : rad;
+      const sz = axis === 2 ? len : rad;
+      if (rest) p.scale.set(rest.x * sx, rest.y * sy, rest.z * sz);
+      else p.scale.set(sx, sy, sz);
+      const mats = Array.isArray(p.material) ? p.material : [p.material];
+      for (const mat of mats) {
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          mat.emissiveIntensity = 1.1 + throttle * 1.6 + flicker * 0.35;
+          mat.opacity = 0.28 + throttle * 0.55 + flicker * 0.08;
+        } else if (mat instanceof THREE.MeshBasicMaterial) {
+          mat.opacity = 0.22 + throttle * 0.5 + flicker * 0.1;
+        }
       }
     }
-    // Accent strips + nav lights breathe with thrusters
+    for (let i = 0; i < this.exhaustTrails.length; i++) {
+      const t = this.exhaustTrails[i];
+      const pulse = Math.sin(this.thrusterPulse * 1.9 + i * 1.1) * 0.08;
+      const len = 0.55 + throttle * 1.15 + pulse;
+      const rad = 0.7 + throttle * 0.45;
+      t.core.scale.set(rad, len, rad);
+      t.wash.scale.set(rad * 1.25, len * 1.15, rad * 1.25);
+      (t.core.material as THREE.MeshBasicMaterial).opacity = 0.08 + throttle * 0.32 + flicker * 0.05;
+      (t.wash.material as THREE.MeshBasicMaterial).opacity = 0.05 + throttle * 0.22;
+    }
     for (const mat of this.accentMats) {
       mat.emissiveIntensity = 0.55 + flicker * 0.35 + boost * 0.45;
     }
@@ -747,38 +836,24 @@ export class Ship {
         n.material.opacity = 0.35 + flicker * 0.45 + boost * 0.25;
       }
     }
-    if (particles && this.group.visible) {
+    if (particles && this.group.visible && throttle > 0.28) {
       const aft = this._aft.set(0, 0, 1).applyQuaternion(this.group.quaternion);
       const n = this.thrusterLocals.length || 1;
-      const puffs = boost > 0.2 ? 1 + (Math.random() < boost * 0.7 ? 1 : 0) : Math.random() < 0.35 ? 1 : 0;
-      for (let p = 0; p < puffs; p++) {
+      if (Math.random() < 0.35 + throttle * 0.25) {
         const local = this.thrusterLocals[(Math.random() * n) | 0];
-        if (!local) continue;
-        this._thrusterWorld.copy(local);
-        this.group.localToWorld(this._thrusterWorld);
-        this._thrusterWorld.addScaledVector(aft, 0.08 + Math.random() * 0.22);
-        const col = Math.random() < 0.45 ? 0xffaa44 : Math.random() < 0.5 ? COLORS.magenta : 0x66e8ff;
-        if (particles.spray) {
-          particles.spray(
-            this._thrusterWorld.x,
-            this._thrusterWorld.y,
-            this._thrusterWorld.z,
-            aft.x,
-            aft.y,
-            aft.z,
-            col,
-            2 + (boost > 0.6 ? 2 : 1),
-            5 + boost * 9
-          );
-        } else {
+        if (local) {
+          this._thrusterWorld.copy(local);
+          this.group.localToWorld(this._thrusterWorld);
+          this._thrusterWorld.addScaledVector(aft, 0.12 + Math.random() * 0.18);
+          const col = Math.random() < 0.55 ? 0x88f0ff : 0xff88cc;
           particles.spawn(
             this._thrusterWorld.x,
             this._thrusterWorld.y,
             this._thrusterWorld.z,
             col,
-            2,
-            4 + boost * 6,
-            Math.random() < 0.5 ? 'glow' : 'ember'
+            1,
+            1.6 + throttle * 2.4,
+            'glow'
           );
         }
       }

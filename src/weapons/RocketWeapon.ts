@@ -390,7 +390,7 @@ export class RocketWeapon implements WeaponBehavior {
     }
     if (r.splash > 0) {
       const splashDmg = r.damage * 0.5;
-      const hits = cube.applySplash(point, r.splash, splashDmg, now, instanceId);
+      const hits = cube.applySplash(point, r.splash, splashDmg, now, instanceId, { glow: true });
       for (const h of hits) bus.emit('beam-hit', { ...h, style: 'splash' as const });
     }
     bus.emit('explosion', {

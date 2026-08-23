@@ -82,7 +82,7 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
     id: 'fighter',
     name: 'Fighter',
     description:
-      'Agile interceptor. Hunts enemy drones and kamikazes, then peels hull. Nucleus shots are defender / CIWS work.',
+      'Agile interceptor. Only ally that hunts cube fighters; also kills other enemy drones, then peels hull.',
     blockDamageMul: FIGHTER_BLOCK_DAMAGE_MULTIPLIER,
     splashRadius: FIGHTER_SPLASH_RADIUS,
     armorPierce: FIGHTER_ARMOR_PIERCE,

@@ -42,13 +42,15 @@ export class AdsOfferUI {
 
     this.root.classList.remove('panel-hidden');
     this.root.innerHTML = `
-      <div class="ads-offer interactive" role="dialog" aria-label="Watch ad offer">
-        <div class="ads-offer-tag">WATCH AD</div>
-        <h3 class="ads-offer-title">${escapeHtml(title)}</h3>
-        <p class="ads-offer-body">${escapeHtml(body)}</p>
-        <div class="ads-offer-reward">${escapeHtml(reward)}</div>
-        <div class="ads-offer-meta">${remaining} left today · ${ads.getProviderName()}</div>
-        <div class="ads-offer-actions">
+      <div class="ads-offer interactive docked-actions-card" role="dialog" aria-label="Watch ad offer">
+        <div class="card-body">
+          <div class="ads-offer-tag">WATCH AD</div>
+          <h3 class="ads-offer-title">${escapeHtml(title)}</h3>
+          <p class="ads-offer-body">${escapeHtml(body)}</p>
+          <div class="ads-offer-reward">${escapeHtml(reward)}</div>
+          <div class="ads-offer-meta">${remaining} left today · ${ads.getProviderName()}</div>
+        </div>
+        <div class="ads-offer-actions card-actions">
           <button type="button" class="menu-btn primary" id="ads-watch">Watch Ad</button>
           <button type="button" class="menu-btn" id="ads-skip">No Thanks</button>
         </div>

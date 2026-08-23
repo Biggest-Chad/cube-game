@@ -280,7 +280,8 @@ export class RailgunWeapon implements WeaponBehavior {
         this.stats.splashRadius,
         s.damage * 0.2,
         now,
-        instanceId
+        instanceId,
+        { glow: true }
       )) {
         bus.emit('beam-hit', h);
       }

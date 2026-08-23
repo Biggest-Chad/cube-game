@@ -235,6 +235,9 @@ export const GUIDED_MISSILE_ARM_DELAY_SPREAD_SECONDS = 0.12;
 /** Extra arm delay per stacked rank in a salvo. */
 export const GUIDED_MISSILE_ARM_DELAY_PER_RANK_SECONDS = 0.05;
 
+/** Each missile rolls a random shell voxel in this radius around the peel point. */
+export const GUIDED_MISSILE_SHELL_SAMPLE_RADIUS = 5.4;
+
 /** Speed multiplier once the seeker is armed. */
 export const GUIDED_MISSILE_ARMED_SPEED_MULTIPLIER = 1.08;
 
@@ -302,6 +305,12 @@ export const ARC_BEAM_HEAT_PER_SHOT = 0.11;
 export const ARC_BEAM_HEAT_COOL_RATE = 0.42;
 export const ARC_BEAM_SHOP_COST_FRAGMENTS = 200;
 export const ARC_BEAM_SHOP_MIN_LEVEL = 4;
+/** Slow angular slew so the beam sweeps the hull instead of snapping. */
+export const ARC_BEAM_SWEEP_SLEW_RADIANS_PER_SECOND = 0.36;
+/** Hold a hull voxel this long before rolling a new nearby target. */
+export const ARC_BEAM_RETARGET_SECONDS = 1.65;
+/** Random hull sample radius around the current peel / lock. */
+export const ARC_BEAM_SHELL_SAMPLE_RADIUS = 5.0;
 
 export const ROCKET_POD_BASE_DAMAGE = 58;
 export const ROCKET_POD_BASE_FIRE_RATE = 0.85;
@@ -478,12 +487,12 @@ export const ORBIT_ANGULAR_ACCEL = 1.8;
 export const ORBIT_ANGULAR_FRICTION = 4.2;
 export const ORBIT_INPUT_SMOOTH = 7;
 export const ORBIT_ZOOM_SPEED = 0.05;
-export const ORBIT_CAMERA_LAG = 3.0;
-export const ORBIT_CAMERA_BACK = 4.2;
-export const ORBIT_CAMERA_HEIGHT = 1.65;
-export const ORBIT_CAMERA_SIDE = 0.05;
-export const ORBIT_CAMERA_SWAY = 0.55;
-export const ORBIT_CAMERA_SWAY_LAG = 5.5;
+export const ORBIT_CAMERA_LAG = 4.8;
+export const ORBIT_CAMERA_BACK = 7.8;
+export const ORBIT_CAMERA_HEIGHT = 2.2;
+export const ORBIT_CAMERA_SIDE = 0.04;
+export const ORBIT_CAMERA_SWAY = 0.28;
+export const ORBIT_CAMERA_SWAY_LAG = 6.2;
 export const ORBIT_SHIP_POSITION_LAG = 5.0;
 export const ORBIT_SHIP_ROTATION_LAG = 4.0;
 export const ORBIT_INTRO_DURATION_SECONDS = 3.6;
@@ -540,12 +549,15 @@ export const NUCLEUS_MAX_SHELL_DAMAGE_REDUCTION = 0.88;
 export const NUCLEUS_MIN_DAMAGE_THROUGHPUT = 0.12;
 export const NUCLEUS_DAMAGE_TRANSFER_TO_SHELL_FRACTION = 0.1;
 export const NUCLEUS_EXPOSED_SHELL_RATIO = 0.1;
+/** Shell remaining ratio at or below which the nucleus starts destablizing (decay). */
+export const NUCLEUS_DESTABILIZE_SHELL_RATIO = 0.05;
 export const NUCLEUS_DECAY_PER_SECOND_OF_MAX = 0.018;
 export const NUCLEUS_DECAY_MINIMUM_PER_SECOND = 6;
 export const NUCLEUS_OVERLOAD_THRESHOLDS = [0.75, 0.5, 0.25] as const;
 
 export const NUCLEUS_SPIKE_TELEGRAPH_SECONDS = 1.45;
-export const NUCLEUS_SPIKE_OMNI_COUNT = 10;
+/** Omni spike count before stage/ATK scaling. +150% vs the original 10. */
+export const NUCLEUS_SPIKE_OMNI_COUNT = 25;
 export const NUCLEUS_SPIKE_SPEED = 10.5;
 export const NUCLEUS_SPIKE_DAMAGE = 16;
 export const NUCLEUS_SPIKE_HIT_RADIUS = 0.92;
@@ -575,13 +587,18 @@ export const NUCLEUS_STATIC_BLOOM_UNLOCK_STAGE = 70;
 export const NUCLEUS_LATTICE_JAVELIN_UNLOCK_STAGE = 80;
 
 export const NUCLEUS_BLOB_COOLDOWN_SECONDS = 7.2;
-export const NUCLEUS_BLOB_DAMAGE = 8;
+/** Direct impact damage. +50% vs the original 8. */
+export const NUCLEUS_BLOB_DAMAGE = 12;
 export const NUCLEUS_BLOB_SPEED = 11;
 export const NUCLEUS_BLOB_RADIUS = 1.05;
 export const NUCLEUS_BLOB_LIFE_SECONDS = 6.5;
 export const NUCLEUS_BLOB_HIT_POINTS = 18;
 export const NUCLEUS_BLOB_OVERLOAD_COUNT = 4;
 export const NUCLEUS_BLOB_OVERLOAD_SPREAD = 0.32;
+/** Arc field radius multiplier vs the blob's own radius. */
+export const NUCLEUS_BLOB_ARC_RADIUS_MULTIPLIER = 1.5;
+/** Minor ship DPS while inside the arc field (fraction of impact damage / sec). */
+export const NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND = 0.28;
 
 export const NUCLEUS_KAMIKAZE_BASE_COUNT = 2;
 export const NUCLEUS_KAMIKAZE_BASE_HIT_POINTS = 18;
@@ -645,10 +662,10 @@ export const NUCLEUS_RAGE_OVERLOAD_BEAM_COUNT = 8;
 export const NUCLEUS_ARC_BEAM_SPEED = 12;
 export const NUCLEUS_ARC_BEAM_DAMAGE = 22;
 
-export const NUCLEUS_RAGE_LASER_CHARGE_SECONDS = 2.4;
+export const NUCLEUS_RAGE_LASER_CHARGE_SECONDS = 3.15;
 export const NUCLEUS_RAGE_LASER_DURATION_SECONDS = 5.0;
 export const NUCLEUS_RAGE_LASER_COOLDOWN_SECONDS = 3.8;
-export const NUCLEUS_RAGE_LASER_WARMUP_SECONDS = 0.7;
+export const NUCLEUS_RAGE_LASER_WARMUP_SECONDS = 1.15;
 export const NUCLEUS_RAGE_LASER_SLEW_WHILE_CHARGING = 0.2;
 export const NUCLEUS_RAGE_LASER_SLEW_WHILE_FIRING = 0.3;
 export const NUCLEUS_RAGE_LASER_SLEW_WHILE_OVERLOAD = 0.42;
@@ -704,7 +721,7 @@ export function nucleusHitRadiusWorld(
 // 7. CUBE DEFENSE  (enemy drones, turrets, intercepts)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const ENEMY_DRONE_SOFT_CAP = 18;
+export const ENEMY_DRONE_SOFT_CAP = 32;
 export const ENEMY_ATTACK_DRONE_BASE_HIT_POINTS = 40;
 export const ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL = 5;
 export const ENEMY_REPAIR_DRONE_BASE_HIT_POINTS = 28;
@@ -743,6 +760,25 @@ export const TURRET_DEFAULT_DAMAGE = 12;
 export const TURRET_DEFAULT_FIRE_RATE = 0.45;
 export const TURRET_DEFAULT_PROJECTILE_SPEED = 18;
 export const TURRET_DEFAULT_RANGE = 55;
+
+/** Keep this fraction of generated lattice turrets (60% cut). */
+export const LATTICE_TURRET_SPAWN_KEEP_FRACTION = 0.4;
+/** Aim slew toward the lead point (rad-equivalent lerp rate). */
+export const TURRET_TRACK_RATE = 7.2;
+/** Max seconds of player-motion lead when computing the fire point. */
+export const TURRET_LEAD_TIME_CAP_SECONDS = 1.15;
+
+export const CUBE_FIGHTER_BASE_HIT_POINTS = 24;
+export const CUBE_FIGHTER_HIT_POINTS_PER_LEVEL = 2.4;
+export const CUBE_FIGHTER_BASE_DAMAGE = 5;
+export const CUBE_FIGHTER_DAMAGE_PER_LEVEL = 0.42;
+export const CUBE_FIGHTER_FIRE_RATE = 1.35;
+export const CUBE_FIGHTER_SPEED = 9.2;
+export const CUBE_FIGHTER_RANGE = 24;
+export const CUBE_FIGHTER_RETARGET_SECONDS = 1.05;
+
+/** Nucleus visual + outgoing damage multiply by this on every overload. */
+export const NUCLEUS_OVERLOAD_GROWTH_MULTIPLIER = 1.25;
 
 export const ENEMY_WEAPON_TARGET_RADIUS_DRONE = 1.15;
 export const ENEMY_WEAPON_TARGET_RADIUS_TURRET = 1.05;

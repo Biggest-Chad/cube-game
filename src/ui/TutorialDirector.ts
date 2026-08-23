@@ -449,16 +449,20 @@ export class TutorialDirector {
     if (this.root.querySelector('#tutorial-card')) return;
     const el = document.createElement('div');
     el.id = 'tutorial-card';
-    el.className = 'tutorial-card panel-hidden interactive';
+    el.className = 'tutorial-card docked-actions-card panel-hidden interactive';
     el.innerHTML = `
-      <div class="tutorial-kicker">GUIDED BRIEFING</div>
-      <div class="tutorial-title" id="tutorial-title"></div>
-      <div class="tutorial-body" id="tutorial-body"></div>
-      <div class="tutorial-progress panel-hidden" id="tutorial-progress">
-        <i id="tutorial-progress-bar"></i>
+      <div class="card-body">
+        <div class="tutorial-kicker">GUIDED BRIEFING</div>
+        <div class="tutorial-title" id="tutorial-title"></div>
+        <div class="tutorial-body" id="tutorial-body"></div>
+        <div class="tutorial-progress panel-hidden" id="tutorial-progress">
+          <i id="tutorial-progress-bar"></i>
+        </div>
       </div>
-      <button type="button" class="tutorial-cta ui-btn" id="tutorial-cta">CONTINUE</button>
-      <button type="button" class="tutorial-skip" id="tutorial-skip">Skip tutorial</button>
+      <div class="card-actions">
+        <button type="button" class="tutorial-cta ui-btn" id="tutorial-cta">CONTINUE</button>
+        <button type="button" class="tutorial-skip" id="tutorial-skip">Skip tutorial</button>
+      </div>
     `;
     this.root.appendChild(el);
     el.querySelector('#tutorial-cta')?.addEventListener('click', () => this.onCta());

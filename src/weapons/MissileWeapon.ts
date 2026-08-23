@@ -33,6 +33,7 @@ import {
   GUIDED_MISSILE_NUCLEUS_PROXIMITY_PADDING,
   GUIDED_MISSILE_POOL_SIZE,
   GUIDED_MISSILE_RAYCAST_LEAD,
+  GUIDED_MISSILE_SHELL_SAMPLE_RADIUS,
   GUIDED_MISSILE_SPLASH_DAMAGE_FRACTION,
   GUIDED_MISSILE_TRAIL_SEGMENTS,
   WEAPON_MINIMUM_FIRE_RATE,
@@ -99,6 +100,7 @@ export class MissileWeapon implements WeaponBehavior {
   private readonly up = new THREE.Vector3(0, 1, 0);
   private readonly fwd = new THREE.Vector3();
   private readonly launchDir = new THREE.Vector3();
+  private readonly peelAt = new THREE.Vector3();
 
   constructor() {
     this.stats = {
@@ -255,20 +257,16 @@ export class MissileWeapon implements WeaponBehavior {
     this.tmp.crossVectors(this.right, this.fwd).normalize();
   }
 
+  /** Independent roll: random shell near the facing peel. Core is last resort. */
   private pickTarget(cube: CubeManager, from: THREE.Vector3): number {
-    if (cube.nucleus.isActive) {
-      if (cube.nucleus.isExposed || this.stats.flags.has('hunter_core')) {
-        return NUCLEUS_HIT_ID;
-      }
+    const peel = cube.findClosestLive(from, this.stats.range, false);
+    if (peel) {
+      cube.getBlockWorldPos(peel.instanceId, this.peelAt);
+      const rolled = cube.pickRandomShell(this.peelAt, GUIDED_MISSILE_SHELL_SAMPLE_RADIUS);
+      return rolled >= 0 ? rolled : peel.instanceId;
     }
-    const prefer = (t: BlockType): number => {
-      if (t === BlockType.Core) return this.stats.flags.has('hunter_core') ? 40 : 28;
-      if (t === BlockType.DataNode) return 18;
-      if (t === BlockType.Reinforced) return 6;
-      return 3;
-    };
-    const n = cube.findNearest(from, this.stats.range, prefer);
-    return n?.instanceId ?? -1;
+    if (cube.nucleus.isActive) return NUCLEUS_HIT_ID;
+    return -1;
   }
 
   /**
@@ -457,7 +455,14 @@ export class MissileWeapon implements WeaponBehavior {
       });
     }
     if (m.splash > 0) {
-      for (const h of cube.applySplash(point, m.splash, m.damage * GUIDED_MISSILE_SPLASH_DAMAGE_FRACTION, now, instanceId)) {
+      for (const h of cube.applySplash(
+        point,
+        m.splash,
+        m.damage * GUIDED_MISSILE_SPLASH_DAMAGE_FRACTION,
+        now,
+        instanceId,
+        { glow: true }
+      )) {
         bus.emit('beam-hit', { ...h, style: 'splash' as const });
       }
     }

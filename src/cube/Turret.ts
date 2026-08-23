@@ -9,6 +9,8 @@ import {
   TURRET_DEFAULT_HIT_POINTS,
   TURRET_DEFAULT_PROJECTILE_SPEED,
   TURRET_DEFAULT_RANGE,
+  TURRET_LEAD_TIME_CAP_SECONDS,
+  TURRET_TRACK_RATE,
 } from '../data/constraints';
 
 export interface TurretProjectile {
@@ -51,7 +53,9 @@ export class Turret {
   private projectiles: TurretProjectile[] = [];
   private next = 0;
   private readonly _aim = new THREE.Vector3();
+  private readonly _lead = new THREE.Vector3();
   private readonly _tmp = new THREE.Vector3();
+  private readonly _zero = new THREE.Vector3();
 
   constructor(id: string, position: THREE.Vector3, cfg: Partial<TurretConfig> = {}) {
     this.id = id;
@@ -192,21 +196,24 @@ export class Turret {
     playerPos: THREE.Vector3,
     onPlayerHit: (damage: number, point: THREE.Vector3) => void,
     /** When false (stage countdown), aim only — no new shots. */
-    allowFire = true
+    allowFire = true,
+    playerVel: THREE.Vector3 = this._zero
   ): void {
     if (!this.alive) {
       this.simProjectiles(dt, playerPos, onPlayerHit);
       return;
     }
 
-    const toPlayer = this._aim.copy(playerPos).sub(this.group.position);
-    const dist = toPlayer.length();
-    if (dist > 0.01) {
-      toPlayer.normalize();
-      // Yaw head toward player
-      const yaw = Math.atan2(toPlayer.x, toPlayer.z);
+    const muzzle = this._tmp.copy(this.group.position).add(new THREE.Vector3(0, 0.35, 0));
+    const desired = this.leadDirection(muzzle, playerPos, playerVel);
+    const dist = playerPos.distanceTo(this.group.position);
+    if (desired.lengthSq() > 1e-8) {
+      const k = 1 - Math.exp(-TURRET_TRACK_RATE * dt);
+      if (this._aim.lengthSq() < 1e-8) this._aim.copy(desired);
+      else this._aim.lerp(desired, k).normalize();
+      const yaw = Math.atan2(this._aim.x, this._aim.z);
       this.head.rotation.y = yaw;
-      this.head.rotation.x = -Math.asin(THREE.MathUtils.clamp(toPlayer.y, -0.9, 0.9));
+      this.head.rotation.x = -Math.asin(THREE.MathUtils.clamp(this._aim.y, -0.9, 0.9));
     }
 
     this.cooldown = Math.max(0, this.cooldown - dt);
@@ -214,8 +221,8 @@ export class Turret {
     const ringIn = this.group.getObjectByName('charge_ring_inner') as THREE.Mesh | undefined;
     const chargeT = this.cooldown > 0 ? 1 - this.cooldown * this.cfg.fireRate : 1;
 
-    if (allowFire && dist <= this.cfg.range && this.cooldown <= 0) {
-      this.fire(toPlayer);
+    if (allowFire && dist <= this.cfg.range && this.cooldown <= 0 && this._aim.lengthSq() > 1e-8) {
+      this.fire(this._aim);
       this.cooldown = 1 / this.cfg.fireRate;
       if (ring) {
         (ring.material as THREE.MeshBasicMaterial).opacity = 0.95;
@@ -237,6 +244,23 @@ export class Turret {
     }
 
     this.simProjectiles(dt, playerPos, onPlayerHit);
+  }
+
+  private leadDirection(
+    from: THREE.Vector3,
+    target: THREE.Vector3,
+    vel: THREE.Vector3
+  ): THREE.Vector3 {
+    const speed = Math.max(1, this.cfg.projectileSpeed);
+    let t = from.distanceTo(target) / speed;
+    t = Math.min(TURRET_LEAD_TIME_CAP_SECONDS, Math.max(0, t));
+    this._lead.copy(target).addScaledVector(vel, t);
+    t = from.distanceTo(this._lead) / speed;
+    t = Math.min(TURRET_LEAD_TIME_CAP_SECONDS, Math.max(0, t));
+    this._lead.copy(target).addScaledVector(vel, t);
+    this._lead.sub(from);
+    if (this._lead.lengthSq() < 1e-8) this._lead.copy(target).sub(from);
+    return this._lead.normalize();
   }
 
   private fire(dir: THREE.Vector3): void {

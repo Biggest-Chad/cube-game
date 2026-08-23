@@ -25,6 +25,13 @@ import {
   ENEMY_REPAIR_DRONE_SPEED,
   ENEMY_WEAPON_TARGET_RADIUS_DRONE,
   ENEMY_WEAPON_TARGET_RADIUS_TURRET,
+  CUBE_FIGHTER_BASE_DAMAGE,
+  CUBE_FIGHTER_BASE_HIT_POINTS,
+  CUBE_FIGHTER_DAMAGE_PER_LEVEL,
+  CUBE_FIGHTER_FIRE_RATE,
+  CUBE_FIGHTER_HIT_POINTS_PER_LEVEL,
+  CUBE_FIGHTER_RANGE,
+  CUBE_FIGHTER_SPEED,
   FLOATING_TURRET_BASE_DAMAGE,
   FLOATING_TURRET_BASE_HIT_POINTS,
   FLOATING_TURRET_DAMAGE_PER_LEVEL,
@@ -39,6 +46,7 @@ import {
   LATTICE_TURRET_FIRE_RATE,
   LATTICE_TURRET_HIT_POINTS_PER_LEVEL,
   LATTICE_TURRET_PROJECTILE_SPEED_PER_LEVEL,
+  LATTICE_TURRET_SPAWN_KEEP_FRACTION,
 } from '../data/constraints';
 import { CORE } from '../data/core';
 import { RageLaser, type RageLaserPhase } from './RageLaser';
@@ -53,6 +61,7 @@ export interface DefenseSchedule {
   /** Extra free-floating turrets only if lattice yield is low */
   floatingTurretFallback: number;
   enemyDroneCount: number;
+  cubeFighterCount: number;
   layeredShields: boolean;
   elite: boolean;
 }
@@ -64,6 +73,7 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
       faceShields: false,
       floatingTurretFallback: 0,
       enemyDroneCount: 0,
+      cubeFighterCount: 0,
       layeredShields: false,
       elite: false,
     };
@@ -72,8 +82,9 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: false,
-      floatingTurretFallback: 1,
+      floatingTurretFallback: 0,
       enemyDroneCount: 0,
+      cubeFighterCount: 1,
       layeredShields: false,
       elite: false,
     };
@@ -82,8 +93,9 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: false,
-      floatingTurretFallback: 2,
+      floatingTurretFallback: 1,
       enemyDroneCount: 0,
+      cubeFighterCount: 2,
       layeredShields: false,
       elite: false,
     };
@@ -92,8 +104,9 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: true,
-      floatingTurretFallback: 2,
+      floatingTurretFallback: 1,
       enemyDroneCount: 1,
+      cubeFighterCount: 2,
       layeredShields: false,
       elite: false,
     };
@@ -102,8 +115,9 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: true,
-      floatingTurretFallback: 3,
+      floatingTurretFallback: 1,
       enemyDroneCount: 3,
+      cubeFighterCount: 3,
       layeredShields: false,
       elite: false,
     };
@@ -112,8 +126,9 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
     return {
       coreShield: true,
       faceShields: true,
-      floatingTurretFallback: 3,
+      floatingTurretFallback: 1,
       enemyDroneCount: 5,
+      cubeFighterCount: 4,
       layeredShields: true,
       elite: false,
     };
@@ -121,8 +136,9 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
   return {
     coreShield: true,
     faceShields: true,
-    floatingTurretFallback: 4,
+    floatingTurretFallback: 2,
     enemyDroneCount: 7,
+    cubeFighterCount: 5,
     layeredShields: true,
     elite: true,
   };
@@ -140,6 +156,7 @@ export interface CubeDefenseHooks {
   onPlayerDamage: (amount: number, source: string) => void;
   getPlayerPosition: () => THREE.Vector3;
   getPlayerDronePositions?: () => THREE.Vector3[];
+  onPlayerDroneDamage?: (aim: THREE.Vector3, damage: number) => void;
 }
 
 interface LatticeTurretLink {
@@ -183,6 +200,9 @@ export class CubeDefense {
   private readonly spikes = new NucleusSpikeBurst();
   private readonly kit = new NucleusOffensiveKit();
   private readonly _laserOrigin = new THREE.Vector3();
+  private readonly playerVel = new THREE.Vector3();
+  private readonly lastPlayer = new THREE.Vector3();
+  private playerVelPrimed = false;
 
   constructor() {
     this.group.add(this.projectileRoot);
@@ -278,10 +298,15 @@ export class CubeDefense {
       }
     }
 
-    // Lattice turret blocks (primary — destructible & scramble-safe)
+    // Lattice turret blocks (primary — destructible & scramble-safe). Keep 40%.
     const turretIds = this.cube.collectIdsOfType(BlockType.Turret);
-    for (const id of turretIds) {
+    const armed = this.pickSubset(turretIds, LATTICE_TURRET_SPAWN_KEEP_FRACTION);
+    const armedSet = new Set(armed);
+    for (const id of armed) {
       this.spawnTurretOnInstance(id, levelId, false);
+    }
+    for (const id of turretIds) {
+      if (!armedSet.has(id)) this.cube.demoteTurretBlock(id);
     }
 
     // Fallback floaters only if lattice has very few turrets
@@ -306,6 +331,9 @@ export class CubeDefense {
 
     for (let i = 0; i < this.schedule.enemyDroneCount; i++) {
       this.spawnEnemyDrone('attack', false);
+    }
+    for (let i = 0; i < this.schedule.cubeFighterCount; i++) {
+      this.spawnEnemyDrone('cube-fighter', false);
     }
 
     bus.emit('cube-defense-started', {
@@ -341,14 +369,20 @@ export class CubeDefense {
       bus.on('core-spike-burst', () => {
         if (!this.cube || !this.hooks) return;
         this.cube.nucleus.getWorldCenter(this._laserOrigin);
+        const profile = spikeBurstProfileForStage(this.levelId);
+        const mul = this.cube.nucleus.overloadDamageMul;
+        profile.damage *= mul;
+        profile.shockDamage *= mul;
+        profile.airBurstDamage *= mul;
         this.spikes.arm(
           this._laserOrigin,
           this.hooks.getPlayerPosition(),
-          spikeBurstProfileForStage(this.levelId)
+          profile
         );
       }),
       bus.on('core-overload', () => {
         this.kit.notifyOverload();
+        this.spewCubeFighterWave();
       }),
       bus.on(
         'core-spawn-kamikaze',
@@ -373,26 +407,36 @@ export class CubeDefense {
     const idx = this.enemyDrones.length;
     const isRepair = role === 'repair';
     const isKami = role === 'kamikaze';
+    const isCubeFighter = role === 'cube-fighter';
+    const dmgMul = this.cube.nucleus.overloadDamageMul;
     const d = new EnemyDrone(`ed_${this._idSeq++}`, idx, he, {
       hp: isKami
         ? kami?.hp ?? 22
-        : (isRepair ? ENEMY_REPAIR_DRONE_BASE_HIT_POINTS : ENEMY_ATTACK_DRONE_BASE_HIT_POINTS) +
-          this.levelId *
-            (isRepair ? ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL : ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL),
+        : isCubeFighter
+          ? CUBE_FIGHTER_BASE_HIT_POINTS + this.levelId * CUBE_FIGHTER_HIT_POINTS_PER_LEVEL
+          : (isRepair ? ENEMY_REPAIR_DRONE_BASE_HIT_POINTS : ENEMY_ATTACK_DRONE_BASE_HIT_POINTS) +
+            this.levelId *
+              (isRepair ? ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL : ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL),
       damage: isKami
         ? kami?.damage ?? 14
-        : ENEMY_DRONE_BASE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL,
-      fireRate:
-        (this.schedule.elite ? ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER : 1.0) * this.fireRateMul,
+        : isCubeFighter
+          ? (CUBE_FIGHTER_BASE_DAMAGE + this.levelId * CUBE_FIGHTER_DAMAGE_PER_LEVEL) * dmgMul
+          : (ENEMY_DRONE_BASE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL) * dmgMul,
+      fireRate: isCubeFighter
+        ? CUBE_FIGHTER_FIRE_RATE * this.fireRateMul
+        : (this.schedule.elite ? ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER : 1.0) * this.fireRateMul,
       speed: isKami
         ? kami?.speed ?? 7.2
-        : isRepair
-          ? ENEMY_REPAIR_DRONE_SPEED
-          : ENEMY_ATTACK_DRONE_SPEED,
-      color: isKami ? 0xffaa22 : isRepair ? 0x44ff88 : 0xff2244,
+        : isCubeFighter
+          ? CUBE_FIGHTER_SPEED
+          : isRepair
+            ? ENEMY_REPAIR_DRONE_SPEED
+            : ENEMY_ATTACK_DRONE_SPEED,
+      color: isKami ? 0xffaa22 : isCubeFighter ? 0xff4488 : isRepair ? 0x44ff88 : 0xff2244,
       role,
       repairFrac: ENEMY_DRONE_REPAIR_FRACTION,
       ...(isKami ? { range: NUCLEUS_KAMIKAZE_PROXIMITY + 40 } : {}),
+      ...(isCubeFighter ? { range: CUBE_FIGHTER_RANGE } : {}),
     });
     if (enraged) d.setEnraged(true);
     // Spawn near cube surface
@@ -405,6 +449,57 @@ export class CubeDefense {
     this.enemyDrones.push(d);
     this.group.add(d.group);
     return d;
+  }
+
+  private spewCubeFighterWave(): void {
+    if (!this.cube?.nucleus.isActive) return;
+    const hpR = this.cube.nucleus.snapshot().hpRatio;
+    const n = this.cubeFighterOverloadCount(this.levelId, hpR);
+    if (n <= 0) return;
+    this.cube.nucleus.getWorldCenter(this._laserOrigin);
+    let spawned = 0;
+    for (let i = 0; i < n; i++) {
+      const d = this.spawnEnemyDrone('cube-fighter', true);
+      if (!d) continue;
+      const yaw = (i / Math.max(1, n)) * Math.PI * 2 + Math.random() * 0.4;
+      const pitch = (Math.random() - 0.5) * 0.9;
+      d.group.position.copy(this._laserOrigin).add(
+        new THREE.Vector3(
+          Math.cos(yaw) * Math.cos(pitch),
+          Math.sin(pitch),
+          Math.sin(yaw) * Math.cos(pitch)
+        ).multiplyScalar(1.6)
+      );
+      spawned++;
+    }
+    if (spawned > 0) {
+      bus.emit('core-notify', {
+        title: 'CUBE FIGHTERS',
+        body: `${spawned} interceptors launched — fighters, take them.`,
+        kind: 'overload',
+      });
+    }
+  }
+
+  private cubeFighterOverloadCount(levelId: number, hpRatio: number): number {
+    if (levelId <= 3) return 0;
+    const fromSector = 2 + Math.floor(levelId / 4);
+    const fromHp = Math.floor((1 - Math.min(1, Math.max(0, hpRatio))) * 5);
+    return Math.min(14, fromSector + fromHp);
+  }
+
+  private pickSubset<T>(list: T[], frac: number): T[] {
+    if (list.length === 0) return [];
+    const n = Math.max(0, Math.round(list.length * frac));
+    if (n >= list.length) return list.slice();
+    const copy = list.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const tmp = copy[i];
+      copy[i] = copy[j];
+      copy[j] = tmp;
+    }
+    return copy.slice(0, n);
   }
 
   /** Fire a dodgeable arc beam from cube center. */
@@ -472,12 +567,21 @@ export class CubeDefense {
     return this.schedule;
   }
 
-  getEnemyUnitRefs(): Array<{ id: string; position: { x: number; y: number; z: number }; hp: number }> {
-    const out: Array<{ id: string; position: { x: number; y: number; z: number }; hp: number }> = [];
+  getEnemyUnitRefs(): Array<{
+    id: string;
+    position: { x: number; y: number; z: number };
+    hp: number;
+    kind?: string;
+  }> {
+    const out: Array<{
+      id: string;
+      position: { x: number; y: number; z: number };
+      hp: number;
+      kind?: string;
+    }> = [];
     for (const d of this.enemyDrones) {
       if (d.alive) out.push(d.toUnitRef());
     }
-    // Fighters can also suppress turret guns
     for (const link of this.links) {
       if (!link.turret.alive) continue;
       const p = link.turret.group.position;
@@ -485,6 +589,7 @@ export class CubeDefense {
         id: link.turret.id,
         position: { x: p.x, y: p.y, z: p.z },
         hp: link.turret.hp,
+        kind: 'turret',
       });
     }
     return out;
@@ -631,6 +736,18 @@ export class CubeDefense {
     if (!this.hooks || !this.cube) return;
     const playerPos = this.hooks.getPlayerPosition();
     const dronePos = this.hooks.getPlayerDronePositions?.() ?? [];
+    if (!this.playerVelPrimed) {
+      this.lastPlayer.copy(playerPos);
+      this.playerVel.set(0, 0, 0);
+      this.playerVelPrimed = true;
+    } else {
+      const inv = dt > 1e-4 ? 1 / dt : 0;
+      this.playerVel.lerp(
+        this._pos.copy(playerPos).sub(this.lastPlayer).multiplyScalar(inv),
+        1 - Math.exp(-8 * dt)
+      );
+      this.lastPlayer.copy(playerPos);
+    }
 
     // Re-sync lattice turrets by position (instance ids shift on block remove)
     this.syncLatticeTurrets();
@@ -649,7 +766,8 @@ export class CubeDefense {
         (dmg) => {
           this.hooks?.onPlayerDamage(dmg, 'turret');
         },
-        allowFire
+        allowFire,
+        this.playerVel
       );
       void base;
     }
@@ -665,7 +783,11 @@ export class CubeDefense {
         dronePos,
         allowFire,
         this.cube,
-        now
+        now,
+        {
+          playerVel: this.playerVel,
+          onDroneHit: (aim, dmg) => this.hooks?.onPlayerDroneDamage?.(aim, dmg),
+        }
       );
     }
 
@@ -678,6 +800,7 @@ export class CubeDefense {
     if (laserOn) {
       nuc.getWorldCenter(this._laserOrigin);
     }
+    const power = nuc.overloadDamageMul;
     this.rageLaser.update(dt, {
       active: laserOn,
       origin: this._laserOrigin,
@@ -685,6 +808,7 @@ export class CubeDefense {
       overloading: nuc.isOverloading && nuc.attr === 'rage',
       allowFire,
       onPlayerDamage: (dmg) => this.hooks?.onPlayerDamage(dmg, 'core-arc'),
+      damageMul: power,
     });
     if (laserOn && this.rageLaser.glow > 0) {
       nuc.flareFromLaser(this.rageLaser.glow);
@@ -710,7 +834,8 @@ export class CubeDefense {
         this._laserOrigin,
         playerPos,
         allowFire,
-        (dmg) => this.hooks?.onPlayerDamage(dmg, 'core-kit')
+        (dmg) => this.hooks?.onPlayerDamage(dmg, 'core-kit'),
+        nuc.overloadDamageMul
       );
     }
 
@@ -856,6 +981,8 @@ export class CubeDefense {
     this.faceShields = [];
     this.coreShield = { current: 0, max: 0, regenDelay: 0, regenPerSec: 0, active: false };
     this.fireRateMul = 1;
+    this.playerVelPrimed = false;
+    this.playerVel.set(0, 0, 0);
     while (this.projectileRoot.children.length) {
       this.projectileRoot.remove(this.projectileRoot.children[0]);
     }

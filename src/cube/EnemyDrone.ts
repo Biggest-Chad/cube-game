@@ -13,7 +13,7 @@ import {
 } from '../data/constraints';
 import type { CubeManager } from './CubeManager';
 
-export type EnemyDroneRole = 'attack' | 'repair' | 'kamikaze';
+export type EnemyDroneRole = 'attack' | 'repair' | 'kamikaze' | 'cube-fighter';
 
 export interface EnemyDroneConfig {
   hp: number;
@@ -57,8 +57,12 @@ export class EnemyDrone {
   private orbitHeight: number;
   private readonly _pos = new THREE.Vector3();
   private readonly _target = new THREE.Vector3();
+  private readonly _lead = new THREE.Vector3();
   private beam: THREE.Line;
   private beamLife = 0;
+  private huntShip = true;
+  private retargetT = 0;
+  private droneIndex = 0;
 
   constructor(id: string, index: number, halfExtent: number, cfg: Partial<EnemyDroneConfig> = {}) {
     this.id = id;
@@ -88,6 +92,43 @@ export class EnemyDrone {
   }
 
   private buildMesh(): void {
+    if (this.role === 'cube-fighter') {
+      const hull = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.42, 0.42),
+        new THREE.MeshStandardMaterial({
+          color: 0x1a0810,
+          metalness: 0.55,
+          roughness: 0.28,
+          emissive: this.cfg.color,
+          emissiveIntensity: 0.7,
+        })
+      );
+      this.group.add(hull);
+      const core = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 0.18, 0.18),
+        new THREE.MeshBasicMaterial({
+          color: this.cfg.color,
+          transparent: true,
+          opacity: 0.9,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      this.group.add(core);
+      for (const s of [-1, 1]) {
+        const fin = new THREE.Mesh(
+          new THREE.BoxGeometry(0.08, 0.22, 0.34),
+          new THREE.MeshStandardMaterial({
+            color: 0x401018,
+            emissive: this.cfg.color,
+            emissiveIntensity: 0.4,
+          })
+        );
+        fin.position.set(s * 0.28, 0, 0.04);
+        this.group.add(fin);
+      }
+      return;
+    }
     const body = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.28, 0),
       new THREE.MeshStandardMaterial({
@@ -155,7 +196,11 @@ export class EnemyDrone {
     /** When false (stage countdown), fly but do not fire. */
     allowFire = true,
     cube?: CubeManager | null,
-    now = 0
+    now = 0,
+    extras?: {
+      playerVel?: THREE.Vector3;
+      onDroneHit?: (aim: THREE.Vector3, damage: number) => void;
+    }
   ): void {
     if (!this.alive) return;
 
@@ -164,6 +209,19 @@ export class EnemyDrone {
     if (s < 1) this.group.scale.setScalar(Math.min(1, s + dt * 3));
 
     const speed = this.cfg.speed * this.cfg.speedMul;
+    if (this.role === 'cube-fighter') {
+      this.updateCubeFighter(
+        dt,
+        playerPos,
+        halfExtent,
+        speed,
+        onPlayerHit,
+        playerDronePositions,
+        allowFire,
+        extras
+      );
+      return;
+    }
     this.orbitRadius = halfExtent * (this.role === 'repair' ? 1.05 : 1.35) + 1;
     this.orbitAngle += dt * 0.35 * this.cfg.speedMul;
     this._pos.set(
@@ -244,6 +302,69 @@ export class EnemyDrone {
     bus.emit('enemy-drone-fire', { id: this.id });
   }
 
+  private updateCubeFighter(
+    dt: number,
+    playerPos: THREE.Vector3,
+    halfExtent: number,
+    speed: number,
+    onPlayerHit: (damage: number) => void,
+    playerDronePositions: THREE.Vector3[] | undefined,
+    allowFire: boolean,
+    extras?: {
+      playerVel?: THREE.Vector3;
+      onDroneHit?: (aim: THREE.Vector3, damage: number) => void;
+    }
+  ): void {
+    this.retargetT -= dt;
+    const drones = playerDronePositions ?? [];
+    if (this.retargetT <= 0) {
+      this.retargetT = 0.7 + Math.random() * 0.9;
+      if (drones.length === 0 || Math.random() < 0.42) this.huntShip = true;
+      else {
+        this.huntShip = false;
+        this.droneIndex = (Math.random() * drones.length) | 0;
+      }
+    }
+    const droneTarget = !this.huntShip ? drones[this.droneIndex] ?? drones[0] : undefined;
+    const target = droneTarget ?? playerPos;
+    const vel = extras?.playerVel;
+    if (this.huntShip && vel && vel.lengthSq() > 0.05) {
+      const t = Math.min(0.9, this.group.position.distanceTo(playerPos) / 22);
+      this._lead.copy(playerPos).addScaledVector(vel, t);
+    } else {
+      this._lead.copy(target);
+    }
+
+    this._target.copy(this._lead).sub(this.group.position);
+    const gap = this._target.length();
+    if (gap > 0.15) {
+      this._pos.copy(this._lead).addScaledVector(this._target.normalize(), -6.2);
+    } else {
+      this._pos.copy(this.group.position);
+    }
+    const away = this._pos.length();
+    if (away < halfExtent + 2.4) {
+      this._pos.multiplyScalar((halfExtent + 2.6) / Math.max(0.1, away));
+    }
+    this.group.lookAt(this._lead);
+    this.group.position.lerp(this._pos, 1 - Math.exp(-speed * 0.42 * dt));
+
+    if (this.beamLife > 0) {
+      this.beamLife -= dt;
+      if (this.beamLife <= 0) this.beam.visible = false;
+    }
+    this.cooldown = Math.max(0, this.cooldown - dt);
+    if (!allowFire || this.cooldown > 0) return;
+
+    const dist = this.group.position.distanceTo(this._lead);
+    if (dist > this.cfg.range) return;
+    this.cooldown = 1 / Math.max(0.3, this.cfg.fireRate * this.cfg.fireMul);
+    this.showBeam(this.group.position, this._lead);
+    if (droneTarget) extras?.onDroneHit?.(this._lead, this.cfg.damage * 0.85);
+    else onPlayerHit(this.cfg.damage);
+    bus.emit('enemy-drone-fire', { id: this.id, role: this.role });
+  }
+
   private showBeam(from: THREE.Vector3, to: THREE.Vector3): void {
     const pos = this.beam.geometry.attributes.position as THREE.BufferAttribute;
     // Beam in local space of group
@@ -257,7 +378,12 @@ export class EnemyDrone {
     this.beamLife = 0.08;
   }
 
-  toUnitRef(): { id: string; position: { x: number; y: number; z: number }; hp: number } {
+  toUnitRef(): {
+    id: string;
+    position: { x: number; y: number; z: number };
+    hp: number;
+    kind: EnemyDroneRole;
+  } {
     return {
       id: this.id,
       position: {
@@ -266,6 +392,7 @@ export class EnemyDrone {
         z: this.group.position.z,
       },
       hp: this.hp,
+      kind: this.role,
     };
   }
 

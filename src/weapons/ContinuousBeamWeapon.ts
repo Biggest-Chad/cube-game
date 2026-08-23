@@ -10,6 +10,12 @@ import { bus } from '../core/EventBus';
 import type { WeaponStats } from '../data/weapons';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import type { WeaponBehavior, WeaponFireContext } from './WeaponBehavior';
+import {
+  ARC_BEAM_RETARGET_SECONDS,
+  ARC_BEAM_SHELL_SAMPLE_RADIUS,
+  ARC_BEAM_SWEEP_SLEW_RADIANS_PER_SECOND,
+} from '../data/constraints';
+import { NUCLEUS_HIT_ID } from '../cube/CubeManager';
 
 interface BeamRibbon {
   core: THREE.Mesh;
@@ -55,6 +61,13 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
   private readonly _q = new THREE.Quaternion();
   private readonly _fwd = new THREE.Vector3(0, 1, 0);
   private readonly _scale = new THREE.Vector3();
+  private readonly sweepDir = new THREE.Vector3(0, 0, -1);
+  private readonly sweepWant = new THREE.Vector3();
+  private readonly peelAt = new THREE.Vector3();
+  private sweepTargetId = -1;
+  private retargetT = 0;
+  private idleT = 0;
+  private sweepPrimed = false;
 
   constructor() {
     this.stats = {
@@ -178,7 +191,7 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     for (const r of this.ribbons) {
       if (r.life <= 0) continue;
       r.life -= dt;
-      const t = Math.max(0, r.life / 0.1);
+      const t = Math.max(0, r.life / 0.18);
       (r.core.material as THREE.MeshBasicMaterial).opacity = t * 0.95;
       (r.mid.material as THREE.MeshBasicMaterial).opacity = t * 0.55;
       (r.outer.material as THREE.MeshBasicMaterial).opacity = t * 0.28;
@@ -189,8 +202,17 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
 
     if (!ctx.firing) {
       this.damageAccum = 0;
+      this.idleT += dt;
+      if (this.idleT > 0.45) {
+        this.sweepPrimed = false;
+        this.sweepTargetId = -1;
+        this.retargetT = 0;
+      }
       return;
     }
+
+    this.idleT = 0;
+    this.updateSweep(ctx, dt);
 
     this.heat = Math.min(1, this.heat + this.stats.heatPerShot * dt * 2.2);
     const heatMul = 1 - this.heat * 0.4;
@@ -213,13 +235,13 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     const dmgPerTick = dps * tickThreshold;
 
     for (let b = 0; b < beams; b++) {
-      const spread = (b - (beams - 1) / 2) * 0.025;
+      const spread = (b - (beams - 1) / 2) * 0.018;
       this._axis
-        .copy(ctx.direction)
-        .cross(Math.abs(ctx.direction.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0))
+        .copy(this.sweepDir)
+        .cross(Math.abs(this.sweepDir.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0))
         .normalize();
       if (this._axis.lengthSq() < 1e-6) this._axis.set(1, 0, 0);
-      this._dir.copy(ctx.direction).applyAxisAngle(this._axis, spread).normalize();
+      this._dir.copy(this.sweepDir).applyAxisAngle(this._axis, spread).normalize();
       this._origin.copy(ctx.origin).addScaledVector(this._dir, 0.12);
 
       this.traceChain(
@@ -238,6 +260,55 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     if (applyDamage) {
       bus.emit('weapon-fire', { family: this.family, slot: ctx.slot });
     }
+  }
+
+  private updateSweep(ctx: WeaponFireContext, dt: number): void {
+    if (!this.sweepPrimed) {
+      this.sweepDir.copy(ctx.direction);
+      if (this.sweepDir.lengthSq() < 1e-8) this.sweepDir.set(0, 0, -1);
+      else this.sweepDir.normalize();
+      this.sweepPrimed = true;
+      this.retargetT = 0;
+    }
+    if (!ctx.cube.hasInstance(this.sweepTargetId) || this.retargetT <= 0) {
+      this.sweepTargetId = this.pickShellTarget(ctx);
+      this.retargetT = ARC_BEAM_RETARGET_SECONDS + Math.random() * 0.55;
+    }
+    this.retargetT -= dt;
+
+    if (ctx.cube.hasInstance(this.sweepTargetId)) {
+      ctx.cube.getBlockWorldPos(this.sweepTargetId, this.sweepWant);
+      this.sweepWant.sub(ctx.origin);
+      if (this.sweepWant.lengthSq() > 1e-8) this.sweepWant.normalize();
+      else this.sweepWant.copy(ctx.direction);
+    } else {
+      this.sweepWant.copy(ctx.direction);
+    }
+    const ang = this.sweepDir.angleTo(this.sweepWant);
+    if (ang > 1e-5) {
+      const t = Math.min(1, (ARC_BEAM_SWEEP_SLEW_RADIANS_PER_SECOND * dt) / ang);
+      this.sweepDir.lerp(this.sweepWant, t).normalize();
+    } else {
+      this.sweepDir.copy(this.sweepWant);
+    }
+  }
+
+  private pickShellTarget(ctx: WeaponFireContext): number {
+    const cube = ctx.cube;
+    const from = ctx.origin;
+    const range = this.stats.range;
+    const focusId = cube.hasInstance(this.sweepTargetId)
+      ? this.sweepTargetId
+      : cube.findClosestLive(from, range, false)?.instanceId ?? -1;
+    if (focusId >= 0 || focusId === NUCLEUS_HIT_ID) {
+      cube.getBlockWorldPos(focusId, this.peelAt);
+      const rolled = cube.pickRandomShell(this.peelAt, ARC_BEAM_SHELL_SAMPLE_RADIUS);
+      if (rolled >= 0) return rolled;
+      if (focusId !== NUCLEUS_HIT_ID && cube.hasInstance(focusId)) return focusId;
+    }
+    const peel = cube.findClosestLive(from, range, false);
+    if (peel) return peel.instanceId;
+    return cube.nucleus.isActive ? NUCLEUS_HIT_ID : -1;
   }
 
   private resolveBounceCount(): number {
@@ -359,7 +430,7 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
       mesh.scale.set(w, len, w);
       mesh.visible = true;
     }
-    r.life = 0.09 + Math.sin(this.pulse + depth) * 0.015;
+    r.life = 0.16 + Math.sin(this.pulse + depth) * 0.02;
     const bounce = depth > 0;
     (r.core.material as THREE.MeshBasicMaterial).color.setHex(0xffffff);
     (r.mid.material as THREE.MeshBasicMaterial).color.setHex(bounce ? 0xff66dd : COLORS.magenta);
@@ -528,6 +599,10 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
   reset(): void {
     this.heat = 0;
     this.damageAccum = 0;
+    this.sweepPrimed = false;
+    this.sweepTargetId = -1;
+    this.retargetT = 0;
+    this.idleT = 0;
     for (const r of this.ribbons) {
       r.life = 0;
       r.core.visible = r.mid.visible = r.outer.visible = false;

@@ -358,6 +358,8 @@ export class Game {
     this.cubeDefense.setHooks({
       onPlayerDamage: (amount) => this.onPlayerDamaged(amount),
       getPlayerPosition: () => this.ship.position.clone(),
+      getPlayerDronePositions: () => this.drones.getAlivePositions(),
+      onPlayerDroneDamage: (aim, dmg) => this.drones.damageNear(aim, dmg),
     });
 
     this.registerSessionCleaners();
@@ -1244,6 +1246,10 @@ export class Game {
       bus.on('weapon-fire', (p: { family?: string }) => {
         this.audio.playFire(p?.family ?? 'beam');
       }),
+      bus.on('player-leech', (p: { amount?: number }) => {
+        const amt = p?.amount ?? 0;
+        if (amt > 0) this.vitals.restoreShield(amt);
+      }),
       bus.on(
         'explosion',
         (p: { x: number; y: number; z: number; radius?: number; family?: string }) => {
@@ -1430,12 +1436,16 @@ export class Game {
     this.wipeCombatSession();
 
     this.overlay.innerHTML = `
-      <div class="overlay-card interactive">
-        <h2>SYSTEMS CRITICAL</h2>
-        <p>Hull integrity failure. Extracting with partial salvage.</p>
-        <div class="reward">Emergency extract</div>
-        <button class="menu-btn primary" id="dead-repair" type="button">WATCH AD · REPAIR</button>
-        <button class="menu-btn" id="dead-extract" type="button">EXTRACT</button>
+      <div class="overlay-card interactive docked-actions-card">
+        <div class="card-body overlay-body">
+          <h2>SYSTEMS CRITICAL</h2>
+          <p>Hull integrity failure. Extracting with partial salvage.</p>
+          <div class="reward">Emergency extract</div>
+        </div>
+        <div class="overlay-actions card-actions">
+          <button class="menu-btn primary" id="dead-repair" type="button">WATCH AD · REPAIR</button>
+          <button class="menu-btn" id="dead-extract" type="button">EXTRACT</button>
+        </div>
       </div>
     `;
     this.overlay.querySelector('#dead-repair')!.addEventListener('click', () => {
@@ -2846,17 +2856,21 @@ export class Game {
       : `+${card.frag} FRAG · +${card.core} CORE`;
 
     this.overlay.innerHTML = `
-      <div class="overlay-card interactive" role="dialog" aria-modal="true" aria-labelledby="clear-title">
-        <h2 id="clear-title">LEVEL CLEAR</h2>
-        <p>${card.name}</p>
-        <div class="reward">${rewardText}</div>
-        <button class="menu-btn primary" id="next-level" type="button">NEXT SECTOR</button>
-        <button class="menu-btn" id="clear-loadout" type="button">LOADOUT</button>
-        <button class="menu-btn" id="clear-tech" type="button">SHOP</button>
-        <button class="menu-btn magenta" id="clear-ad" type="button"${
-          card.doubled ? ' disabled' : ''
-        }>${card.doubled ? 'REWARD DOUBLED' : 'WATCH AD · ×2 REWARD'}</button>
-        <button class="menu-btn" id="clear-menu" type="button">TITLE SCREEN</button>
+      <div class="overlay-card interactive docked-actions-card" role="dialog" aria-modal="true" aria-labelledby="clear-title">
+        <div class="card-body overlay-body">
+          <h2 id="clear-title">LEVEL CLEAR</h2>
+          <p>${card.name}</p>
+          <div class="reward">${rewardText}</div>
+        </div>
+        <div class="overlay-actions card-actions">
+          <button class="menu-btn primary" id="next-level" type="button">NEXT SECTOR</button>
+          <button class="menu-btn" id="clear-loadout" type="button">LOADOUT</button>
+          <button class="menu-btn" id="clear-tech" type="button">SHOP</button>
+          <button class="menu-btn magenta" id="clear-ad" type="button"${
+            card.doubled ? ' disabled' : ''
+          }>${card.doubled ? 'REWARD DOUBLED' : 'WATCH AD · ×2 REWARD'}</button>
+          <button class="menu-btn" id="clear-menu" type="button">TITLE SCREEN</button>
+        </div>
       </div>
     `;
 

@@ -307,7 +307,8 @@ export class TorpedoWeapon implements WeaponBehavior {
       t.splash,
       t.damage * 0.55 * yieldMul,
       now,
-      instanceId
+      instanceId,
+      { glow: true }
     );
     for (const h of splashHits) bus.emit('beam-hit', h);
 

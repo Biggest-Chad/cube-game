@@ -64,6 +64,8 @@ export class CoreNucleus {
   private exposed = false;
   private exposedAnnounced = false;
   private decaying = false;
+  private destablizeAnnounced = false;
+  private overloadStacks = 0;
   private overloadFired = new Set<number>(); // thresholds 75/50/25 as 75 etc
   private overloadTimer = 0;
   private overloadKind: 'none' | 'rage' | 'regen' | 'swarm' = 'none';
@@ -126,6 +128,16 @@ export class CoreNucleus {
     return this.attribute === 'rage' ? CORE.rageFireRateMul : 1;
   }
 
+  /** 1.25^stacks — visual size after each overload. */
+  get overloadSizeMul(): number {
+    return Math.pow(CORE.overloadGrowthMul, this.overloadStacks);
+  }
+
+  /** 1.25^stacks — outgoing nucleus damage after each overload. */
+  get overloadDamageMul(): number {
+    return Math.pow(CORE.overloadGrowthMul, this.overloadStacks);
+  }
+
   /** Visual flare while the sweep laser charges / fires. */
   flareFromLaser(intensity: number): void {
     this.pulse = Math.max(this.pulse, THREE.MathUtils.clamp(intensity, 0, 1));
@@ -135,7 +147,7 @@ export class CoreNucleus {
   get hitRadius(): number {
     if (!this.active || this.hp <= 0) return 0;
     const he = this.cube?.halfExtent ?? 4;
-    return nucleusHitRadiusWorld(he, this.baseScale);
+    return nucleusHitRadiusWorld(he, this.baseScale * this.overloadSizeMul);
   }
 
   /** World-space center of the nucleus solid (cube group origin + local VFX). */
@@ -516,7 +528,17 @@ export class CoreNucleus {
     const ratio = this.shellTotal > 0 ? this.shellAlive / this.shellTotal : 0;
     const was = this.exposed;
     this.exposed = ratio <= CORE.exposedShellRatio;
-    this.decaying = this.shellAlive <= 0;
+    const wasDecaying = this.decaying;
+    this.decaying = ratio <= CORE.destabilizeShellRatio;
+
+    if (this.decaying && !wasDecaying && !this.destablizeAnnounced) {
+      this.destablizeAnnounced = true;
+      bus.emit('core-notify', {
+        title: 'DESTABILIZING',
+        body: 'Shell critical — nucleus is bleeding HP. Finish it.',
+        kind: 'exposed',
+      });
+    }
 
     if (this.exposed && !was && !this.exposedAnnounced) {
       this.exposedAnnounced = true;
@@ -643,11 +665,16 @@ export class CoreNucleus {
   }
 
   private triggerOverload(pct: number): void {
+    this.overloadStacks++;
+    this.pulse = 1;
     bus.emit('core-overload', {
       pct,
       attribute: this.attribute,
       hp: this.hp,
       maxHp: this.maxHp,
+      stacks: this.overloadStacks,
+      sizeMul: this.overloadSizeMul,
+      damageMul: this.overloadDamageMul,
     });
     bus.emit('core-notify', {
       title: `NUCLEUS OVERLOAD · ${pct}%`,
@@ -694,13 +721,13 @@ export class CoreNucleus {
   private overloadBody(): string {
     switch (this.attribute) {
       case 'rage':
-        return 'Laser overcharged — slew is faster. Stay off the line!';
+        return 'Laser overcharged — nucleus grew. Stay off the line!';
       case 'regeneration':
-        return 'Inner lattice reconstructed — cut it down again!';
+        return 'Inner lattice reconstructed — the nucleus is bigger and meaner.';
       case 'swarm':
-        return 'Enraged drone wave inbound!';
+        return 'Enraged drone wave inbound! Nucleus grew.';
       default:
-        return 'Spike burst charging — leave the bright line!';
+        return 'Spike burst charging — nucleus grew. Leave the bright line!';
     }
   }
 
@@ -813,7 +840,7 @@ export class CoreNucleus {
         hooks.onArcBeam(
           this.randomOutwardDir(),
           CORE.arcBeamSpeed * 1.05,
-          CORE.arcBeamDamage * 0.75
+          CORE.arcBeamDamage * 0.75 * this.overloadDamageMul
         );
       }
     }
@@ -845,11 +872,11 @@ export class CoreNucleus {
     const pain = this.hitFlinch;
     const breath = 1 + Math.sin(t * 2.15) * 0.045 + Math.sin(t * 5.1) * 0.02;
     const strain = this.exposed ? 1.08 : 1;
-    let scale = this.baseScale * breath * strain * (1 + this.pulse * 0.16);
+    let scale = this.baseScale * this.overloadSizeMul * breath * strain * (1 + this.pulse * 0.16);
 
     if (this.dying) {
       const burst = this.deathT < 0.28 ? 1.35 + this.deathT * 2.2 : Math.max(0.05, 1.6 - this.deathT * 0.85);
-      scale = this.baseScale * burst;
+      scale = this.baseScale * this.overloadSizeMul * burst;
       this.vfxGroup.rotation.x += dt * (4 + this.deathT * 8);
       this.vfxGroup.rotation.z += dt * 6;
     }
@@ -897,17 +924,17 @@ export class CoreNucleus {
       const mesh = this.tendrils[i];
       const dir = this.tendrilDirs[i];
       const wiggle = Math.sin(t * (2.4 + i * 0.37) + i) * (0.22 + pain * 0.45);
-      const reach = this.baseScale * (0.85 + Math.sin(t * 1.7 + i) * 0.12 + pain * 0.2);
+      const reach = this.baseScale * this.overloadSizeMul * (0.85 + Math.sin(t * 1.7 + i) * 0.12 + pain * 0.2);
       const reachDying = this.dying ? reach * (1.4 - this.deathT * 0.5) : reach;
       const aim = dir.clone();
       aim.x += wiggle;
       aim.y += Math.cos(t * 1.9 + i * 0.6) * 0.18;
       aim.normalize();
-      mesh.position.copy(aim).multiplyScalar(this.baseScale * 0.55);
+      mesh.position.copy(aim).multiplyScalar(this.baseScale * this.overloadSizeMul * 0.55);
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), aim);
       mesh.scale.set(
         this.dying ? 1.1 + Math.sin(t * 17.0 + i) * 0.4 : 1,
-        reachDying / this.baseScale,
+        reachDying / Math.max(0.01, this.baseScale * this.overloadSizeMul),
         this.dying ? 1.1 + Math.cos(t * 13.0 + i * 1.7) * 0.4 : 1
       );
       const tm = mesh.material as THREE.MeshBasicMaterial;
@@ -987,8 +1014,10 @@ export class CoreNucleus {
     this.attribute = 'none';
     this.exposed = false;
     this.exposedAnnounced = false;
+    this.destablizeAnnounced = false;
     this.decaying = false;
     this.overloadFired.clear();
+    this.overloadStacks = 0;
     this.overloadTimer = 0;
     this.overloadKind = 'none';
     this.spawnTimer = 0;

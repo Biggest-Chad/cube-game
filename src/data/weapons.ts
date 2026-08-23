@@ -190,7 +190,7 @@ const arcBeam: WeaponDef = {
   name: 'Arc Beam',
   family: 'beam',
   description:
-    'Continuous energy beam. Hold fire to melt lattice. Upgrade for bounce & refract chains.',
+    'Heavy sweeping beam. Locks hull blocks ahead of the nucleus and drags slowly across them.',
   color: 0xff00aa,
   colorCss: '#ff00aa',
   tags: ['sustained', 'hitscan', 'beam'],
@@ -371,7 +371,7 @@ const missile: WeaponDef = {
   id: 'guided_missile',
   name: 'Guided Missiles',
   family: 'missile',
-  description: 'Homing seekers. Prioritize data nodes and cores.',
+  description: 'Homing seekers. Each missile rolls a random nearby hull block — core is last.',
   color: 0xaa66ff,
   colorCss: '#aa66ff',
   tags: ['homing', 'anti-priority'],

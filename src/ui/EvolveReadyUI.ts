@@ -22,9 +22,8 @@ export class EvolveReadyUI {
     if (title) title.textContent = 'EVOLVE AVAILABLE';
     if (body) {
       body.textContent =
-        `Ascension ${opts.nextTier} is ready (${opts.cost.toLocaleString()} FRAG). ` +
-        `Evolving retrains the combat shop, resets you to Chronobeacon 5, and skips 10 / 15 / 20… until your furthest checkpoint. ` +
-        `Leftover fragments convert to Core Energy (${opts.fragPerCore.toLocaleString()} FRAG → 1 CORE).`;
+        `Ascension ${opts.nextTier} ready (${opts.cost.toLocaleString()} FRAG). ` +
+        `Retrain shop, restart at beacon 5, skip cleared beacons. Surplus FRAG → CORE (${opts.fragPerCore.toLocaleString()}:1).`;
     }
     this.card.classList.remove('panel-hidden');
     this.visible = true;
@@ -39,15 +38,19 @@ export class EvolveReadyUI {
     if (this.card) return;
     const el = document.createElement('div');
     el.id = 'evolve-ready-card';
-    el.className = 'tutorial-card evolve-ready-card panel-hidden interactive';
+    el.className = 'tutorial-card evolve-ready-card docked-actions-card panel-hidden interactive';
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-labelledby', 'evolve-ready-title');
     el.innerHTML = `
-      <div class="tutorial-kicker">ASCENSION READY</div>
-      <div class="tutorial-title" id="evolve-ready-title">EVOLVE AVAILABLE</div>
-      <div class="tutorial-body" id="evolve-ready-body"></div>
-      <button type="button" class="tutorial-cta ui-btn" id="evolve-ready-shop">OPEN SHOP</button>
-      <button type="button" class="tutorial-skip" id="evolve-ready-later">Not now</button>
+      <div class="card-body">
+        <div class="tutorial-kicker">ASCENSION READY</div>
+        <div class="tutorial-title" id="evolve-ready-title">EVOLVE AVAILABLE</div>
+        <div class="tutorial-body" id="evolve-ready-body"></div>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="tutorial-cta ui-btn" id="evolve-ready-shop">OPEN SHOP</button>
+        <button type="button" class="tutorial-skip" id="evolve-ready-later">Not now</button>
+      </div>
     `;
     this.root.appendChild(el);
     el.querySelector('#evolve-ready-shop')?.addEventListener('click', () => {

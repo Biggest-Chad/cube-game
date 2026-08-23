@@ -22,14 +22,18 @@ export class PauseUI {
   show(opts: { sectorName: string; sectorId: number }): void {
     this.visible = true;
     this.root.innerHTML = `
-      <div class="overlay-card interactive pause-card" role="dialog" aria-modal="true" aria-labelledby="pause-title">
-        <h2 id="pause-title">PAUSED</h2>
-        <p>Sector ${opts.sectorId} · ${opts.sectorName}</p>
-        <p class="pause-hint">Stage is held. Resume to continue — Extract returns to the title screen.</p>
-        <button class="menu-btn primary ui-btn" id="pause-resume" type="button">RESUME SECTOR</button>
-        <button class="menu-btn ui-btn" id="pause-settings" type="button">SETTINGS</button>
-        <button class="menu-btn ui-btn" id="pause-shop" type="button">SHOP</button>
-        <button class="menu-btn magenta ui-btn" id="pause-extract" type="button">EXTRACT TO MENU</button>
+      <div class="overlay-card interactive pause-card docked-actions-card" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+        <div class="card-body overlay-body">
+          <h2 id="pause-title">PAUSED</h2>
+          <p>Sector ${opts.sectorId} · ${opts.sectorName}</p>
+          <p class="pause-hint">Stage is held. Resume to continue — Extract returns to the title screen.</p>
+        </div>
+        <div class="overlay-actions card-actions">
+          <button class="menu-btn primary ui-btn" id="pause-resume" type="button">RESUME SECTOR</button>
+          <button class="menu-btn ui-btn" id="pause-settings" type="button">SETTINGS</button>
+          <button class="menu-btn ui-btn" id="pause-shop" type="button">SHOP</button>
+          <button class="menu-btn magenta ui-btn" id="pause-extract" type="button">EXTRACT TO MENU</button>
+        </div>
       </div>
     `;
     const bind = (id: string, fn: () => void) => {

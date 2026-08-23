@@ -209,7 +209,7 @@ export class FlakWeapon implements WeaponBehavior {
       }
     }
 
-    const hits = cube.applySplash(point, s.splash, s.damage * 0.85, now);
+    const hits = cube.applySplash(point, s.splash, s.damage * 0.85, now, -1, { glow: true });
     // Apply armor model on primary nearest if any
     for (const h of hits) {
       bus.emit('beam-hit', {

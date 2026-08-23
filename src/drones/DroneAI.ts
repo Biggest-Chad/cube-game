@@ -7,6 +7,7 @@ export interface EnemyUnitRef {
   id: string;
   position: { x: number; y: number; z: number };
   hp: number;
+  kind?: string;
 }
 
 export interface InterceptTarget {
@@ -65,7 +66,12 @@ export function enemyPriority(
   const dy = enemy.position.y - selfPos.y;
   const dz = enemy.position.z - selfPos.z;
   const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.01;
-  return 100 / d + (enemy.hp < 30 ? 5 : 0);
+  let kindBias = 0;
+  if (enemy.kind === 'cube-fighter') kindBias = 90;
+  else if (enemy.kind === 'kamikaze') kindBias = 40;
+  else if (enemy.kind === 'attack') kindBias = 28;
+  else if (enemy.kind === 'turret') kindBias = 8;
+  return 110 / d + kindBias + (enemy.hp < 30 ? 5 : 0);
 }
 
 export function pickBestEnemy(

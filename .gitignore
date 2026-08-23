@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.grok/
+.img2threejs/
 .DS_Store
 *.log
 .env

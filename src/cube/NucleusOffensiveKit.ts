@@ -7,6 +7,8 @@ import { bus } from '../core/EventBus';
 import {
   NUCLEUS_BLOOM_COOLDOWN_SECONDS,
   NUCLEUS_BLOOM_DURATION_SECONDS,
+  NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND,
+  NUCLEUS_BLOB_ARC_RADIUS_MULTIPLIER,
   NUCLEUS_BLOB_COOLDOWN_SECONDS,
   NUCLEUS_BLOB_DAMAGE,
   NUCLEUS_BLOB_HIT_POINTS,
@@ -65,6 +67,11 @@ interface Proj {
   damage: number;
   radius: number;
   hp: number;
+  lightning?: THREE.Line;
+  lightning2?: THREE.Line;
+  sheath?: THREE.Mesh;
+  corona?: THREE.Mesh;
+  pulse?: number;
 }
 
 interface Mine {
@@ -106,6 +113,7 @@ export class NucleusOffensiveKit {
   private idSeq = 0;
   private pendingNudge: { yaw: number; pitch: number } | null = null;
   private overloadPulse = 0;
+  private powerMul = 1;
   private readonly lastOrigin = new THREE.Vector3();
   private readonly lastPlayer = new THREE.Vector3();
   private readonly sph = new THREE.SphereGeometry(1, 12, 10);
@@ -145,8 +153,10 @@ export class NucleusOffensiveKit {
     origin: THREE.Vector3,
     player: THREE.Vector3,
     allowFire: boolean,
-    onDamage: (n: number) => void
+    onDamage: (n: number) => void,
+    powerMul = 1
   ): void {
+    this.powerMul = powerMul;
     this.lastOrigin.copy(origin);
     this.lastPlayer.copy(player);
     this.overloadPulse = Math.max(0, this.overloadPulse - dt);
@@ -306,13 +316,15 @@ export class NucleusOffensiveKit {
 
   private fireBlobs(overload: boolean): void {
     const n = overload ? NUCLEUS_BLOB_OVERLOAD_COUNT : 1;
-    const dmg = NUCLEUS_BLOB_DAMAGE * nucleusKitDamageScale(this.levelId);
+    const dmg = NUCLEUS_BLOB_DAMAGE * this.kitDmg();
     const to = this.lastPlayer.clone().sub(this.lastOrigin);
     if (to.lengthSq() < 1e-6) to.set(0, 0, 1);
     else to.normalize();
     bus.emit('core-notify', {
-      title: overload ? 'BLOB SPREAD' : 'BLOB SHOT',
-      body: overload ? 'Nucleus fans a cluster of plasma blobs.' : 'Slow blob inbound — shoot it down.',
+      title: overload ? 'ION CLUSTER' : 'ION CHARGE',
+      body: overload
+        ? 'Nucleus fans electric orbs — stay out of the arc.'
+        : 'Energy orb inbound — shoot it down. Arcs nearby.',
       kind: 'overload',
     });
     const right = new THREE.Vector3().crossVectors(to, new THREE.Vector3(0, 1, 0));
@@ -329,17 +341,27 @@ export class NucleusOffensiveKit {
   }
 
   private spawnBlob(dir: THREE.Vector3, damage: number): void {
-    const mesh = new THREE.Mesh(
-      this.sph,
+    const add = (color: number, opacity: number) =>
       new THREE.MeshBasicMaterial({
-        color: 0x88ffcc,
+        color,
         transparent: true,
-        opacity: 0.72,
+        opacity,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-      })
-    );
-    mesh.scale.setScalar(NUCLEUS_BLOB_RADIUS);
+        toneMapped: false,
+      });
+    const mesh = new THREE.Mesh(this.sph, add(0xe8fff8, 0.95));
+    mesh.scale.setScalar(NUCLEUS_BLOB_RADIUS * 0.42);
+    const sheath = new THREE.Mesh(this.sph, add(0x66ffe8, 0.42));
+    sheath.scale.setScalar(1.85);
+    mesh.add(sheath);
+    const corona = new THREE.Mesh(this.sph, add(0x88aaff, 0.22));
+    corona.scale.setScalar(2.55);
+    mesh.add(corona);
+    const lightning = this.makeLightningLine();
+    const lightning2 = this.makeLightningLine();
+    (lightning2.material as THREE.LineBasicMaterial).color.setHex(0x88aaff);
+    mesh.add(lightning, lightning2);
     const p: Proj = {
       id: `kit_blob_${this.idSeq++}`,
       mesh,
@@ -349,6 +371,11 @@ export class NucleusOffensiveKit {
       damage,
       radius: NUCLEUS_BLOB_RADIUS,
       hp: NUCLEUS_BLOB_HIT_POINTS,
+      lightning,
+      lightning2,
+      sheath,
+      corona,
+      pulse: Math.random() * Math.PI * 2,
     };
     mesh.position.copy(p.pos);
     this.group.add(mesh);
@@ -398,7 +425,7 @@ export class NucleusOffensiveKit {
     bus.emit('core-spawn-kamikaze', {
       count,
       hp,
-      damage: NUCLEUS_KAMIKAZE_DAMAGE * nucleusKitDamageScale(this.levelId),
+      damage: NUCLEUS_KAMIKAZE_DAMAGE * this.kitDmg(),
       speed: NUCLEUS_KAMIKAZE_SPEED,
     });
     bus.emit('core-notify', {
@@ -481,16 +508,50 @@ export class NucleusOffensiveKit {
   }
 
   private tickBlobs(dt: number, player: THREE.Vector3, onDamage: (n: number) => void): void {
+    const shipR = 0.55;
     for (let i = this.blobs.length - 1; i >= 0; i--) {
       const b = this.blobs[i];
       b.life -= dt;
+      b.pulse = (b.pulse ?? 0) + dt * 9;
       b.pos.addScaledVector(b.vel, dt);
       b.mesh.position.copy(b.pos);
-      if (b.pos.distanceTo(player) <= b.radius + 0.55) {
+      const beat = 1 + Math.sin(b.pulse) * 0.12;
+      b.mesh.scale.setScalar(b.radius * 0.42 * beat);
+      if (b.sheath) {
+        (b.sheath.material as THREE.MeshBasicMaterial).opacity = 0.32 + Math.sin(b.pulse * 1.7) * 0.14;
+      }
+      if (b.corona) {
+        b.corona.scale.setScalar(2.3 + Math.sin(b.pulse * 0.9) * 0.35);
+        (b.corona.material as THREE.MeshBasicMaterial).opacity = 0.14 + Math.sin(b.pulse * 2.2) * 0.08;
+      }
+      const dist = b.pos.distanceTo(player);
+      const hitR = b.radius + shipR;
+      const arcR = b.radius * NUCLEUS_BLOB_ARC_RADIUS_MULTIPLIER + shipR;
+      const arcing = dist <= arcR;
+      if (b.lightning) {
+        b.lightning.visible = arcing;
+        if (arcing) {
+          this.jagLightning(b.lightning, b.mesh.worldToLocal(player.clone()));
+          (b.lightning.material as THREE.LineBasicMaterial).opacity =
+            0.35 + Math.sin(b.pulse * 3.1) * 0.4;
+        }
+      }
+      if (b.lightning2) {
+        b.lightning2.visible = arcing;
+        if (arcing) {
+          this.jagLightning(b.lightning2, b.mesh.worldToLocal(player.clone()));
+          (b.lightning2.material as THREE.LineBasicMaterial).opacity =
+            0.22 + Math.sin(b.pulse * 4.4 + 1.2) * 0.28;
+        }
+      }
+      if (dist <= hitR) {
         onDamage(b.damage);
         this.disposeProj(b);
         this.blobs.splice(i, 1);
         continue;
+      }
+      if (dist <= arcR) {
+        onDamage(b.damage * NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND * dt);
       }
       if (b.life <= 0 || b.pos.length() > 90) {
         this.disposeProj(b);
@@ -514,7 +575,7 @@ export class NucleusOffensiveKit {
   }
 
   private detonateMine(m: Mine, player: THREE.Vector3, onDamage: (n: number) => void): void {
-    const dmg = NUCLEUS_MINE_BLAST_DAMAGE * nucleusKitDamageScale(this.levelId);
+    const dmg = NUCLEUS_MINE_BLAST_DAMAGE * this.kitDmg();
     if (m.pos.distanceTo(player) <= NUCLEUS_MINE_BLAST_RADIUS) onDamage(dmg);
     const n = NUCLEUS_MINE_SHRAPNEL_COUNT;
     const golden = Math.PI * (3 - Math.sqrt(5));
@@ -540,7 +601,7 @@ export class NucleusOffensiveKit {
         pos: m.pos.clone(),
         vel: dir.multiplyScalar(NUCLEUS_MINE_SHRAPNEL_SPEED),
         life: 1.6,
-        damage: NUCLEUS_MINE_SHRAPNEL_DAMAGE * nucleusKitDamageScale(this.levelId),
+        damage: NUCLEUS_MINE_SHRAPNEL_DAMAGE * this.kitDmg(),
         radius: 0.28,
         hp: 8,
       };
@@ -605,7 +666,7 @@ export class NucleusOffensiveKit {
         yaw: to.x * NUCLEUS_GRAVITY_YAW_STRENGTH,
         pitch: to.y * NUCLEUS_GRAVITY_YAW_STRENGTH * 0.45,
       };
-      if (dist < 2.4) onDamage(NUCLEUS_GRAVITY_CORE_DAMAGE * dt);
+      if (dist < 2.4) onDamage(NUCLEUS_GRAVITY_CORE_DAMAGE * this.powerMul * dt);
     }
   }
 
@@ -631,7 +692,7 @@ export class NucleusOffensiveKit {
       this.setOp(this.riftLine, 0.55);
       const off = this.lineDist(origin, this.riftDir, player);
       if (off < NUCLEUS_RIFT_HIT_RADIUS) {
-        onDamage(NUCLEUS_RIFT_DAMAGE_PER_SECOND * nucleusKitDamageScale(this.levelId) * dt);
+        onDamage(NUCLEUS_RIFT_DAMAGE_PER_SECOND * this.kitDmg() * dt);
       }
       if (this.riftFire <= 0) this.setOp(this.riftLine, 0);
       return;
@@ -683,7 +744,7 @@ export class NucleusOffensiveKit {
           pos: origin.clone().addScaledVector(this.javelinDir, 1.2),
           vel: this.javelinDir.clone().multiplyScalar(NUCLEUS_JAVELIN_SPEED),
           life: 3.2,
-          damage: NUCLEUS_JAVELIN_DAMAGE * nucleusKitDamageScale(this.levelId),
+          damage: NUCLEUS_JAVELIN_DAMAGE * this.kitDmg(),
           radius: 0.55,
           hp: NUCLEUS_JAVELIN_HIT_POINTS,
         };
@@ -708,6 +769,10 @@ export class NucleusOffensiveKit {
       this.disposeProj(j);
       this.javelin = null;
     }
+  }
+
+  private kitDmg(): number {
+    return nucleusKitDamageScale(this.levelId) * this.powerMul;
   }
 
   private ready(key: string, cd: number): boolean {
@@ -743,10 +808,82 @@ export class NucleusOffensiveKit {
   }
 
   private disposeProj(p: Proj): void {
+    if (p.lightning) {
+      p.mesh.remove(p.lightning);
+      p.lightning.geometry.dispose();
+      (p.lightning.material as THREE.Material).dispose();
+    }
+    if (p.lightning2) {
+      p.mesh.remove(p.lightning2);
+      p.lightning2.geometry.dispose();
+      (p.lightning2.material as THREE.Material).dispose();
+    }
+    if (p.sheath) {
+      p.mesh.remove(p.sheath);
+      (p.sheath.material as THREE.Material).dispose();
+    }
+    if (p.corona) {
+      p.mesh.remove(p.corona);
+      (p.corona.material as THREE.Material).dispose();
+    }
     this.group.remove(p.mesh);
     const geo = p.mesh.geometry;
     if (geo !== this.sph && geo !== this.cyl) geo.dispose();
     (p.mesh.material as THREE.Material).dispose();
+  }
+
+  private makeLightningLine(): THREE.Line {
+    const segs = 10;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segs * 3), 3));
+    const line = new THREE.Line(
+      geo,
+      new THREE.LineBasicMaterial({
+        color: 0xccffff,
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      })
+    );
+    line.visible = false;
+    line.frustumCulled = false;
+    return line;
+  }
+
+  private jagLightning(line: THREE.Line, localTarget: THREE.Vector3): void {
+    const attr = line.geometry.attributes.position as THREE.BufferAttribute;
+    const n = attr.count;
+    const tx = localTarget.x;
+    const ty = localTarget.y;
+    const tz = localTarget.z;
+    const len = Math.hypot(tx, ty, tz) || 1;
+    const ax = tx / len;
+    const ay = ty / len;
+    const az = tz / len;
+    let px = Math.abs(ax) < 0.9 ? 0 : 1;
+    let py = Math.abs(ax) < 0.9 ? 1 : 0;
+    let pz = 0;
+    let sx = py * az - pz * ay;
+    let sy = pz * ax - px * az;
+    let sz = px * ay - py * ax;
+    const sl = Math.hypot(sx, sy, sz) || 1;
+    sx /= sl;
+    sy /= sl;
+    sz /= sl;
+    const ux = ay * sz - az * sy;
+    const uy = az * sx - ax * sz;
+    const uz = ax * sy - ay * sx;
+    for (let i = 0; i < n; i++) {
+      const u = i / (n - 1);
+      const end = i === 0 || i === n - 1;
+      const jag = end ? 0 : (Math.random() - 0.5) * 0.55;
+      const jag2 = end ? 0 : (Math.random() - 0.5) * 0.45;
+      attr.setXYZ(i, tx * u + sx * jag + ux * jag2, ty * u + sy * jag + uy * jag2, tz * u + sz * jag + uz * jag2);
+    }
+    attr.needsUpdate = true;
+    line.geometry.computeBoundingSphere();
   }
 
   private glowSphere(color: number, opacity: number): THREE.Mesh {

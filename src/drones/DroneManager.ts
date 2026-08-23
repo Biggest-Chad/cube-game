@@ -169,6 +169,30 @@ export class DroneManager {
     return this.drones.filter((d) => d.alive).length;
   }
 
+  getAlivePositions(): THREE.Vector3[] {
+    const out: THREE.Vector3[] = [];
+    for (const d of this.drones) {
+      if (d.alive) out.push(d.group.position.clone());
+    }
+    return out;
+  }
+
+  /** Hit the nearest living player drone to a world aim point. */
+  damageNear(aim: THREE.Vector3, amount: number, maxDist = 2.2): boolean {
+    let best: Drone | null = null;
+    let bestD = maxDist;
+    for (const d of this.drones) {
+      if (!d.alive) continue;
+      const dist = d.group.position.distanceTo(aim);
+      if (dist < bestD) {
+        bestD = dist;
+        best = d;
+      }
+    }
+    if (!best) return false;
+    return best.takeDamage(amount);
+  }
+
   setCombatContext(ctx: DroneCombatContext): void {
     this.combat = ctx;
   }

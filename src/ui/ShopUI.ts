@@ -1102,10 +1102,8 @@ export class ShopUI {
           <button type="button" class="evolve-collapse" id="evolve-toggle">Collapse</button>
         </div>
         <p class="evolve-desc">
-          Permanent baselines + Core for Research. Cost
-          <strong>${cost.toLocaleString()} FRAG</strong>
-          ${check.minLevel ? ` · Sector ${check.minLevel}+` : ''}.
-          Surplus FRAG → CORE at 1000:1 after evolve.
+          Permanent baselines + CORE. Cost <strong>${cost.toLocaleString()} FRAG</strong>
+          ${check.minLevel ? ` · Sector ${check.minLevel}+` : ''}. Surplus FRAG → CORE 1000:1.
         </p>
         <button type="button" class="menu-btn primary evolve-btn" id="evolve-open"
           ${ratio >= EVOLVE_UI_PREVIEW_RATIO ? '' : 'disabled'}>

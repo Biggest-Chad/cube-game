@@ -80,7 +80,7 @@ export class GridVoidArena implements ArenaInstance {
   private scene: THREE.Scene | null = null;
   private prevFog: THREE.Fog | THREE.FogExp2 | null = null;
   private prevBg: THREE.Color | THREE.Texture | null = null;
-  private fog = new THREE.Fog(0x02060c, 48, 155);
+  private fog = new THREE.Fog(0x160820, 32, 125);
   private envMap: THREE.Texture | null = null;
   private quality: 0 | 1 | 2 = 1;
   private elapsed = 0;
@@ -143,7 +143,7 @@ export class GridVoidArena implements ArenaInstance {
       console.warn('[arena] grid-void sky missing', err);
     }
 
-    addCityAmbience(arena.root);
+    await addCityAmbience(arena.root);
     freezeStaticArena(arena.root);
     stampArenaLayer(arena.root);
     arena.setQuality(arena.quality);

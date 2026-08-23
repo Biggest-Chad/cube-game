@@ -662,16 +662,15 @@ body {
 .ads-offer {
   width: min(400px, 92vw);
   max-height: min(80dvh, 100%);
-  overflow-x: hidden;
-  overflow-y: auto;
-  touch-action: pan-y;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
   padding: 16px 18px;
   background: var(--panel);
   border: 1px solid var(--border);
   box-shadow: var(--glow-cyan);
   text-align: center;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
 }
 .ads-offer-actions {
   display: flex;
@@ -1012,13 +1011,9 @@ body {
   text-align: center;
   width: min(400px, 90vw);
   max-width: 100%;
-  /* Fit short landscape viewports; scroll internally if needed */
+  /* Fit short landscape viewports; scroll body, pin actions */
   max-height: min(78dvh, calc(100dvh - var(--safe-top) - var(--safe-bottom) - 24px));
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
-  overscroll-behavior: contain;
+  overflow: hidden;
   pointer-events: auto;
   backdrop-filter: blur(10px);
   display: flex;
@@ -2749,8 +2744,10 @@ body.orientation-portrait #rotate-overlay {
   bottom: max(22%, calc(var(--hud-pad-bottom) + var(--ctrl-size) + 28px));
   transform: translateX(-50%);
   width: min(440px, 78vw);
-  max-height: min(42vh, 320px);
-  overflow-y: auto;
+  max-height: min(48vh, 360px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: linear-gradient(160deg, rgba(4, 10, 18, 0.96), rgba(12, 4, 18, 0.94));
   border: 1px solid rgba(0, 240, 255, 0.45);
   box-shadow: 0 0 28px rgba(255, 0, 170, 0.25), 0 0 40px rgba(0, 240, 255, 0.12);
@@ -4496,9 +4493,11 @@ body.orientation-portrait #rotate-overlay {
 .evo-modal-card {
   position: relative;
   width: min(520px, 92vw);
-  max-height: 88vh;
-  overflow: auto;
-  padding: 18px 18px 16px;
+  max-height: min(88vh, calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 12px;
   border: 1px solid rgba(255, 0, 170, 0.55);
   background: linear-gradient(165deg, rgba(18, 0, 22, 0.96), rgba(0, 12, 22, 0.96));
   box-shadow: 0 0 40px rgba(255, 0, 170, 0.22);
@@ -4583,6 +4582,49 @@ body.orientation-portrait #rotate-overlay {
 .evo-modal-actions .menu-btn {
   flex: 1;
   min-height: 42px;
+}
+
+/* Shared: scrollable copy, pinned confirm/cancel row */
+.docked-actions-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.docked-actions-card > .card-body,
+.overlay-card > .overlay-body,
+.tutorial-card > .card-body,
+.evo-modal-card > .card-body,
+.ads-offer > .card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+.docked-actions-card > .card-actions,
+.overlay-card > .overlay-actions,
+.tutorial-card > .card-actions,
+.evo-modal-card > .card-actions,
+.ads-offer > .card-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(0, 240, 255, 0.22);
+  background: inherit;
+  z-index: 1;
+}
+.evo-modal-card > .card-actions {
+  flex-direction: row;
+}
+.tutorial-card > .card-actions .tutorial-cta,
+.tutorial-card > .card-actions .tutorial-skip {
+  width: 100%;
 }
 .evolve-chip.collapsible.ready {
   animation: evo-ready-pulse 1.6s ease-in-out infinite;

@@ -418,11 +418,13 @@ export class HUD {
       this.lastNucleusVal = val;
       this.nucleusVal.textContent = val;
     }
-    const laserHot = snap.laserPhase === 'charge' || snap.laserPhase === 'fire';
+    const laserHot =
+      snap.laserPhase === 'warmup' || snap.laserPhase === 'charge' || snap.laserPhase === 'fire';
     const spikeHot = snap.spikePhase === 'telegraph' || snap.spikePhase === 'fire';
     let status = snap.attributeLabel;
-    if (snap.laserPhase === 'fire') status = 'SWEEP LASER';
-    else if (snap.laserPhase === 'charge') status = 'LASER CHARGING';
+    if (snap.laserPhase === 'fire') status = 'RAGE LASER';
+    else if (snap.laserPhase === 'charge') status = 'CANNON LOCK';
+    else if (snap.laserPhase === 'warmup') status = 'RAGE WIND-UP';
     else if (snap.spikePhase === 'telegraph') status = 'SPIKE BURST';
     else if (snap.spikePhase === 'fire') status = 'SPIKES';
     else if (snap.overloadActive) status = 'OVERLOAD';

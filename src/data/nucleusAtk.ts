@@ -48,9 +48,9 @@ export interface SpikeBurstProfile {
 /** Spike lethality / spray / air-burst derived from ATK power. */
 export function spikeBurstProfileForStage(stage: number): SpikeBurstProfile {
   const atk = nucleusAtkPowerMultiplier(stage);
-  const extra = Math.min(8, Math.max(0, Math.floor((stage - 1) / 3)));
+  const extra = Math.min(20, Math.max(0, Math.floor((stage - 1) / 3)));
   const omni = Math.min(
-    36,
+    90,
     Math.round((NUCLEUS_SPIKE_OMNI_COUNT + extra) * (0.72 + 0.28 * Math.min(atk, 2.8)))
   );
   return {

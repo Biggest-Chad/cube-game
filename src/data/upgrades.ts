@@ -87,6 +87,20 @@ export interface UpgradeEffect {
   ammoHeSplashAdd?: number;
   /** Main-gun heat bleed add (fraction of base cool rate). */
   heatCoolAdd?: number;
+  /** Extra chain-lightning hops off the primary bolt. */
+  chainJumpsAdd?: number;
+  /** Extra damage multiplier vs armored / regen / siege blocks. */
+  shredMul?: number;
+  /** Shield restored as a fraction of damage on block destroy. */
+  leechOnKill?: number;
+  /** Chance 0–1 that a bolt blooms a small splash even without HE. */
+  ionChance?: number;
+  /** Extra bolt every N shots (0 = off). */
+  stutterEvery?: number;
+  /** Bonus damage per consecutive hit on the same block. */
+  focusLockAdd?: number;
+  /** Extra damage fraction applied to the nucleus. */
+  phaseNucleusAdd?: number;
   unlockDrones?: boolean;
   unlockAutoFire?: boolean;
   /** Ship vitals */
@@ -408,6 +422,87 @@ export const UPGRADES: UpgradeNodeDef[] = [
       };
     },
   }),
+  ...chainNodes('off_chain', 'offense', [
+    {
+      id: 'off_chain_1',
+      name: 'Chain Arc',
+      description: 'Bolts jump to 1 nearby block',
+      cost: 280,
+      effects: { chainJumpsAdd: 1 },
+      extraPrereq: ['off_damage_2'],
+    },
+    { id: 'off_chain_2', name: 'Chain Arc', description: 'Bolts jump to 2 nearby blocks', cost: 620, effects: { chainJumpsAdd: 1 } },
+    { id: 'off_chain_3', name: 'Fork Storm', description: 'Bolts jump to 3 nearby blocks', cost: 1180, effects: { chainJumpsAdd: 1 } },
+  ]),
+  ...chainNodes('off_shred', 'offense', [
+    {
+      id: 'off_shred_1',
+      name: 'Shredder Rounds',
+      description: '+22% damage vs armored / regen / siege',
+      cost: 240,
+      effects: { shredMul: 0.22 },
+      extraPrereq: ['off_pierce_1'],
+    },
+    { id: 'off_shred_2', name: 'Shredder Rounds', description: '+18% vs armored / regen / siege', cost: 560, effects: { shredMul: 0.18 } },
+    { id: 'off_shred_3', name: 'Carbide Teeth', description: '+20% vs armored / regen / siege', cost: 980, effects: { shredMul: 0.2 } },
+  ]),
+  ...chainNodes('off_leech', 'offense', [
+    {
+      id: 'off_leech_1',
+      name: 'Leech Coil',
+      description: 'Destroyed blocks restore 4% of damage as shield',
+      cost: 300,
+      effects: { leechOnKill: 0.04 },
+      extraPrereq: ['off_damage_3'],
+    },
+    { id: 'off_leech_2', name: 'Leech Coil', description: 'Destroyed blocks restore 5% of damage as shield', cost: 680, effects: { leechOnKill: 0.05 } },
+  ]),
+  ...chainNodes('off_ion', 'offense', [
+    {
+      id: 'off_ion_1',
+      name: 'Ion Bloom',
+      description: '18% chance a bolt blooms a small splash',
+      cost: 260,
+      effects: { ionChance: 0.18 },
+      extraPrereq: ['off_rate_2'],
+    },
+    { id: 'off_ion_2', name: 'Ion Bloom', description: '16% more bloom chance', cost: 580, effects: { ionChance: 0.16 } },
+    { id: 'off_ion_3', name: 'Static Burst', description: '14% more bloom chance', cost: 1020, effects: { ionChance: 0.14 } },
+  ]),
+  ...chainNodes('off_stutter', 'offense', [
+    {
+      id: 'off_stutter_1',
+      name: 'Stutter Cycle',
+      description: 'Every 4th shot fires an extra bolt',
+      cost: 320,
+      effects: { stutterEvery: 4 },
+      extraPrereq: ['off_multi_1'],
+    },
+    { id: 'off_stutter_2', name: 'Stutter Cycle', description: 'Every 3rd shot fires an extra bolt', cost: 760, effects: { stutterEvery: 3 } },
+  ]),
+  ...chainNodes('off_focus', 'offense', [
+    {
+      id: 'off_focus_1',
+      name: 'Focus Lock',
+      description: '+8% damage per consecutive hit on the same block (max 3)',
+      cost: 240,
+      effects: { focusLockAdd: 0.08 },
+      extraPrereq: ['off_damage_2'],
+    },
+    { id: 'off_focus_2', name: 'Focus Lock', description: '+7% more per consecutive hit (max 4)', cost: 540, effects: { focusLockAdd: 0.07 } },
+  ]),
+  ...chainNodes('off_phase', 'offense', [
+    {
+      id: 'off_phase_1',
+      name: 'Phase Needle',
+      description: '+12% extra damage when a bolt hits the nucleus',
+      cost: 340,
+      effects: { phaseNucleusAdd: 0.12 },
+      extraPrereq: ['off_pen_1'],
+    },
+    { id: 'off_phase_2', name: 'Phase Needle', description: '+10% extra nucleus damage', cost: 780, effects: { phaseNucleusAdd: 0.1 } },
+    { id: 'off_phase_3', name: 'Ghost Tip', description: '+12% extra nucleus damage', cost: 1400, effects: { phaseNucleusAdd: 0.12 } },
+  ]),
 
   // LOADOUTS tab: hardpoint bays unlock via Ascension (Evolve) + Core Energy in the loadout UI.
   // Weapon catalog / branches live in ShopUI loadout panel — no fragment hardpoint chain here.

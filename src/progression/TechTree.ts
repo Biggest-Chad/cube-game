@@ -48,6 +48,13 @@ export interface PlayerStats {
   ammoApPenAdd: number;
   ammoHeSplashAdd: number;
   heatCoolAdd: number;
+  chainJumpsAdd: number;
+  shredMul: number;
+  leechOnKill: number;
+  ionChance: number;
+  stutterEvery: number;
+  focusLockAdd: number;
+  phaseNucleusAdd: number;
   dronesUnlocked: boolean;
   /** Vitals bonuses (consumed by ShipVitals.syncFromStats). */
   maxHullAdd: number;
@@ -94,6 +101,13 @@ export function defaultStats(): PlayerStats {
     ammoApPenAdd: 0,
     ammoHeSplashAdd: 0,
     heatCoolAdd: 0,
+    chainJumpsAdd: 0,
+    shredMul: 0,
+    leechOnKill: 0,
+    ionChance: 0,
+    stutterEvery: 0,
+    focusLockAdd: 0,
+    phaseNucleusAdd: 0,
     dronesUnlocked: false,
     maxHullAdd: 0,
     maxShieldAdd: 0,
@@ -189,6 +203,16 @@ function applyEffect(stats: PlayerStats, acc: Accumulators, e: UpgradeEffect): v
   if (e.ammoApPenAdd) stats.ammoApPenAdd += e.ammoApPenAdd;
   if (e.ammoHeSplashAdd) stats.ammoHeSplashAdd += e.ammoHeSplashAdd;
   if (e.heatCoolAdd) stats.heatCoolAdd += e.heatCoolAdd;
+  if (e.chainJumpsAdd) stats.chainJumpsAdd += e.chainJumpsAdd;
+  if (e.shredMul) stats.shredMul += e.shredMul;
+  if (e.leechOnKill) stats.leechOnKill += e.leechOnKill;
+  if (e.ionChance) stats.ionChance += e.ionChance;
+  if (e.stutterEvery) {
+    stats.stutterEvery =
+      stats.stutterEvery > 0 ? Math.min(stats.stutterEvery, e.stutterEvery) : e.stutterEvery;
+  }
+  if (e.focusLockAdd) stats.focusLockAdd += e.focusLockAdd;
+  if (e.phaseNucleusAdd) stats.phaseNucleusAdd += e.phaseNucleusAdd;
   if (e.unlockDrones) stats.dronesUnlocked = true;
   if (e.maxHullAdd) stats.maxHullAdd += e.maxHullAdd;
   if (e.maxShieldAdd) stats.maxShieldAdd += e.maxShieldAdd;
@@ -234,6 +258,12 @@ function fold(stats: PlayerStats, acc: Accumulators): void {
   stats.droneRespawnReduce = Math.min(0.7, Math.max(0, stats.droneRespawnReduce));
   stats.droneShieldAdd = Math.min(2, Math.max(0, stats.droneShieldAdd));
   stats.droneShieldRegenAdd = Math.min(1.5, Math.max(0, stats.droneShieldRegenAdd));
+  stats.chainJumpsAdd = Math.min(4, Math.max(0, stats.chainJumpsAdd));
+  stats.shredMul = Math.min(1.2, Math.max(0, stats.shredMul));
+  stats.leechOnKill = Math.min(0.2, Math.max(0, stats.leechOnKill));
+  stats.ionChance = Math.min(0.55, Math.max(0, stats.ionChance));
+  stats.focusLockAdd = Math.min(0.4, Math.max(0, stats.focusLockAdd));
+  stats.phaseNucleusAdd = Math.min(0.5, Math.max(0, stats.phaseNucleusAdd));
 }
 
 export class TechTree {

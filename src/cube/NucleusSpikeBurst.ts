@@ -23,7 +23,7 @@ interface Spike {
   hp: number;
 }
 
-const MAX_SPIKES = 40;
+const MAX_SPIKES = 96;
 const LINE_LEN = 36;
 const _fwd = new THREE.Vector3(0, 0, 1);
 const _up = new THREE.Vector3(0, 1, 0);

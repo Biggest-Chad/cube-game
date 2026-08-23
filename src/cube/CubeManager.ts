@@ -810,7 +810,12 @@ export class CubeManager {
   }
 
   /** Find nearest block to a world point (for drones / splash). */
-  findNearest(world: THREE.Vector3, maxDist: number, prefer?: (t: BlockType) => number): {
+  findNearest(
+    world: THREE.Vector3,
+    maxDist: number,
+    prefer?: (t: BlockType) => number,
+    ignoreId = -1
+  ): {
     instanceId: number;
     distance: number;
   } | null {
@@ -820,6 +825,7 @@ export class CubeManager {
     let bestDist = maxDist;
     if (this.mesh) {
       this.forEachHashInRadius(world, maxDist, (id, wx, wy, wz) => {
+        if (id === ignoreId) return;
         const d = Math.hypot(wx - world.x, wy - world.y, wz - world.z);
         const ref = this.refs[id];
         const t = ref.chunk.types[ref.localIndex] as BlockType;
@@ -835,7 +841,7 @@ export class CubeManager {
     if (this.nucleus.isActive) {
       this.nucleus.getWorldCenter(_pos);
       const d = world.distanceTo(_pos);
-      if (d <= maxDist) {
+      if (d <= maxDist && ignoreId !== NUCLEUS_HIT_ID) {
         const prio = prefer ? prefer(BlockType.Core) : 8;
         const score = prio * 10 - d;
         if (score > bestScore) {
@@ -926,6 +932,23 @@ export class CubeManager {
     return { instanceId: bestId, distance: bestDist };
   }
 
+  /**
+   * Reservoir-sample a live shell voxel in a world sphere. Core / nucleus is
+   * never chosen here — caller may fall back to NUCLEUS_HIT_ID if this returns -1.
+   */
+  pickRandomShell(center: THREE.Vector3, radius: number): number {
+    if (!this.mesh || this.mesh.count <= 0) return -1;
+    let picked = -1;
+    let n = 0;
+    this.forEachHashInRadius(center, radius, (id) => {
+      const t = this.getBlockType(id);
+      if (t === BlockType.Empty || t === BlockType.Core) return;
+      n++;
+      if (Math.random() * n < 1) picked = id;
+    });
+    return isLiveTargetId(picked) ? picked : -1;
+  }
+
   getBlockWorldPos(instanceId: number, out = new THREE.Vector3()): THREE.Vector3 {
     if (instanceId === NUCLEUS_HIT_ID) return this.nucleus.getWorldCenter(out);
     if (!this.mesh || instanceId < 0 || instanceId >= this.mesh.count) return out.copy(_zero);
@@ -1013,7 +1036,6 @@ export class CubeManager {
 
     chunk.health[i] = Math.max(0, chunk.health[i] - damage);
     chunk.lastHitTime = now;
-    this.setBlockFlash(instanceId, 1, 0xd8f6ff);
 
     this.mesh.getMatrixAt(instanceId, _matrix);
     _pos.setFromMatrixPosition(_matrix);
@@ -1075,6 +1097,18 @@ export class CubeManager {
       fragments,
       explosive,
     };
+  }
+
+  /** Unarmed leftover turret node — keep HP, look like a standard block. */
+  demoteTurretBlock(instanceId: number): void {
+    if (!this.mesh) return;
+    const ref = this.refs[instanceId];
+    if (!ref) return;
+    if ((ref.chunk.types[ref.localIndex] as BlockType) !== BlockType.Turret) return;
+    ref.chunk.types[ref.localIndex] = BlockType.Standard;
+    this.updateInstanceVisual(instanceId);
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 
   /** Inflate core block HP so instances survive until shared pool dies. */
@@ -1286,7 +1320,8 @@ export class CubeManager {
     radius: number,
     damage: number,
     now: number,
-    ignoreId = -1
+    ignoreId = -1,
+    opts?: { glow?: boolean }
   ): DamageResult[] {
     const results: DamageResult[] = [];
     if (!this.mesh && !this.nucleus.isActive) return results;
@@ -1297,7 +1332,9 @@ export class CubeManager {
         if (id !== ignoreId) hits.push(id);
       });
     }
-    this.applyImpactGlow(center, radius + 0.85, 0xff7a32, 0.82);
+    if (opts?.glow) {
+      this.applyImpactGlow(center, radius + 0.85, 0xff7a32, 0.82);
+    }
     // Also include solid nucleus if blast overlaps the hitbox but no core voxel was in range
     // (and primary impact was not already a core hit)
     if (this.nucleus.isActive) {
@@ -1342,7 +1379,7 @@ export class CubeManager {
     this.forEachHashInRadius(center, radius, (id, wx, wy, wz) => {
       const d = Math.hypot(wx - center.x, wy - center.y, wz - center.z);
       const t = strength * (1 - d / fall);
-      if (t > 0.04) this.setBlockFlash(id, t, color);
+      if (t > 0.22) this.setBlockFlash(id, t, color);
     });
     this.glowPulse = Math.min(0.85, this.glowPulse + strength * 0.2);
     this.glowTint.lerp(_flashCol.setHex(color), Math.min(0.55, strength * 0.4));
