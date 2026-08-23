@@ -13,7 +13,6 @@ export class HUD {
   private btnLevels!: HTMLElement;
   private btnMute!: HTMLElement;
   private btnMenu!: HTMLElement;
-  private btnLoadout!: HTMLElement;
   private shopHint!: HTMLElement;
   private introBanner!: HTMLElement;
   private controlsLayer!: HTMLElement;
@@ -115,10 +114,6 @@ export class HUD {
             </span>
             <span class="shop-btn-badge panel-hidden" id="shop-badge">BUY</span>
           </button>
-          <button class="action-btn interactive ui-btn" id="btn-loadout" type="button">
-            <span class="action-btn-icon">◎</span>
-            <span class="action-btn-label">Loadout</span>
-          </button>
           <button class="action-btn interactive ui-btn" id="btn-levels" type="button">
             <span class="action-btn-icon">☰</span>
             <span class="action-btn-label">Sectors</span>
@@ -189,7 +184,6 @@ export class HUD {
     this.btnLevels = this.root.querySelector('#btn-levels')!;
     this.btnMute = this.root.querySelector('#btn-mute')!;
     this.btnMenu = this.root.querySelector('#btn-menu')!;
-    this.btnLoadout = this.root.querySelector('#btn-loadout')!;
     this.shopHint = this.root.querySelector('#shop-hint')!;
     this.introBanner = this.root.querySelector('#intro-banner')!;
     this.controlsLayer = this.root.querySelector('#controls-layer')!;
@@ -215,7 +209,6 @@ export class HUD {
       btnLevels: this.btnLevels,
       btnMute: this.btnMute,
       btnMenu: this.btnMenu,
-      btnLoadout: this.btnLoadout,
       shopHintOpen: this.root.querySelector('#shop-hint-open') as HTMLElement,
       btnAmmo: this.root.querySelector('#hud-ammo-btn') as HTMLElement,
     };
@@ -516,8 +509,6 @@ export class HUD {
   ): void {
     this.btnTech.classList.toggle('panel-hidden', !visible);
     this.btnTech.classList.toggle('shop-ready', visible && canBuy);
-    // Also hide loadout entry until shop is online (same early ramp)
-    this.btnLoadout.classList.toggle('panel-hidden', !visible);
     const badge = this.root.querySelector('#shop-badge');
     if (badge) badge.classList.toggle('panel-hidden', !visible || !canBuy);
 

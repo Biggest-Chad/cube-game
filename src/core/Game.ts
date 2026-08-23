@@ -508,10 +508,6 @@ export class Game {
       if (this.isUiClickLocked()) return;
       this.openLevels();
     };
-    this.menu.onLoadout = () => {
-      if (this.isUiClickLocked()) return;
-      this.openLoadout();
-    };
     this.menu.onSettings = () => {
       if (this.isUiClickLocked()) return;
       this.openSettings();
@@ -543,7 +539,6 @@ export class Game {
     const els = this.hud.elements;
     els.btnTech.addEventListener('click', () => this.openTech());
     els.btnLevels.addEventListener('click', () => this.openLevels());
-    els.btnLoadout.addEventListener('click', () => this.openLoadout());
     els.btnMenu.addEventListener('click', () => {
       this.persist();
       if (shouldPauseInsteadOfExtract(this.mode)) {
@@ -2009,7 +2004,6 @@ export class Game {
       this.tech.owned.has('drone_unlock') || this.tech.stats.dronesUnlocked;
     this.menu.setChrome({
       showShop: ownsDrone || this.currency.dataFragments >= FIRST_DRONE_COST,
-      showLoadout: ownsDrone || this.currency.dataFragments >= FIRST_DRONE_COST,
       showLattice:
         this.currency.coreEnergy > 0 ||
         this.save.data.ascensionTier > 0 ||
@@ -2275,11 +2269,6 @@ export class Game {
     // Open shop = complete "open shop" tutorial stage; hide briefing until close
     this.tutorial.notifyShopOpened();
     this.syncMusicToMode();
-  }
-
-  private openLoadout(): void {
-    // Loadout is a dedicated shop tab — same design language
-    this.openTech('loadouts');
   }
 
   private openLevels(): void {
@@ -2872,7 +2861,6 @@ export class Game {
         </div>
         <div class="overlay-actions card-actions">
           <button class="menu-btn primary" id="next-level" type="button">NEXT SECTOR</button>
-          <button class="menu-btn" id="clear-loadout" type="button">LOADOUT</button>
           <button class="menu-btn" id="clear-tech" type="button">SHOP</button>
           <button class="menu-btn magenta" id="clear-ad" type="button"${
             card.doubled ? ' disabled' : ''
@@ -2930,12 +2918,6 @@ export class Game {
       this.overlay.innerHTML = '';
       this.returnToClear = false;
       this.startLevel(this.pendingNextLevelId || this.currentLevelId + 1);
-    });
-    this.overlay.querySelector('#clear-loadout')!.addEventListener('click', () => {
-      this.returnToClear = true;
-      this.overlay.innerHTML = '';
-      this.openLoadout();
-      if (this.mode !== 'tech') this.presentLevelClearCard();
     });
     this.overlay.querySelector('#clear-tech')!.addEventListener('click', () => {
       this.returnToClear = true;

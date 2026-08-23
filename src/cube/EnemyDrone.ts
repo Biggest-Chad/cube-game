@@ -43,6 +43,40 @@ const DEFAULT: EnemyDroneConfig = {
   repairFrac: ENEMY_DRONE_DEFAULT_REPAIR_FRACTION,
 };
 
+let haloTex: THREE.CanvasTexture | null = null;
+function enemyHaloTex(): THREE.CanvasTexture {
+  if (haloTex) return haloTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 31);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.28, 'rgba(255,255,255,0.55)');
+  g.addColorStop(0.65, 'rgba(255,255,255,0.12)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  haloTex = new THREE.CanvasTexture(c);
+  haloTex.needsUpdate = true;
+  return haloTex;
+}
+
+function hullMat(color: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({ color, toneMapped: false, fog: true });
+}
+
+function glowMat(color: number, opacity = 0.9): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+    fog: true,
+  });
+}
+
 export class EnemyDrone {
   readonly group = new THREE.Group();
   readonly id: string;
@@ -63,6 +97,10 @@ export class EnemyDrone {
   private huntShip = true;
   private retargetT = 0;
   private droneIndex = 0;
+  private halo!: THREE.Sprite;
+  private flash!: THREE.Mesh;
+  private haloSize = 2.4;
+  private pulseT = 0;
 
   constructor(id: string, index: number, halfExtent: number, cfg: Partial<EnemyDroneConfig> = {}) {
     this.id = id;
@@ -80,11 +118,13 @@ export class EnemyDrone {
     this.beam = new THREE.Line(
       g,
       new THREE.LineBasicMaterial({
-        color: this.cfg.color,
+        color: 0xffffff,
         transparent: true,
-        opacity: 0.7,
+        opacity: 1,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        toneMapped: false,
+        fog: false,
       })
     );
     this.beam.visible = false;
@@ -92,75 +132,67 @@ export class EnemyDrone {
   }
 
   private buildMesh(): void {
+    const c = this.cfg.color;
+    const accent = this.role === 'repair' ? 0xaaffcc : this.role === 'kamikaze' ? 0xffee88 : 0xffa0c8;
+    this.haloSize = this.role === 'kamikaze' ? 3.1 : this.role === 'cube-fighter' ? 2.8 : 2.35;
+
     if (this.role === 'cube-fighter') {
-      const hull = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.42, 0.42),
-        new THREE.MeshStandardMaterial({
-          color: 0x1a0810,
-          metalness: 0.55,
-          roughness: 0.28,
-          emissive: this.cfg.color,
-          emissiveIntensity: 0.7,
-        })
-      );
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), hullMat(0x2a0510));
       this.group.add(hull);
-      const core = new THREE.Mesh(
-        new THREE.BoxGeometry(0.18, 0.18, 0.18),
-        new THREE.MeshBasicMaterial({
-          color: this.cfg.color,
-          transparent: true,
-          opacity: 0.9,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
+      const core = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.38, 0.38), glowMat(c, 1));
       this.group.add(core);
+      const rim = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.08, 0.78), glowMat(c, 0.85));
+      rim.position.y = 0.38;
+      this.group.add(rim);
       for (const s of [-1, 1]) {
-        const fin = new THREE.Mesh(
-          new THREE.BoxGeometry(0.08, 0.22, 0.34),
-          new THREE.MeshStandardMaterial({
-            color: 0x401018,
-            emissive: this.cfg.color,
-            emissiveIntensity: 0.4,
-          })
-        );
-        fin.position.set(s * 0.28, 0, 0.04);
+        const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.42, 0.55), glowMat(accent, 0.9));
+        fin.position.set(s * 0.46, 0, 0.04);
         this.group.add(fin);
       }
-      return;
+    } else {
+      const body = new THREE.Mesh(new THREE.OctahedronGeometry(0.48, 0), hullMat(0x220810));
+      body.scale.set(1.05, 0.72, 1.55);
+      this.group.add(body);
+      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), glowMat(c, 1));
+      core.scale.set(1, 0.7, 1.4);
+      this.group.add(core);
+      for (const side of [-1, 1]) {
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.07, 0.28), glowMat(c, 0.95));
+        wing.position.set(side * 0.42, 0, 0.04);
+        this.group.add(wing);
+      }
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 10), glowMat(accent, 1));
+      eye.position.set(0, 0.02, -0.52);
+      this.group.add(eye);
+      if (this.role === 'kamikaze') {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.55, 6), glowMat(0xffee66, 1));
+        spike.rotation.x = -Math.PI / 2;
+        spike.position.z = -0.72;
+        this.group.add(spike);
+      }
     }
-    const body = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.28, 0),
-      new THREE.MeshStandardMaterial({
-        color: 0x2a1018,
-        metalness: 0.7,
-        roughness: 0.35,
-        emissive: this.cfg.color,
-        emissiveIntensity: 0.45,
+
+    this.halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: enemyHaloTex(),
+        color: c,
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: true,
+        toneMapped: false,
       })
     );
-    body.scale.set(1, 0.7, 1.4);
-    this.group.add(body);
+    this.halo.scale.setScalar(this.haloSize);
+    this.halo.renderOrder = 2;
+    this.group.add(this.halo);
 
-    for (const side of [-1, 1]) {
-      const wing = new THREE.Mesh(
-        new THREE.BoxGeometry(0.5, 0.04, 0.18),
-        new THREE.MeshStandardMaterial({
-          color: 0x401020,
-          emissive: this.cfg.color,
-          emissiveIntensity: 0.3,
-        })
-      );
-      wing.position.set(side * 0.3, 0, 0);
-      this.group.add(wing);
-    }
-
-    const eye = new THREE.Mesh(
-      new THREE.SphereGeometry(0.07, 8, 8),
-      new THREE.MeshBasicMaterial({ color: this.cfg.color })
-    );
-    eye.position.set(0, 0, -0.35);
-    this.group.add(eye);
+    this.flash = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), glowMat(0xffffff, 0));
+    this.flash.visible = false;
+    this.flash.position.z = -0.55;
+    this.group.add(this.flash);
+    this.group.renderOrder = 2;
   }
 
   get position(): THREE.Vector3 {
@@ -207,6 +239,7 @@ export class EnemyDrone {
     // Recover scale after hit flash
     const s = this.group.scale.x;
     if (s < 1) this.group.scale.setScalar(Math.min(1, s + dt * 3));
+    this.pulseHalo(dt);
 
     const speed = this.cfg.speed * this.cfg.speedMul;
     if (this.role === 'cube-fighter') {
@@ -379,7 +412,23 @@ export class EnemyDrone {
     pos.needsUpdate = true;
     this.beam.geometry.computeBoundingSphere();
     this.beam.visible = true;
-    this.beamLife = 0.08;
+    this.beamLife = 0.14;
+    this.flash.visible = true;
+    (this.flash.material as THREE.MeshBasicMaterial).opacity = 1;
+    (this.beam.material as THREE.LineBasicMaterial).color.setHex(this.cfg.color);
+  }
+
+  private pulseHalo(dt: number): void {
+    this.pulseT += dt;
+    const k = 1 + Math.sin(this.pulseT * 7 + this.orbitAngle) * 0.16;
+    this.halo.scale.setScalar(this.haloSize * k);
+    (this.halo.material as THREE.SpriteMaterial).opacity =
+      0.55 + Math.sin(this.pulseT * 9 + this.orbitAngle) * 0.22;
+    if (this.flash.visible) {
+      const f = this.flash.material as THREE.MeshBasicMaterial;
+      f.opacity = Math.max(0, f.opacity - dt * 7);
+      if (f.opacity <= 0.04) this.flash.visible = false;
+    }
   }
 
   toUnitRef(): {

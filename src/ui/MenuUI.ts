@@ -5,14 +5,12 @@ export class MenuUI {
   private ascensionTier = 0;
   private coreEnergy = 0;
   private showShop = false;
-  private showLoadout = false;
   private showLattice = false;
   private missionLabel = 'START MISSION';
 
   onPlay: (() => void) | null = null;
   onTech: (() => void) | null = null;
   onLevels: (() => void) | null = null;
-  onLoadout: (() => void) | null = null;
   onSettings: (() => void) | null = null;
   onResearch: (() => void) | null = null;
 
@@ -28,12 +26,10 @@ export class MenuUI {
 
   setChrome(opts: {
     showShop: boolean;
-    showLoadout: boolean;
     showLattice: boolean;
     missionLabel?: string;
   }): void {
     this.showShop = opts.showShop;
-    this.showLoadout = opts.showLoadout;
     this.showLattice = opts.showLattice;
     if (opts.missionLabel) this.missionLabel = opts.missionLabel;
   }
@@ -76,13 +72,6 @@ export class MenuUI {
               </button>`
                   : ''
               }
-              ${
-                this.showLoadout
-                  ? `<button class="menu-btn menu-subbtn ui-btn" id="m-loadout" type="button">
-                <span class="menu-btn-label">Loadout</span>
-              </button>`
-                  : ''
-              }
               <button class="menu-btn menu-subbtn ui-btn" id="m-settings" type="button">
                 <span class="menu-btn-label">Settings</span>
               </button>
@@ -102,7 +91,6 @@ export class MenuUI {
     this.root.querySelector('#m-play')?.addEventListener('click', () => this.onPlay?.());
     this.root.querySelector('#m-tech')?.addEventListener('click', () => this.onTech?.());
     this.root.querySelector('#m-levels')?.addEventListener('click', () => this.onLevels?.());
-    this.root.querySelector('#m-loadout')?.addEventListener('click', () => this.onLoadout?.());
     this.root.querySelector('#m-settings')?.addEventListener('click', () => this.onSettings?.());
     this.root.querySelector('#m-research')?.addEventListener('click', () => this.onResearch?.());
   }
