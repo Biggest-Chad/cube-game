@@ -1,6 +1,6 @@
 {
   "name": "cube-game",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "private": true,
   "type": "module",
   "description": "Cube Game — Tron-style orbital cube destruction PWA for Android",

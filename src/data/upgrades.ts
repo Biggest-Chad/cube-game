@@ -385,7 +385,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     {
       id: 'off_ammo_ap_1',
       name: 'AP Magazine',
-      description: 'Unlock armor-piercing rounds (HUD / R). Extra pierce, no splash.',
+      description: 'Unlock AP rounds (HUD / R). Extra pierce, no splash.',
       cost: 260,
       effects: { unlockAmmoAp: true, ammoApPenAdd: 1 },
       extraPrereq: ['off_damage_2'],
@@ -397,7 +397,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     {
       id: 'off_ammo_he_1',
       name: 'HE Magazine',
-      description: 'Unlock explosive rounds (HUD / R). Extra splash, no pierce.',
+      description: 'Unlock HE rounds (HUD / R). Extra splash, no pierce.',
       cost: 260,
       effects: { unlockAmmoHe: true, ammoHeSplashAdd: 0.7 },
       extraPrereq: ['off_damage_2'],
@@ -484,7 +484,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     {
       id: 'off_focus_1',
       name: 'Focus Lock',
-      description: '+8% damage per consecutive hit on the same block (max 3)',
+      description: '+8% dmg per consecutive hit (max 3)',
       cost: 240,
       effects: { focusLockAdd: 0.08 },
       extraPrereq: ['off_damage_2'],
@@ -495,7 +495,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     {
       id: 'off_phase_1',
       name: 'Phase Needle',
-      description: '+12% extra damage when a bolt hits the nucleus',
+      description: '+12% extra damage vs nucleus',
       cost: 340,
       effects: { phaseNucleusAdd: 0.12 },
       extraPrereq: ['off_pen_1'],
@@ -516,7 +516,7 @@ export const UPGRADES: UpgradeNodeDef[] = [
     {
       id: 'drone_unlock',
       name: 'Ally Protocol',
-      description: 'Authorize drone operations · opens first bay purchase',
+      description: 'Authorize drones · unlocks first bay',
       cost: DRONE_ALLY_PROTOCOL_COST_FRAGMENTS,
       effects: { unlockDrones: true, droneCountAdd: 0 },
     },

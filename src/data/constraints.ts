@@ -21,8 +21,8 @@
 /** Pre-tweak baseline used to derive the +50% main-gun pass. */
 const LEGACY_MAIN_GUN_BASE_DAMAGE = 13;
 
-/** Damage per main-gun bolt before crit / upgrades / research. Was 13; +50%. */
-export const MAIN_GUN_BASE_DAMAGE = LEGACY_MAIN_GUN_BASE_DAMAGE * 1.5;
+/** Damage per main-gun bolt before crit / upgrades / research. 13 → +50% → +50%. */
+export const MAIN_GUN_BASE_DAMAGE = LEGACY_MAIN_GUN_BASE_DAMAGE * 1.5 * 1.5;
 
 /** Bolts per second at rank 0 with no fire-rate upgrades. */
 export const MAIN_GUN_BASE_FIRE_RATE = 5.8;
@@ -601,9 +601,12 @@ export const NUCLEUS_BLOB_ARC_RADIUS_MULTIPLIER = 1.5;
 export const NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND = 0.28;
 
 export const NUCLEUS_KAMIKAZE_BASE_COUNT = 2;
-export const NUCLEUS_KAMIKAZE_BASE_HIT_POINTS = 18;
-export const NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE = 1.55;
-export const NUCLEUS_KAMIKAZE_DAMAGE = 14;
+/** Remaining fraction after the −75% enemy-drone health/damage pass. */
+export const ENEMY_DRONE_VITALS_SCALE = 0.25;
+
+export const NUCLEUS_KAMIKAZE_BASE_HIT_POINTS = 18 * ENEMY_DRONE_VITALS_SCALE;
+export const NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE = 1.55 * ENEMY_DRONE_VITALS_SCALE;
+export const NUCLEUS_KAMIKAZE_DAMAGE = 14 * ENEMY_DRONE_VITALS_SCALE;
 export const NUCLEUS_KAMIKAZE_SPEED = 7.2;
 export const NUCLEUS_KAMIKAZE_PROXIMITY = 1.45;
 
@@ -722,18 +725,18 @@ export function nucleusHitRadiusWorld(
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const ENEMY_DRONE_SOFT_CAP = 32;
-export const ENEMY_ATTACK_DRONE_BASE_HIT_POINTS = 40;
-export const ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL = 5;
-export const ENEMY_REPAIR_DRONE_BASE_HIT_POINTS = 28;
-export const ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL = 3;
-export const ENEMY_DRONE_BASE_DAMAGE = 6;
-export const ENEMY_DRONE_DAMAGE_PER_LEVEL = 0.55;
+export const ENEMY_ATTACK_DRONE_BASE_HIT_POINTS = 40 * ENEMY_DRONE_VITALS_SCALE;
+export const ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL = 5 * ENEMY_DRONE_VITALS_SCALE;
+export const ENEMY_REPAIR_DRONE_BASE_HIT_POINTS = 28 * ENEMY_DRONE_VITALS_SCALE;
+export const ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL = 3 * ENEMY_DRONE_VITALS_SCALE;
+export const ENEMY_DRONE_BASE_DAMAGE = 6 * ENEMY_DRONE_VITALS_SCALE;
+export const ENEMY_DRONE_DAMAGE_PER_LEVEL = 0.55 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER = 1.35;
 export const ENEMY_ATTACK_DRONE_SPEED = 6.5;
 export const ENEMY_REPAIR_DRONE_SPEED = 4.5;
 export const ENEMY_DRONE_REPAIR_FRACTION = 0.07;
-export const ENEMY_DRONE_DEFAULT_HIT_POINTS = 45;
-export const ENEMY_DRONE_DEFAULT_DAMAGE = 8;
+export const ENEMY_DRONE_DEFAULT_HIT_POINTS = 45 * ENEMY_DRONE_VITALS_SCALE;
+export const ENEMY_DRONE_DEFAULT_DAMAGE = 8 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_DEFAULT_FIRE_RATE = 1.1;
 export const ENEMY_DRONE_DEFAULT_SPEED = 6;
 export const ENEMY_DRONE_DEFAULT_RANGE = 28;
@@ -768,10 +771,10 @@ export const TURRET_TRACK_RATE = 7.2;
 /** Max seconds of player-motion lead when computing the fire point. */
 export const TURRET_LEAD_TIME_CAP_SECONDS = 1.15;
 
-export const CUBE_FIGHTER_BASE_HIT_POINTS = 24;
-export const CUBE_FIGHTER_HIT_POINTS_PER_LEVEL = 2.4;
-export const CUBE_FIGHTER_BASE_DAMAGE = 5;
-export const CUBE_FIGHTER_DAMAGE_PER_LEVEL = 0.42;
+export const CUBE_FIGHTER_BASE_HIT_POINTS = 24 * ENEMY_DRONE_VITALS_SCALE;
+export const CUBE_FIGHTER_HIT_POINTS_PER_LEVEL = 2.4 * ENEMY_DRONE_VITALS_SCALE;
+export const CUBE_FIGHTER_BASE_DAMAGE = 5 * ENEMY_DRONE_VITALS_SCALE;
+export const CUBE_FIGHTER_DAMAGE_PER_LEVEL = 0.42 * ENEMY_DRONE_VITALS_SCALE;
 export const CUBE_FIGHTER_FIRE_RATE = 1.35;
 export const CUBE_FIGHTER_SPEED = 9.2;
 export const CUBE_FIGHTER_RANGE = 24;

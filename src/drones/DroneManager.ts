@@ -172,9 +172,19 @@ export class DroneManager {
   getAlivePositions(): THREE.Vector3[] {
     const out: THREE.Vector3[] = [];
     for (const d of this.drones) {
-      if (d.alive) out.push(d.group.position.clone());
+      if (d.alive) out.push(d.group.position);
     }
     return out;
+  }
+
+  getHudEntries(): Array<{
+    role: DroneRole;
+    alive: boolean;
+    hp: number;
+    maxHp: number;
+    respawn: number;
+  }> {
+    return this.drones.map((d) => d.toHud());
   }
 
   /** Hit the nearest living player drone to a world aim point. */

@@ -6,7 +6,7 @@ import { FIRST_DRONE_COST } from '../data/drones';
  *  - Fleet: expand to a 2nd drone on the DRONES tab
  *  - Loadout: buy Rocket Pod → equip (after stage 3 weapon unlock)
  */
-export type TutorialId = 'stage1' | 'fleet' | 'loadout';
+export type TutorialId = 'stage1' | 'fleet' | 'loadout' | 'gun';
 
 export type TutorialStepId =
   | 'welcome'
@@ -19,6 +19,10 @@ export type TutorialStepId =
   | 'fleet_hint'
   | 'fleet_expand'
   | 'fleet_done'
+  | 'gun_farm'
+  | 'gun_hint'
+  | 'gun_buy'
+  | 'gun_done'
   | 'loadout_intro'
   | 'loadout_buy'
   | 'loadout_equip'
@@ -40,6 +44,8 @@ export interface TutorialStep {
     | 'shop_open'
     | 'drone_owned'
     | 'fleet_expanded'
+    | 'afford_gun'
+    | 'gun_owned'
     | 'weapon_owned'
     | 'weapon_equipped'
     | 'auto';
@@ -128,6 +134,38 @@ const FLEET_STEPS: TutorialStep[] = [
   },
 ];
 
+const GUN_STEPS: TutorialStep[] = [
+  {
+    id: 'gun_farm',
+    title: 'MAIN GUN',
+    body: 'Farm 100 FRAG for a main-gun upgrade. Split Beam adds a concurrent bolt.',
+    advance: 'afford_gun',
+    target: 100,
+  },
+  {
+    id: 'gun_hint',
+    title: 'UPGRADE THE CANNON',
+    body: 'Open SHOP → GUN and buy Split Beam (+1 concurrent bolt). It multiplies your output.',
+    highlight: '#btn-tech',
+    advance: 'shop_open',
+    cta: 'OPEN SHOP',
+  },
+  {
+    id: 'gun_buy',
+    title: 'SPLIT BEAM',
+    body: 'Purchase Split Beam on the GUN tab. Extra concurrent bolts chew faces faster.',
+    highlight: '[data-id="off_multi_1"]',
+    advance: 'gun_owned',
+  },
+  {
+    id: 'gun_done',
+    title: 'VOLLEY ONLINE',
+    body: 'Further GUN ranks add more bolts, pierce, splash, and magazines. Keep firing.',
+    advance: 'tap',
+    cta: 'ENGAGE',
+  },
+];
+
 const LOADOUT_STEPS: TutorialStep[] = [
   {
     id: 'loadout_intro',
@@ -177,6 +215,8 @@ export interface TutorialProgressCtx {
   canAffordSecondDrone: boolean;
   /** Two or more drones assigned to bays. */
   fleetExpanded: boolean;
+  /** Owns Split Beam (off_multi_1). */
+  ownsSplitBeam: boolean;
 }
 
 /** First drone tech node cost (Ally Protocol). */
@@ -194,8 +234,10 @@ export class TutorialDirector {
   private stage1Done: boolean;
   private loadoutDone: boolean;
   private fleetDone: boolean;
+  private gunDone: boolean;
   private pendingLoadout = false;
   private pendingFleet = false;
+  private pendingGun = false;
   /** When true, card stays hidden (shop open) until notifyShopClosed. */
   private suppressCard = false;
   /** Purchase/equip completed while shop open — reveal next step on close. */
@@ -206,12 +248,13 @@ export class TutorialDirector {
 
   constructor(
     root: HTMLElement,
-    flags: { stage1Done: boolean; loadoutDone: boolean; fleetDone?: boolean }
+    flags: { stage1Done: boolean; loadoutDone: boolean; fleetDone?: boolean; gunDone?: boolean }
   ) {
     this.root = root;
     this.stage1Done = flags.stage1Done;
     this.loadoutDone = flags.loadoutDone;
     this.fleetDone = !!flags.fleetDone;
+    this.gunDone = !!flags.gunDone;
     this.ensureDom();
   }
 
@@ -254,10 +297,21 @@ export class TutorialDirector {
     }
   }
 
-  setFlags(stage1Done: boolean, loadoutDone: boolean, fleetDone = false): void {
+  /** After 2 drones, when the player has 100 FRAG again — push Split Beam. */
+  tryStartGun(): void {
+    if (this.gunDone || this.active || this.pendingGun) return;
+    if (this.stage1Done && this.fleetDone) {
+      this.begin('gun', GUN_STEPS);
+    } else {
+      this.pendingGun = true;
+    }
+  }
+
+  setFlags(stage1Done: boolean, loadoutDone: boolean, fleetDone = false, gunDone = false): void {
     this.stage1Done = stage1Done;
     this.loadoutDone = loadoutDone;
     this.fleetDone = fleetDone;
+    this.gunDone = gunDone;
   }
 
   update(dt: number, ctx: TutorialProgressCtx): void {
@@ -283,6 +337,18 @@ export class TutorialDirector {
       ) {
         this.pendingFleet = false;
         this.begin('fleet', FLEET_STEPS);
+      }
+      if (
+        this.pendingGun &&
+        this.stage1Done &&
+        this.fleetDone &&
+        !this.gunDone &&
+        !this.active &&
+        ctx.fragments >= 100 &&
+        !ctx.ownsSplitBeam
+      ) {
+        this.pendingGun = false;
+        this.begin('gun', GUN_STEPS);
       }
       return;
     }
@@ -333,6 +399,21 @@ export class TutorialDirector {
       return;
     }
     if (step.advance === 'fleet_expanded' && ctx.fleetExpanded) {
+      this.advanceAfterShopGate();
+      return;
+    }
+    if (step.advance === 'afford_gun') {
+      const need = step.target ?? 100;
+      this.ensureFarmChip(true, 'GUN FUND', need);
+      const val = this.root.querySelector('#tutorial-farm-val');
+      if (val) val.textContent = `${Math.floor(ctx.fragments)} / ${need}`;
+      if (ctx.fragments >= need || ctx.ownsSplitBeam) {
+        this.ensureFarmChip(false);
+        this.advance();
+      }
+      return;
+    }
+    if (step.advance === 'gun_owned' && ctx.ownsSplitBeam) {
       this.advanceAfterShopGate();
       return;
     }
@@ -437,6 +518,7 @@ export class TutorialDirector {
     if (id === 'stage1') this.stage1Done = true;
     if (id === 'loadout') this.loadoutDone = true;
     if (id === 'fleet') this.fleetDone = true;
+    if (id === 'gun') this.gunDone = true;
     this.active = null;
     this.visible = false;
     this.suppressCard = false;
@@ -482,8 +564,11 @@ export class TutorialDirector {
       step.id === 'shop_drone' ||
       step.id === 'fleet_hint' ||
       step.id === 'fleet_expand' ||
+      step.id === 'gun_hint' ||
+      step.id === 'gun_buy' ||
       step.advance === 'weapon_owned' ||
-      step.advance === 'drone_owned'
+      step.advance === 'drone_owned' ||
+      step.advance === 'gun_owned'
     ) {
       // openTech → notifyShopOpened advances shop_open once; do not double-advance here
       this.onRequestShop?.();
@@ -502,7 +587,7 @@ export class TutorialDirector {
       this.completeShopOpenStep();
     }
     const next = this.currentStep;
-    if (next?.highlight && this.active === 'fleet') {
+    if (next?.highlight && (this.active === 'fleet' || this.active === 'gun')) {
       this.applyHighlight(next.highlight);
     }
   }
@@ -516,6 +601,7 @@ export class TutorialDirector {
     ownsArcBeam?: boolean;
     hasEquippedWeapon?: boolean;
     fleetExpanded?: boolean;
+    ownsSplitBeam?: boolean;
   }): void {
     if (!this.active) return;
     this.suppressCard = false;
@@ -533,6 +619,8 @@ export class TutorialDirector {
       } else if (step.advance === 'weapon_equipped' && ctx?.hasEquippedWeapon) {
         this.advanceAfterShopGate();
       } else if (step.advance === 'fleet_expanded' && ctx?.fleetExpanded) {
+        this.advanceAfterShopGate();
+      } else if (step.advance === 'gun_owned' && ctx?.ownsSplitBeam) {
         this.advanceAfterShopGate();
       }
     }
@@ -561,6 +649,10 @@ export class TutorialDirector {
     if (step.advance === 'weapon_owned') {
       // Weapon shop purchase (Game passes defId, e.g. rocket_pod)
       if (nodeId) this.advanceAfterShopGate();
+      return;
+    }
+    if (step.advance === 'gun_owned') {
+      if (nodeId === 'off_multi_1') this.advanceAfterShopGate();
       return;
     }
   }
@@ -615,10 +707,14 @@ export class TutorialDirector {
     }
 
     // Farming for drone frags: no big popup — keep gameplay clear until purchase is ready
-    if (step.advance === 'afford_drone' || step.advance === 'destroy') {
+    if (step.advance === 'afford_drone' || step.advance === 'destroy' || step.advance === 'afford_gun') {
       card.classList.add('panel-hidden');
       this.clearHighlight();
-      this.ensureFarmChip(true);
+      this.ensureFarmChip(
+        true,
+        step.advance === 'afford_gun' ? 'GUN FUND' : 'DRONE FUND',
+        step.target ?? TUTORIAL_DRONE_COST
+      );
       return;
     }
     this.ensureFarmChip(false);
@@ -637,7 +733,8 @@ export class TutorialDirector {
         step.advance === 'shop_open' ||
         step.advance === 'drone_owned' ||
         step.advance === 'weapon_owned' ||
-        step.id === 'fleet_hint';
+        step.id === 'fleet_hint' ||
+        step.id === 'gun_hint';
       cta.classList.toggle('panel-hidden', !show);
       cta.textContent = step.cta ?? 'CONTINUE';
     }
@@ -655,7 +752,7 @@ export class TutorialDirector {
   }
 
   /** Compact non-blocking FRAG progress while farming for first drone. */
-  private ensureFarmChip(show: boolean): void {
+  private ensureFarmChip(show: boolean, label = 'DRONE FUND', need = TUTORIAL_DRONE_COST): void {
     let chip = this.root.querySelector('#tutorial-farm-chip') as HTMLElement | null;
     if (!show) {
       chip?.classList.add('panel-hidden');
@@ -666,8 +763,11 @@ export class TutorialDirector {
       chip.id = 'tutorial-farm-chip';
       chip.className = 'tutorial-farm-chip';
       chip.innerHTML =
-        `<span class="tfc-label">DRONE FUND</span><span class="tfc-val" id="tutorial-farm-val">0 / ${TUTORIAL_DRONE_COST}</span>`;
+        `<span class="tfc-label">${label}</span><span class="tfc-val" id="tutorial-farm-val">0 / ${need}</span>`;
       this.root.appendChild(chip);
+    } else {
+      const lab = chip.querySelector('.tfc-label');
+      if (lab) lab.textContent = label;
     }
     chip.classList.remove('panel-hidden');
   }

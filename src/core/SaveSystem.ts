@@ -79,6 +79,8 @@ export interface SaveData {
   tutorialLoadoutDone: boolean;
   /** Fleet-expand briefing (2nd drone) already completed. */
   tutorialFleetDone: boolean;
+  /** Main-gun Split Beam briefing already completed. */
+  tutorialGunDone: boolean;
   /** Ascension tier for which the evolve-ready briefing was already shown. */
   evolveReadySeenTier: number;
 
@@ -143,6 +145,7 @@ export function defaultSave(): SaveData {
     tutorialStage1Done: false,
     tutorialLoadoutDone: false,
     tutorialFleetDone: false,
+    tutorialGunDone: false,
     evolveReadySeenTier: -1,
 
     ascensionTier: 0,

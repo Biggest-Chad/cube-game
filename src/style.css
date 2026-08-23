@@ -1773,6 +1773,122 @@ body.orientation-portrait #rotate-overlay {
   box-sizing: border-box;
 }
 
+.shop-cards.shop-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+  max-width: none;
+}
+
+.shop-group-label {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  padding: 2px 0 0;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  opacity: 0.65;
+  border-top: 1px solid rgba(0, 240, 255, 0.12);
+}
+
+.shop-group-label:first-child {
+  border-top: 0;
+  margin-top: 0;
+}
+
+.shop-grid-2 .shop-card-buy {
+  min-width: 0;
+  width: 100%;
+}
+
+.shop-grid-2 .shop-card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 10px;
+  min-height: 2.4em;
+}
+
+.shop-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 240, 255, 0.45);
+  background: rgba(0, 240, 255, 0.08);
+  color: var(--cyan);
+  font-size: 9px;
+  font-style: italic;
+  font-family: Georgia, serif;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.shop-info-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 4, 10, 0.62);
+  padding: 16px;
+}
+
+.shop-info-card {
+  width: min(420px, 100%);
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+  background: rgba(4, 14, 22, 0.96);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  padding: 12px 14px 16px;
+}
+
+.shop-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.shop-info-head h3 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  color: var(--cyan);
+}
+
+.shop-info-body {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+.shop-info-stats {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.shop-info-stats li {
+  padding: 3px 0;
+  border-top: 1px solid rgba(0, 240, 255, 0.1);
+  opacity: 0.8;
+}
+
 .shop-card {
   border: 1px solid rgba(0, 240, 255, 0.3);
   background: rgba(0, 18, 26, 0.75);
@@ -1808,6 +1924,9 @@ body.orientation-portrait #rotate-overlay {
   letter-spacing: 0.08em;
   color: var(--cyan);
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .shop-card-rank {
@@ -2307,6 +2426,66 @@ body.orientation-portrait #rotate-overlay {
 }
 .hud-vitals.shield-down .hud-vital-row.shield {
   opacity: 0.45;
+}
+.hud-drones {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+  pointer-events: none;
+}
+.hud-drones-label {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  opacity: 0.55;
+  width: 34px;
+  flex-shrink: 0;
+}
+.hud-drone-pip {
+  position: relative;
+  width: 22px;
+  height: 12px;
+  border: 1px solid rgba(255, 208, 96, 0.35);
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+.hud-drone-pip.bomber { border-color: rgba(255, 102, 34, 0.45); }
+.hud-drone-pip.defender { border-color: rgba(0, 255, 170, 0.45); }
+.hud-drone-pip > i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(255, 208, 96, 0.35), rgba(255, 208, 96, 0.85));
+}
+.hud-drone-pip.bomber > i {
+  background: linear-gradient(90deg, rgba(255, 102, 34, 0.35), rgba(255, 140, 60, 0.85));
+}
+.hud-drone-pip.defender > i {
+  background: linear-gradient(90deg, rgba(0, 180, 120, 0.35), rgba(0, 255, 170, 0.85));
+}
+.hud-drone-pip > em {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow: 0 0 4px #000;
+}
+.hud-drone-pip.dead {
+  opacity: 0.45;
+  border-style: dashed;
+}
+.hud-drone-pip > b {
+  position: absolute;
+  right: 1px;
+  bottom: -1px;
+  font-size: 7px;
+  font-weight: 600;
+  color: #ffaa88;
 }
 .tutorial-farm-chip {
   position: absolute;
@@ -3939,6 +4118,9 @@ body.orientation-portrait #rotate-overlay {
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--accent, #e8ffff);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .lo-card-sub {
   font-size: 9px;

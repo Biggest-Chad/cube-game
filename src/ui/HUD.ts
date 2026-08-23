@@ -48,6 +48,7 @@ export class HUD {
   private lastNucleusDecaying: boolean | null = null;
   private lastNucleusLaser: boolean | null = null;
   private lastAmmoKey = '';
+  private lastDroneKey = '';
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -102,6 +103,7 @@ export class HUD {
             <div class="hud-vital-bar"><i id="hud-hull-bar"></i></div>
             <span class="hud-vital-val" id="hud-hull-val">100</span>
           </div>
+          <div class="hud-drones panel-hidden" id="hud-drones" aria-label="Drone fleet"></div>
         </div>
 
         <div class="hud-side-rail">
@@ -318,6 +320,49 @@ export class HUD {
       this.lastCore = coreN;
       this.coreEl.textContent = coreN.toLocaleString();
     }
+  }
+
+  /**
+   * Compact drone pips under ship vitals. Hidden when the bay is empty.
+   * Dead units show remaining respawn seconds.
+   */
+  updateDrones(
+    entries: Array<{ role: string; alive: boolean; hp: number; maxHp: number; respawn: number }>
+  ): void {
+    const el = this.root.querySelector('#hud-drones') as HTMLElement | null;
+    if (!el) return;
+    if (!entries.length) {
+      if (this.lastDroneKey !== '') {
+        this.lastDroneKey = '';
+        el.classList.add('panel-hidden');
+        el.innerHTML = '';
+      }
+      return;
+    }
+    const key = entries
+      .map((d) => {
+        const hp = d.alive ? Math.round((d.hp / Math.max(1, d.maxHp)) * 8) : `r${Math.ceil(d.respawn)}`;
+        return `${d.role[0]}${hp}`;
+      })
+      .join('|');
+    if (key === this.lastDroneKey) return;
+    this.lastDroneKey = key;
+    el.classList.remove('panel-hidden');
+    const letter = (role: string) =>
+      role === 'fighter' ? 'F' : role === 'bomber' ? 'B' : role === 'defender' ? 'D' : '?';
+    el.innerHTML =
+      `<span class="hud-drones-label">DRN</span>` +
+      entries
+        .map((d) => {
+          const pct = d.alive ? Math.max(0, Math.min(100, (d.hp / Math.max(1, d.maxHp)) * 100)) : 0;
+          const wait = !d.alive ? `${Math.max(0, Math.ceil(d.respawn))}s` : '';
+          return `<span class="hud-drone-pip ${d.role}${d.alive ? '' : ' dead'}" title="${d.role}">
+            <i style="width:${pct.toFixed(0)}%"></i>
+            <em>${letter(d.role)}</em>
+            ${wait ? `<b>${wait}</b>` : ''}
+          </span>`;
+        })
+        .join('');
   }
 
   /** Shield + hull bars at bottom of combat HUD. */

@@ -74,6 +74,22 @@ export function enemyPriority(
   return 110 / d + kindBias + (enemy.hp < 30 ? 5 : 0);
 }
 
+export const ENEMY_DRONE_KINDS = new Set(['attack', 'repair', 'kamikaze', 'cube-fighter']);
+export const ENEMY_WEAPON_KINDS = new Set(['turret']);
+
+export function pickBestEnemyOfKinds(
+  enemies: EnemyUnitRef[],
+  selfPos: { x: number; y: number; z: number },
+  maxDist: number,
+  kinds: Set<string>
+): EnemyUnitRef | null {
+  const filtered: EnemyUnitRef[] = [];
+  for (const e of enemies) {
+    if (e.kind && kinds.has(e.kind)) filtered.push(e);
+  }
+  return pickBestEnemy(filtered, selfPos, maxDist);
+}
+
 export function pickBestEnemy(
   enemies: EnemyUnitRef[],
   selfPos: { x: number; y: number; z: number },

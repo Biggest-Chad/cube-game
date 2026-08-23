@@ -14,7 +14,7 @@ import {
   DRONE_MINIMUM_FIRE_RATE,
   DRONE_VISIBLE_HEAT_BLEED_PER_SECOND,
 } from '../data/constraints';
-import type { CubeManager } from '../cube/CubeManager';
+import { NUCLEUS_HIT_ID, type CubeManager } from '../cube/CubeManager';
 import { BlockType } from '../cube/BlockTypes';
 import { bus } from '../core/EventBus';
 import type { PlayerStats } from '../progression/TechTree';
@@ -25,7 +25,9 @@ import {
 } from '../data/drones';
 import { applyToBlock } from '../combat/DamageModel';
 import {
-  pickBestEnemy,
+  ENEMY_DRONE_KINDS,
+  ENEMY_WEAPON_KINDS,
+  pickBestEnemyOfKinds,
   pickBestIntercept,
   type EnemyUnitRef,
   type InterceptTarget,
@@ -73,6 +75,7 @@ export class Drone {
   private tanSign = 1;
   private peelId = -1;
   private peelT = 0;
+  private bombEnemyId: string | null = null;
   private seed = 1;
   private heat = 0;
   private beamCore: THREE.Mesh;
@@ -228,11 +231,23 @@ export class Drone {
   private die(): void {
     this.alive = false;
     this.hp = 0;
+    this.respawnTimer = -1;
     this.group.visible = false;
     this.beamCore.visible = this.beamGlow.visible = false;
     if (this.bombMesh) this.bombMesh.visible = false;
     this.bombActive = false;
+    this.bombEnemyId = null;
     bus.emit('player-drone-destroyed', { role: this.role, index: this.index });
+  }
+
+  toHud(): { role: DroneRole; alive: boolean; hp: number; maxHp: number; respawn: number } {
+    return {
+      role: this.role,
+      alive: this.alive,
+      hp: this.hp,
+      maxHp: this.maxHp,
+      respawn: this.alive ? 0 : Math.max(0, this.respawnTimer),
+    };
   }
 
   private beginRespawn(stats: PlayerStats): void {
@@ -257,15 +272,16 @@ export class Drone {
     hidden: boolean,
     combat?: DroneCombatContext
   ): void {
-    // Respawn
+    // Respawn — die() sets timer to -1 so we arm a fresh delay once
     if (!this.alive) {
-      if (this.respawnTimer <= 0) this.beginRespawn(stats);
+      if (this.respawnTimer < 0) this.beginRespawn(stats);
       this.respawnTimer -= dt;
       if (this.respawnTimer <= 0) {
         this.alive = true;
         this.hp = this.maxHp;
         this.group.visible = true;
         this.group.scale.setScalar(1.05);
+        this.respawnTimer = 0;
         bus.emit('player-drone-respawned', { role: this.role, index: this.index });
       }
       return;
@@ -315,16 +331,27 @@ export class Drone {
         -1,
         0.7
       );
+      const bombDmg =
+        DRONE_BASE_DAMAGE *
+        DRONE_BOMBER_WARHEAD_DAMAGE_FRACTION *
+        stats.droneDamageMul *
+        def.blockDamageMul;
+      if (this.bombEnemyId && combat?.onEnemyHit) {
+        const live = combat.enemies?.find((e) => e.id === this.bombEnemyId);
+        if (live) this._target.set(live.position.x, live.position.y, live.position.z);
+        if (this.bombPos.distanceTo(this._target) < 1.5) {
+          combat.onEnemyHit(this.bombEnemyId, bombDmg);
+          this.bombActive = false;
+          this.bombMesh.visible = false;
+          this.bombEnemyId = null;
+          return;
+        }
+      }
       if (hit || this.bombPos.length() > half * 3.5) {
         if (hit) {
-          const raw =
-            DRONE_BASE_DAMAGE *
-            DRONE_BOMBER_WARHEAD_DAMAGE_FRACTION *
-            stats.droneDamageMul *
-            def.blockDamageMul;
           const type = cube.getBlockType(hit.instanceId);
           const applied = applyToBlock(
-            { raw, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
+            { raw: bombDmg, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
             type
           );
           const result = cube.applyDamage(hit.instanceId, applied.finalDamage, now);
@@ -343,6 +370,7 @@ export class Drone {
         }
         this.bombActive = false;
         this.bombMesh.visible = false;
+        this.bombEnemyId = null;
       }
     }
 
@@ -356,7 +384,7 @@ export class Drone {
       DRONE_BASE_FIRE_RATE * stats.droneFireRateMul * def.fireRateMul * (1 - this.heat * 0.5);
     this.cooldown = 1 / Math.max(DRONE_MINIMUM_FIRE_RATE, rate);
 
-    // —— Defender: point defense only ——
+    // —— Defender: enemy projectiles → enemy drones. Nothing else. ——
     if (this.role === 'defender') {
       if (combat?.intercepts?.length && combat.onInterceptHit) {
         const t = pickBestIntercept(combat.intercepts, this.group.position, 35);
@@ -374,11 +402,7 @@ export class Drone {
         }
       }
       if (combat?.enemies?.length && combat.onEnemyHit) {
-        const e = pickBestEnemy(
-          combat.enemies.filter((u) => u.kind !== 'cube-fighter'),
-          this.group.position,
-          40
-        );
+        const e = pickBestEnemyOfKinds(combat.enemies, this.group.position, 40, ENEMY_DRONE_KINDS);
         if (e) {
           this._target.set(e.position.x, e.position.y, e.position.z);
           this.showBeam(this.group.position, this._target);
@@ -394,10 +418,19 @@ export class Drone {
       return;
     }
 
-    // —— Fighter: enemy drones / kamikazes → peel hull. Nucleus shots are PD-only. ——
+    // —— Fighter: enemy drones → enemy weapons → blocks → nucleus ——
     if (this.role === 'fighter') {
       if (combat?.enemies?.length && combat.onEnemyHit) {
-        const enemy = pickBestEnemy(combat.enemies, this.group.position, 90);
+        const drone = pickBestEnemyOfKinds(
+          combat.enemies,
+          this.group.position,
+          90,
+          ENEMY_DRONE_KINDS
+        );
+        const weapon = drone
+          ? null
+          : pickBestEnemyOfKinds(combat.enemies, this.group.position, 90, ENEMY_WEAPON_KINDS);
+        const enemy = drone ?? weapon;
         if (enemy) {
           this._target.set(enemy.position.x, enemy.position.y, enemy.position.z);
           this.markFireLook(this._target);
@@ -412,15 +445,21 @@ export class Drone {
           return;
         }
       }
-      const peel = this.acquireClosestTarget(dt, cube, 78, true);
-      if (peel === -1) return;
-      cube.getBlockWorldPos(peel, this._target);
+      const peel = this.acquireClosestTarget(dt, cube, 78, false);
+      const aimId =
+        peel !== -1
+          ? peel
+          : combat?.nucleusExposed && cube.nucleus.isActive
+            ? NUCLEUS_HIT_ID
+            : -1;
+      if (aimId === -1) return;
+      cube.getBlockWorldPos(aimId, this._target);
       this.markFireLook(this._target);
       const hitId = this.firstBlockOnLine(cube, this.group.position, this._target);
-      const aimId = hitId !== -1 ? hitId : peel;
-      cube.getBlockWorldPos(aimId, this._target);
+      const shotId = hitId !== -1 ? hitId : aimId;
+      cube.getBlockWorldPos(shotId, this._target);
       this.showBeam(this.group.position, this._target);
-      const type = cube.getBlockType(aimId);
+      const type = cube.getBlockType(shotId);
       const raw =
         DRONE_BASE_DAMAGE *
         DRONE_FIGHTER_BLOCK_DAMAGE_FRACTION *
@@ -430,16 +469,31 @@ export class Drone {
         { raw, armorPierce: def.armorPierce, critChance: 0, critMult: 1 },
         type
       );
-      const result = cube.applyDamage(aimId, applied.finalDamage, now);
+      const result = cube.applyDamage(shotId, applied.finalDamage, now);
       if (result) bus.emit('beam-hit', { ...result, style: 'beam' as const });
       return;
     }
 
-    // —— Bomber: closest live block, reassess often ——
+    // —— Bomber: enemy weapons → nucleus. No hull peel. ——
     if (this.bombActive) return;
-    const peel = this.acquireClosestTarget(dt, cube, 110, true);
-    if (peel === -1 || !this.bombMesh) return;
-    cube.getBlockWorldPos(peel, this._target);
+    if (!this.bombMesh) return;
+    this.bombEnemyId = null;
+    if (combat?.enemies?.length && combat.onEnemyHit) {
+      const weapon = pickBestEnemyOfKinds(
+        combat.enemies,
+        this.group.position,
+        110,
+        ENEMY_WEAPON_KINDS
+      );
+      if (weapon) {
+        this._target.set(weapon.position.x, weapon.position.y, weapon.position.z);
+        this.bombEnemyId = weapon.id;
+      }
+    }
+    if (!this.bombEnemyId) {
+      if (!cube.nucleus.isActive) return;
+      this._target.copy(cube.nucleus.getWorldCenter(this._look));
+    }
     this.markFireLook(this._target);
     this.bombPos.copy(this.group.position);
     this.bombVel.copy(this._target).sub(this.bombPos).normalize().multiplyScalar(DRONE_BOMBER_PROJECTILE_SPEED);

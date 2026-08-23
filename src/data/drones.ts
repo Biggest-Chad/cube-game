@@ -60,6 +60,8 @@ export interface DroneRoleDef {
   id: DroneRole;
   name: string;
   description: string;
+  /** Full copy for the shop info sheet. */
+  detail: string;
   blockDamageMul: number;
   splashRadius: number;
   armorPierce: number;
@@ -81,8 +83,9 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
   fighter: {
     id: 'fighter',
     name: 'Fighter',
-    description:
-      'Agile interceptor. Only ally that hunts cube fighters; also kills other enemy drones, then peels hull.',
+    description: 'Interceptor. Hunts enemy drones, then weapons, hull, nucleus.',
+    detail:
+      'Agile interceptor. Priority: enemy drones → enemy weapons (turrets) → lattice blocks → nucleus. Does not intercept projectiles.',
     blockDamageMul: FIGHTER_BLOCK_DAMAGE_MULTIPLIER,
     splashRadius: FIGHTER_SPLASH_RADIUS,
     armorPierce: FIGHTER_ARMOR_PIERCE,
@@ -101,8 +104,9 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
   bomber: {
     id: 'bomber',
     name: 'Bomber',
-    description:
-      'Heavy stand-off craft. Slow plasma bombs with splash. Prefers exposed nucleus.',
+    description: 'Stand-off bomber. Hits enemy weapons, then the nucleus.',
+    detail:
+      'Heavy stand-off craft. Slow plasma bombs with splash. Priority: enemy weapons (turrets) → nucleus. Does not peel hull or hunt drones.',
     blockDamageMul: BOMBER_BLOCK_DAMAGE_MULTIPLIER,
     splashRadius: BOMBER_SPLASH_RADIUS,
     armorPierce: BOMBER_ARMOR_PIERCE,
@@ -121,8 +125,9 @@ export const DRONE_ROLES: Record<DroneRole, DroneRoleDef> = {
   defender: {
     id: 'defender',
     name: 'Defender',
-    description:
-      'Escort with a shield bubble. The only drone that shoots nucleus projectiles (spikes, blobs, mines).',
+    description: 'Escort. Shoots incoming projectiles, then enemy drones.',
+    detail:
+      'Escort with a frontal shield bubble. Priority: enemy projectiles (spikes, blobs, mines, arcs) → enemy drones. Does not shoot the cube or nucleus.',
     blockDamageMul: DEFENDER_BLOCK_DAMAGE_MULTIPLIER,
     splashRadius: DEFENDER_SPLASH_RADIUS,
     armorPierce: DEFENDER_ARMOR_PIERCE,

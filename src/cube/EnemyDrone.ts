@@ -229,22 +229,26 @@ export class EnemyDrone {
       this.orbitHeight + Math.sin(this.orbitAngle * 1.3) * 0.8,
       Math.sin(this.orbitAngle) * this.orbitRadius
     );
+    const ally = this.nearestAlly(playerDronePositions);
     if (this.role === 'kamikaze') {
-      this._pos.copy(playerPos);
-      this.group.lookAt(playerPos);
+      const ram = ally ?? playerPos;
+      this._pos.copy(ram);
+      this.group.lookAt(ram);
       this.group.position.lerp(this._pos, 1 - Math.exp(-speed * 0.55 * dt));
-      if (this.group.position.distanceTo(playerPos) <= 1.45) {
-        onPlayerHit(this.cfg.damage);
+      if (this.group.position.distanceTo(ram) <= 1.45) {
+        if (ally) extras?.onDroneHit?.(ally, this.cfg.damage);
+        else onPlayerHit(this.cfg.damage);
         this.applyDamage(1e9);
       }
       return;
     }
 
-    // Attack drones dive toward player; repair drones hug the shell
+    // Attack drones hunt player drones first, then the ship
     if (this.role === 'attack') {
+      const hunt = ally ?? playerPos;
       const dive = Math.sin(this.orbitAngle * 0.5) > 0.7;
-      if (dive) this._pos.lerp(playerPos, 0.15);
-      this.group.lookAt(playerPos);
+      if (dive) this._pos.lerp(hunt, 0.22);
+      this.group.lookAt(hunt);
     } else {
       this.group.lookAt(0, 0, 0);
     }
@@ -274,32 +278,32 @@ export class EnemyDrone {
       return;
     }
 
-    // Prefer shooting nearby player drones, else player
-    let target = playerPos;
-    let isDrone = false;
-    if (playerDronePositions) {
-      let bestD = 14;
-      for (const pd of playerDronePositions) {
-        const d = this.group.position.distanceTo(pd);
-        if (d < bestD) {
-          bestD = d;
-          target = pd;
-          isDrone = true;
-        }
-      }
-    }
+    // Hunt player drones first; only shoot the ship when no allies remain
+    const target = ally ?? playerPos;
+    const isDrone = !!ally;
 
     const dist = this.group.position.distanceTo(target);
     if (dist > this.cfg.range) return;
 
     this.cooldown = 1 / Math.max(0.25, this.cfg.fireRate * this.cfg.fireMul);
     this.showBeam(this.group.position, target);
-    if (!isDrone) {
-      onPlayerHit(this.cfg.damage);
-    } else {
-      bus.emit('enemy-drone-hit-ally', { id: this.id, damage: this.cfg.damage * 0.8 });
-    }
+    if (isDrone && ally) extras?.onDroneHit?.(ally, this.cfg.damage * 0.8);
+    else onPlayerHit(this.cfg.damage);
     bus.emit('enemy-drone-fire', { id: this.id });
+  }
+
+  private nearestAlly(drones: THREE.Vector3[] | undefined): THREE.Vector3 | undefined {
+    if (!drones || drones.length === 0) return undefined;
+    let best: THREE.Vector3 | undefined;
+    let bestD = Infinity;
+    for (const pd of drones) {
+      const d = this.group.position.distanceTo(pd);
+      if (d < bestD) {
+        bestD = d;
+        best = pd;
+      }
+    }
+    return best;
   }
 
   private updateCubeFighter(
@@ -318,8 +322,8 @@ export class EnemyDrone {
     this.retargetT -= dt;
     const drones = playerDronePositions ?? [];
     if (this.retargetT <= 0) {
-      this.retargetT = 0.7 + Math.random() * 0.9;
-      if (drones.length === 0 || Math.random() < 0.42) this.huntShip = true;
+      this.retargetT = 0.55 + Math.random() * 0.55;
+      if (drones.length === 0) this.huntShip = true;
       else {
         this.huntShip = false;
         this.droneIndex = (Math.random() * drones.length) | 0;

@@ -384,6 +384,7 @@ export class Game {
       stage1Done: false,
       loadoutDone: false,
       fleetDone: false,
+      gunDone: false,
     });
     this.evolveReady = new EvolveReadyUI(document.getElementById('ui-root')!);
     this.evolveReady.onOpenShop = () => this.openTech();
@@ -576,6 +577,7 @@ export class Game {
         ownsArcBeam: this.loadout.isOwned('rocket_pod'),
         hasEquippedWeapon: this.loadout.allDerived().length > 0,
         fleetExpanded: this.droneBays.equippedCount() >= 2,
+        ownsSplitBeam: this.tech.owned.has('off_multi_1'),
       });
       this.closeActiveOverlay();
     };
@@ -843,6 +845,8 @@ export class Game {
       } else if (step?.id === 'fleet_hint' || step?.id === 'fleet_expand') {
         this.shopUI.setDroneSubTab('stock');
         this.openTech('drone_bays');
+      } else if (step?.id === 'gun_hint' || step?.id === 'gun_buy') {
+        this.openTech('main_gun');
       } else if (
         step?.id === 'shop_drone' ||
         step?.id === 'shop_hint' ||
@@ -859,6 +863,7 @@ export class Game {
       if (id === 'stage1') this.save.data.tutorialStage1Done = true;
       if (id === 'loadout') this.save.data.tutorialLoadoutDone = true;
       if (id === 'fleet') this.save.data.tutorialFleetDone = true;
+      if (id === 'gun') this.save.data.tutorialGunDone = true;
       this.persist();
     };
 
@@ -1622,6 +1627,7 @@ export class Game {
     const snap = this.vitals.snapshot();
     this.shopUI.setVitals(snap);
     this.hud.updateVitals(snap);
+    this.hud.updateDrones(this.drones.getHudEntries());
   }
 
   private cheapestAffordable(): UpgradeNodeDef | null {
@@ -1768,7 +1774,8 @@ export class Game {
     this.tutorial.setFlags(
       !!data.tutorialStage1Done,
       !!data.tutorialLoadoutDone,
-      !!data.tutorialFleetDone
+      !!data.tutorialFleetDone,
+      !!data.tutorialGunDone
     );
 
     this.vitals.syncFromStats(this.tech.stats);
@@ -2612,7 +2619,8 @@ export class Game {
       this.tutorial.setFlags(
         this.save.data.tutorialStage1Done,
         this.save.data.tutorialLoadoutDone,
-        this.save.data.tutorialFleetDone
+        this.save.data.tutorialFleetDone,
+        this.save.data.tutorialGunDone
       );
       this.tutorial.tryStartStage1();
       // Tutorial: hold fire until welcome is acknowledged or player moves
@@ -3232,6 +3240,7 @@ export class Game {
               ownsDrone &&
               canAffordSecondDrone(this.droneBays.state, this.currency.dataFragments),
             fleetExpanded: this.droneBays.equippedCount() >= 2,
+            ownsSplitBeam: this.tech.owned.has('off_multi_1'),
           });
           if (
             ownsDrone &&
@@ -3241,6 +3250,15 @@ export class Game {
             this.droneBays.equippedCount() < 2
           ) {
             this.tutorial.tryStartFleet();
+          }
+          if (
+            this.save.data.tutorialFleetDone &&
+            !this.save.data.tutorialGunDone &&
+            !this.tech.owned.has('off_multi_1') &&
+            this.currency.dataFragments >= 100 &&
+            this.droneBays.equippedCount() >= 2
+          ) {
+            this.tutorial.tryStartGun();
           }
         }
 

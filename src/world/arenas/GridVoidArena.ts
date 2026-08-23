@@ -6,7 +6,8 @@ import { addCityAmbience } from './cityLife';
 
 /** Place the hex field under the cube; floor sits below the combat volume. */
 const FLOOR_Y = -22;
-const HEX_CENTER_Z = 14;
+/** Arena local origin is world (0, FLOOR_Y, 0) so the crater sits under the cube. */
+const HEX_CENTER_Z = 0;
 
 /** Combat + arena share this extra camera layer so city is not point-lit. */
 export const ARENA_LAYER = 1;

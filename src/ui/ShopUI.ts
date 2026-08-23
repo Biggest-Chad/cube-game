@@ -131,6 +131,39 @@ const TAB_ICONS: Record<ShopTabId, string> = {
   other: '✶',
 };
 
+const SHOP_GROUPS: Partial<Record<ShopTabId, Array<{ label: string; chains: string[] }>>> = {
+  ship: [
+    { label: 'Mobility', chains: ['ship_speed', 'ship_accel', 'ship_zoom', 'ship_beam'] },
+    { label: 'Survivability', chains: ['ship_hull', 'ship_shield', 'ship_armor'] },
+  ],
+  main_gun: [
+    { label: 'Core', chains: ['off_damage', 'off_rate', 'off_multi'] },
+    { label: 'Ammo', chains: ['off_ammo_ap', 'off_ammo_he'] },
+    {
+      label: 'Mods',
+      chains: [
+        'off_spread',
+        'off_pen',
+        'off_pierce',
+        'off_splash',
+        'off_vent',
+        'off_crit',
+        'off_chain',
+        'off_shred',
+        'off_leech',
+        'off_stutter',
+        'off_focus',
+        'off_phase',
+      ],
+    },
+  ],
+  other: [
+    { label: 'Economy', chains: ['ana_frag', 'ana_core'] },
+    { label: 'Idle', chains: ['idle_rate', 'idle_cap'] },
+    { label: 'Global', chains: ['glob_all', 'glob_dmg'] },
+  ],
+};
+
 /**
  * Tabbed sequential shop + integrated loadout / drone bay management.
  */
@@ -396,9 +429,7 @@ export class ShopUI {
                     ? this.renderDroneBayPanel(currency, tree)
                     : this.activeTab === 'bases'
                       ? this.renderGroundBasePanel(currency)
-                    : `<div class="shop-cards">${visible
-                        .map((v) => this.renderCard(v, tree, currency))
-                        .join('')}</div>`
+                    : this.renderUpgradeGrid(visible, tree, currency)
               }
             </div>
           </div>
@@ -553,6 +584,7 @@ export class ShopUI {
     this.bindDroneBayDnD(tree, currency);
     this.bindGroundBaseEvents(tree, currency);
     this.bindWeaponDnD(tree, currency);
+    this.bindInfoButtons();
     // Re-apply pick highlight after DOM rebuild (touch equip flow)
     if (this.dragPayload) this.markPickArmed();
   }
@@ -878,7 +910,9 @@ export class ShopUI {
                 const can = levelOk && currency.dataFragments >= def.unlockCost;
                 return `
                   <div class="lo-card locked" style="--accent:${def.colorCss}">
-                    <div class="lo-card-title">${def.name}</div>
+                    <div class="lo-card-title">${def.name}
+                      <button type="button" class="shop-info-btn" data-drone-info="${role}" aria-label="Info">i</button>
+                    </div>
                     <div class="lo-card-sub">${levelOk ? `${def.unlockCost} FRAG` : `STAGE ${def.unlockLevel}+`}</div>
                     <p class="lo-card-desc">${def.description}</p>
                     <button type="button" class="shop-card-buy ${can ? 'buyable' : ''}"
@@ -892,7 +926,9 @@ export class ShopUI {
               const canAssign = free > 0 && emptyBay >= 0;
               return `
                 <div class="lo-card" style="--accent:${def.colorCss}">
-                  <div class="lo-card-title">${def.name}</div>
+                  <div class="lo-card-title">${def.name}
+                    <button type="button" class="shop-info-btn" data-drone-info="${role}" aria-label="Info">i</button>
+                  </div>
                   <div class="lo-card-sub">Free ${free} · Own ${owned}</div>
                   <p class="lo-card-desc">${def.description}</p>
                   <button type="button" class="lo-pick"
@@ -1353,6 +1389,143 @@ export class ShopUI {
       </div>`;
   }
 
+  private renderUpgradeGrid(
+    visible: SequentialVisibleNode[],
+    tree: TechTree,
+    currency: Currency
+  ): string {
+    const groups = SHOP_GROUPS[this.activeTab];
+    const twoCol = this.activeTab === 'ship' || this.activeTab === 'main_gun' || this.activeTab === 'other';
+    const gridClass = twoCol ? 'shop-cards shop-grid-2' : 'shop-cards';
+    if (!groups) {
+      return `<div class="${gridClass}">${visible.map((v) => this.renderCard(v, tree, currency)).join('')}</div>`;
+    }
+    const used = new Set<string>();
+    const parts: string[] = [`<div class="${gridClass}">`];
+    for (const g of groups) {
+      const items = visible.filter((v) => g.chains.includes(v.chain));
+      if (!items.length) continue;
+      items.forEach((v) => used.add(v.chain));
+      parts.push(`<div class="shop-group-label">${g.label}</div>`);
+      parts.push(items.map((v) => this.renderCard(v, tree, currency)).join(''));
+    }
+    const rest = visible.filter((v) => !used.has(v.chain));
+    if (rest.length) {
+      parts.push(`<div class="shop-group-label">More</div>`);
+      parts.push(rest.map((v) => this.renderCard(v, tree, currency)).join(''));
+    }
+    parts.push('</div>');
+    return parts.join('');
+  }
+
+  private bindInfoButtons(): void {
+    this.root.querySelectorAll('[data-info]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const id = (btn as HTMLElement).dataset.info;
+        const node = id ? UPGRADES.find((u) => u.id === id) : undefined;
+        if (node) this.showInfoSheet(node.name, node.description, this.effectLines(node));
+      });
+    });
+    this.root.querySelectorAll('[data-drone-info]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const role = (btn as HTMLElement).dataset.droneInfo as DroneRole;
+        const def = DRONE_ROLES[role];
+        if (!def) return;
+        this.showInfoSheet(def.name, def.detail, [
+          `HP ${def.baseHp}`,
+          `Block dmg ×${def.blockDamageMul}`,
+          `Anti-drone ×${def.antiDroneMul}`,
+          `Point defense ×${def.pointDefenseMul}`,
+          def.splashRadius > 0 ? `Splash ${def.splashRadius}` : 'No splash',
+          `Shield ${def.frontalShield}`,
+          `Fire rate ×${def.fireRateMul}`,
+          `Unit ${def.unitCost} FRAG · Unlock ${def.unlockCost} FRAG`,
+          `Available from sector ${def.unlockLevel}`,
+        ]);
+      });
+    });
+  }
+
+  private effectLines(n: UpgradeNodeDef): string[] {
+    const e = n.effects;
+    const lines: string[] = [];
+    const pct = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v * 1000) / 10}%`;
+    if (e.damageAdd) lines.push(`Main gun damage ${pct(e.damageAdd)}`);
+    if (e.damageMul) lines.push(`Damage ×${e.damageMul}`);
+    if (e.fireRateAdd) lines.push(`Fire rate ${pct(e.fireRateAdd)}`);
+    if (e.fireRateMul) lines.push(`Fire rate ×${e.fireRateMul}`);
+    if (e.multiShotAdd) lines.push(`+${e.multiShotAdd} concurrent bolt`);
+    if (e.splashAdd) lines.push(`Splash +${e.splashAdd}`);
+    if (e.orbitSpeedAdd) lines.push(`Orbit speed ${pct(e.orbitSpeedAdd)}`);
+    if (e.accelAdd) lines.push(`Accel ${pct(e.accelAdd)}`);
+    if (e.zoomRangeAdd) lines.push(`Zoom +${e.zoomRangeAdd}`);
+    if (e.maxHullAdd) lines.push(`Hull +${e.maxHullAdd}`);
+    if (e.maxShieldAdd) lines.push(`Shield +${e.maxShieldAdd}`);
+    if (e.shieldRegenAdd) lines.push(`Shield regen +${e.shieldRegenAdd}`);
+    if (e.armorRatingAdd) lines.push(`Armor +${e.armorRatingAdd}`);
+    if (e.penetrationAdd) lines.push(`Pierce +${e.penetrationAdd} block`);
+    if (e.armorPierceAdd) lines.push(`Armor pierce ${pct(e.armorPierceAdd)}`);
+    if (e.critChance) lines.push(`Crit chance ${pct(e.critChance)}`);
+    if (e.spreadAdd) lines.push(`Spread +${e.spreadAdd}`);
+    if (e.beamWidth) lines.push(`Beam width ×${e.beamWidth}`);
+    if (e.heatCoolAdd) lines.push(`Heat bleed ${pct(e.heatCoolAdd)}`);
+    if (e.chainJumpsAdd) lines.push(`Chain jumps +${e.chainJumpsAdd}`);
+    if (e.shredMul) lines.push(`Vs armored ${pct(e.shredMul)}`);
+    if (e.leechOnKill) lines.push(`Leech on kill ${pct(e.leechOnKill)}`);
+    if (e.ionChance) lines.push(`Ion chance ${pct(e.ionChance)}`);
+    if (e.stutterEvery) lines.push(`Extra bolt every ${e.stutterEvery} shots`);
+    if (e.focusLockAdd) lines.push(`Focus lock ${pct(e.focusLockAdd)} / hit`);
+    if (e.phaseNucleusAdd) lines.push(`Nucleus damage ${pct(e.phaseNucleusAdd)}`);
+    if (e.unlockAmmoAp) lines.push('Unlocks AP magazine');
+    if (e.unlockAmmoHe) lines.push('Unlocks HE magazine');
+    if (e.ammoApPenAdd) lines.push(`AP pierce +${e.ammoApPenAdd}`);
+    if (e.ammoHeSplashAdd) lines.push(`HE splash +${e.ammoHeSplashAdd}`);
+    if (e.droneDamageAdd) lines.push(`Drone damage ${pct(e.droneDamageAdd)}`);
+    if (e.droneFireRateAdd) lines.push(`Drone fire rate ${pct(e.droneFireRateAdd)}`);
+    if (e.droneHpAdd) lines.push(`Drone HP ${pct(e.droneHpAdd)}`);
+    if (e.droneRespawnReduce) lines.push(`Respawn ${pct(-e.droneRespawnReduce)}`);
+    if (e.droneShieldAdd) lines.push(`Defender shield ${pct(e.droneShieldAdd)}`);
+    if (e.droneShieldRegenAdd) lines.push(`Shield regen ${pct(e.droneShieldRegenAdd)}`);
+    if (e.dronePriorityCore) lines.push('Bombers prefer nucleus');
+    if (e.dronePriorityData) lines.push('Bombers prefer data nodes');
+    if (e.unlockDrones) lines.push('Unlocks drone operations');
+    if (e.fragmentAdd) lines.push(`Fragments ${pct(e.fragmentAdd)}`);
+    if (e.fragmentMul) lines.push(`Fragments ×${e.fragmentMul}`);
+    if (e.coreEnergyAdd) lines.push(`Core energy ${pct(e.coreEnergyAdd)}`);
+    if (e.coreEnergyMul) lines.push(`Core energy ×${e.coreEnergyMul}`);
+    if (e.idleRateAdd) lines.push(`Idle rate ${pct(e.idleRateAdd)}`);
+    if (e.idleCapAdd) lines.push(`Idle cap ${pct(e.idleCapAdd)}`);
+    if (e.droneDamageMul) lines.push(`Drone damage ×${e.droneDamageMul}`);
+    lines.push(`Cost ${n.cost} ${n.costCurrency === 'coreEnergy' ? 'CORE' : 'FRAG'}`);
+    return lines;
+  }
+
+  private showInfoSheet(title: string, body: string, stats: string[]): void {
+    this.root.querySelector('#shop-info-sheet')?.remove();
+    const sheet = document.createElement('div');
+    sheet.id = 'shop-info-sheet';
+    sheet.className = 'shop-info-sheet';
+    sheet.innerHTML = `
+      <div class="shop-info-card" role="dialog" aria-label="${title}">
+        <div class="shop-info-head">
+          <h3>${title}</h3>
+          <button type="button" class="icon-btn" id="shop-info-close" aria-label="Close">✕</button>
+        </div>
+        <p class="shop-info-body">${body}</p>
+        <ul class="shop-info-stats">${stats.map((s) => `<li>${s}</li>`).join('')}</ul>
+      </div>`;
+    (this.root.querySelector('.shop-panel') ?? this.root).appendChild(sheet);
+    const close = () => sheet.remove();
+    sheet.addEventListener('click', (ev) => {
+      if (ev.target === sheet) close();
+    });
+    sheet.querySelector('#shop-info-close')?.addEventListener('click', close);
+  }
+
   private renderCard(
     v: SequentialVisibleNode,
     tree: TechTree,
@@ -1363,11 +1536,12 @@ export class ShopUI {
     const unit = isCore ? 'CORE' : 'FRAG';
     const rankLabel = v.maxRank > 1 ? ` (${v.ownedCount}/${v.maxRank})` : '';
 
+    const infoBtn = `<button type="button" class="shop-info-btn" data-info="${n.id}" aria-label="Info">i</button>`;
     if (v.maxed) {
       return `
         <div class="shop-card maxed">
           <div class="shop-card-top">
-            <span class="shop-card-name">${n.name}${rankLabel}</span>
+            <span class="shop-card-name">${n.name}${rankLabel}${infoBtn}</span>
             <span class="shop-card-badge max">MAXED</span>
           </div>
           <div class="shop-card-desc">Chain complete</div>
@@ -1377,11 +1551,10 @@ export class ShopUI {
       return `
         <div class="shop-card teaser locked">
           <div class="shop-card-top">
-            <span class="shop-card-name">${n.name}${rankLabel}</span>
+            <span class="shop-card-name">${n.name}${rankLabel}${infoBtn}</span>
             <span class="shop-card-badge lock">LOCKED</span>
           </div>
           <div class="shop-card-desc">${v.teaserLabel ?? 'Locked'}</div>
-          <div class="shop-card-hint">${n.description}</div>
         </div>`;
     }
     const can = tree.canPurchase(n);
@@ -1389,7 +1562,7 @@ export class ShopUI {
     return `
       <div class="shop-card ${affordable ? 'affordable' : ''} ${can ? '' : 'locked'}">
         <div class="shop-card-top">
-          <span class="shop-card-name">${n.name}${rankLabel}</span>
+          <span class="shop-card-name">${n.name}${rankLabel}${infoBtn}</span>
           <span class="shop-card-rank">Rank ${v.rank}/${v.maxRank}</span>
         </div>
         <div class="shop-card-desc">${n.description}</div>
