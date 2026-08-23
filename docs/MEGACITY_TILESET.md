@@ -14,9 +14,22 @@ Method follows **img2threejs** (code-only primitives + canvas facades + instanci
 - Magenta / purple portrait screens on facades
 - Cyan + magenta edge trims and roof masts
 - Warm window grid + cooler body
-- Metro rails with trains
+- Street-level low-rises packed between towers, lamps, wrecks
+- Elevated cyan-edged highways weaving through the canyons (tileset plate)
+- Metro on those decks plus the original ring lines
+- Floating advertisement planes
+- Mini canyon drones
 - Far-ring impostor sprites from `layer-cyberpunk-skyscraper.png`
 - Purple-black fog
+
+## Portal blast (play area)
+
+The cube's opening is treated as a ground-zero event under the combat volume:
+
+- Unique (non-tiled) ground map: crater, glassed ring, radial scorch, shockwave rings
+- Raised ash rim, vitrified ring, residual portal glow (ground-only, does not occlude the cube)
+- Inner r < ~29: ruined stumps, rubble, bent spikes, flattened wrecks
+- Outer rings remain a lived-in night city
 
 ## Limits
 

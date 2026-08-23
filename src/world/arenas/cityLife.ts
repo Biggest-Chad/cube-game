@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import { addCircuitFloor } from './circuitFloor';
 import { addCitySkyline } from './citySkyline';
+import { addMegacityStreets } from './megacityStreets';
 
 /**
- * Distant floor fade + cheap circuit deck + instanced skyline / metro.
+ * Distant floor fade + city ground + instanced skyline / street life.
  */
 export async function addCityAmbience(root: THREE.Group): Promise<void> {
   addCircuitFloor(root);
   await addCitySkyline(root);
+  await addMegacityStreets(root);
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     if (o.name !== 'CityStreets' && o.name !== 'CityLots' && o.name !== 'Ground' && o.name !== 'GroundApron' && o.name !== 'HorizonCore') {
