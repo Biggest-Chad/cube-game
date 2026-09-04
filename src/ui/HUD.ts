@@ -48,6 +48,7 @@ export class HUD {
   private lastNucleusLaser: boolean | null = null;
   private lastAmmoKey = '';
   private lastDroneKey = '';
+  private lastPilotKey = '';
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -89,6 +90,11 @@ export class HUD {
             </span>
             <span class="hud-ammo-key">R</span>
           </button>
+          <button class="hud-pilot-btn interactive ui-btn panel-hidden" id="hud-pilot-btn" type="button" aria-label="Pilot active">
+            <span class="hud-pilot-ring" id="hud-pilot-ring"></span>
+            <span class="hud-pilot-call" id="hud-pilot-call">—</span>
+            <span class="hud-pilot-key">Q</span>
+          </button>
         </div>
 
         <div class="hud-vitals" id="hud-vitals" aria-label="Ship integrity">
@@ -103,6 +109,15 @@ export class HUD {
             <span class="hud-vital-val" id="hud-hull-val">100</span>
           </div>
           <div class="hud-drones panel-hidden" id="hud-drones" aria-label="Drone fleet"></div>
+        </div>
+
+        <div class="hud-flyer panel-hidden" id="hud-flyer" aria-label="Transit">
+          <div class="hud-flyer-title" id="hud-flyer-title">TRANSFER</div>
+          <div class="hud-flyer-meta">
+            <span id="hud-flyer-time">0.0s</span>
+            <span id="hud-flyer-speed">×1.00</span>
+          </div>
+          <div class="hud-flyer-lock" id="hud-flyer-lock" aria-hidden="true"></div>
         </div>
 
         <div class="hud-side-rail">
@@ -168,7 +183,7 @@ export class HUD {
           </div>
         </div>
 
-        <div class="desktop-hint">WASD ORBIT · IJKL / RIGHT STICK AIM · R AMMO · AUTO-FIRE · SCROLL ZOOM</div>
+        <div class="desktop-hint">WASD ORBIT · IJKL / RIGHT STICK AIM · R AMMO · Q PILOT · AUTO-FIRE · SCROLL ZOOM</div>
       </div>
     `;
     this.fragEl = this.root.querySelector('#hud-frag')!;
@@ -211,6 +226,7 @@ export class HUD {
       btnMenu: this.btnMenu,
       shopHintOpen: this.root.querySelector('#shop-hint-open') as HTMLElement,
       btnAmmo: this.root.querySelector('#hud-ammo-btn') as HTMLElement,
+      btnPilot: this.root.querySelector('#hud-pilot-btn') as HTMLElement,
     };
   }
 
@@ -235,6 +251,34 @@ export class HUD {
     wrap?.classList.toggle('ap', info.id === 'ap');
     wrap?.classList.toggle('he', info.id === 'he');
     btn?.classList.toggle('locked', !info.canCycle);
+  }
+
+  updatePilot(info: {
+    visible: boolean;
+    callsign: string;
+    ready: boolean;
+    active: boolean;
+    cooldown01: number;
+    accent?: string;
+  }): void {
+    const btn = this.root.querySelector('#hud-pilot-btn') as HTMLElement | null;
+    if (!btn) return;
+    const key = `${info.visible ? 1 : 0}|${info.callsign}|${info.ready ? 1 : 0}|${info.active ? 1 : 0}|${info.cooldown01.toFixed(2)}`;
+    if (key === this.lastPilotKey) return;
+    this.lastPilotKey = key;
+    btn.classList.toggle('panel-hidden', !info.visible);
+    if (!info.visible) return;
+    const call = this.root.querySelector('#hud-pilot-call');
+    const ring = this.root.querySelector('#hud-pilot-ring') as HTMLElement | null;
+    if (call) call.textContent = info.callsign;
+    btn.classList.toggle('ready', info.ready);
+    btn.classList.toggle('active', info.active);
+    btn.classList.toggle('cooling', !info.ready && !info.active);
+    const pct = Math.round((1 - info.cooldown01) * 100);
+    if (ring) {
+      const c = info.accent ?? '#00f0ff';
+      ring.style.background = `conic-gradient(${c} ${pct}%, rgba(0,20,28,0.55) ${pct}%)`;
+    }
   }
 
   setVisible(v: boolean): void {
@@ -505,12 +549,18 @@ export class HUD {
     canBuy: boolean,
     firstTime: boolean,
     hintText = '',
-    visible = true
+    visible = true,
+    recoLabel = ''
   ): void {
     this.btnTech.classList.toggle('panel-hidden', !visible);
     this.btnTech.classList.toggle('shop-ready', visible && canBuy);
     const badge = this.root.querySelector('#shop-badge');
-    if (badge) badge.classList.toggle('panel-hidden', !visible || !canBuy);
+    if (badge) {
+      badge.classList.toggle('panel-hidden', !visible || !canBuy);
+      if (canBuy && visible) badge.textContent = 'BUY';
+    }
+    const sub = this.btnTech.querySelector('.shop-btn-sub');
+    if (sub) sub.textContent = visible && recoLabel ? recoLabel : 'Upgrades';
 
     if (visible && firstTime && canBuy && hintText) {
       this.shopHint.classList.remove('panel-hidden');
@@ -523,5 +573,26 @@ export class HUD {
 
   hideShopHint(): void {
     this.shopHint.classList.add('panel-hidden');
+  }
+
+  setFlyerVisible(on: boolean): void {
+    this.root.querySelector('#hud-flyer')?.classList.toggle('panel-hidden', !on);
+    this.root.querySelector('#hud-ammo')?.classList.toggle('panel-hidden', on);
+    const labels = this.root.querySelectorAll('.control-label');
+    if (labels[0]) labels[0].textContent = on ? 'STRAFE' : 'ORBIT';
+    if (labels[1]) labels[1].textContent = on ? 'FIRE' : 'AIM';
+    const lock = this.root.querySelector('#hud-flyer-lock');
+    if (!on && lock) lock.classList.remove('hot');
+  }
+
+  updateFlyer(info: { title: string; time: number; speed: number; lock: boolean }): void {
+    const title = this.root.querySelector('#hud-flyer-title');
+    const time = this.root.querySelector('#hud-flyer-time');
+    const speed = this.root.querySelector('#hud-flyer-speed');
+    const lock = this.root.querySelector('#hud-flyer-lock');
+    if (title) title.textContent = info.title;
+    if (time) time.textContent = `${info.time.toFixed(1)}s`;
+    if (speed) speed.textContent = `×${info.speed.toFixed(2)}`;
+    lock?.classList.toggle('hot', info.lock);
   }
 }
