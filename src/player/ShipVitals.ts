@@ -110,6 +110,26 @@ export class ShipVitals {
     };
   }
 
+  /** Flyer hazards: EMP dumps shield; mines punch hull harder if shield is already down. */
+  takeSplitDamage(shieldAmt: number, hullAmt: number): DamageIntakeResult {
+    this.timeSinceDamage = 0;
+    const shieldDamage = Math.min(this.shield, Math.max(0, shieldAmt));
+    this.shield -= shieldDamage;
+    let hullDamage = 0;
+    if (hullAmt > 0) {
+      const unshielded = this.shield <= 0.05 ? 1.4 : 1;
+      hullDamage = hullAmt * (1 - this.effectiveArmor) * unshielded;
+      this.hull = Math.max(0, this.hull - hullDamage);
+    }
+    return {
+      hullDamage,
+      shieldDamage,
+      died: this.hull <= 0,
+      raw: shieldAmt + hullAmt,
+      afterArmor: hullDamage,
+    };
+  }
+
   /** Shield regen after 3s without taking damage. */
   update(dt: number): void {
     this.timeSinceDamage += dt;

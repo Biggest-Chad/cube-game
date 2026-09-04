@@ -24,8 +24,11 @@ export class InputController {
   private aimActive = false;
   private pinchStartDist = 0;
   private zoomDelta = 0;
+  private firePulse = false;
   private ammoQueued = false;
   private ammoHeld = false;
+  private pilotQueued = false;
+  private pilotHeld = false;
   private bound = false;
 
   private joyZone: HTMLElement | null = null;
@@ -66,15 +69,21 @@ export class InputController {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     this.keys.add(e.code);
+    if (e.code === 'Space' && !e.repeat) this.firePulse = true;
     if (e.code === 'KeyR' && !this.ammoHeld) {
       this.ammoQueued = true;
       this.ammoHeld = true;
+    }
+    if (e.code === 'KeyQ' && !this.pilotHeld) {
+      this.pilotQueued = true;
+      this.pilotHeld = true;
     }
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
     if (e.code === 'KeyR') this.ammoHeld = false;
+    if (e.code === 'KeyQ') this.pilotHeld = false;
   };
 
   private onJoyDown = (e: PointerEvent): void => {
@@ -114,6 +123,7 @@ export class InputController {
     this.aimZone?.setPointerCapture(e.pointerId);
     this.aimZone?.classList.add('active');
     this.setStick(this.aimStickEl, 0, 0);
+    this.firePulse = true;
   };
 
   private onAimMove = (e: PointerEvent): void => {
@@ -230,6 +240,9 @@ export class InputController {
     this.zoomDelta = 0;
     this.ammoQueued = false;
     this.ammoHeld = false;
+    this.pilotQueued = false;
+    this.pilotHeld = false;
+    this.firePulse = false;
     this.keys.clear();
     this.setStick(this.stickEl, 0, 0);
     this.setStick(this.aimStickEl, 0, 0);
@@ -244,6 +257,23 @@ export class InputController {
   consumeAmmoCycle(): boolean {
     const v = this.ammoQueued;
     this.ammoQueued = false;
+    return v;
+  }
+
+  consumePilotActive(): boolean {
+    const v = this.pilotQueued;
+    this.pilotQueued = false;
+    return v;
+  }
+
+  /** HUD chip tap uses the same queue as KeyQ. */
+  queuePilotActive(): void {
+    this.pilotQueued = true;
+  }
+
+  consumeFirePulse(): boolean {
+    const v = this.firePulse;
+    this.firePulse = false;
     return v;
   }
 

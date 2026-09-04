@@ -13,8 +13,12 @@ import {
   ENEMY_ARC_DEFAULT_HIT_POINTS,
   ENEMY_ATTACK_DRONE_BASE_HIT_POINTS,
   ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL,
+  ENEMY_ATTACK_DRONE_RANGE,
   ENEMY_ATTACK_DRONE_SPEED,
   ENEMY_DRONE_BASE_DAMAGE,
+  ENEMY_HARASS_DRONE_DAMAGE,
+  ENEMY_HARASS_SPAWN_INTERVAL_MIN,
+  ENEMY_HARASS_SPAWN_INTERVAL_START,
   ENEMY_DRONE_DAMAGE_PER_LEVEL,
   ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER,
   ENEMY_DRONE_REPAIR_FRACTION,
@@ -54,6 +58,7 @@ import { NucleusSpikeBurst, type SpikeBurstPhase } from './NucleusSpikeBurst';
 import { NucleusOffensiveKit } from './NucleusOffensiveKit';
 import { spikeBurstProfileForStage } from '../data/nucleusAtk';
 import { NUCLEUS_KAMIKAZE_PROXIMITY } from '../data/constraints';
+import { getLevel } from '../data/levels';
 
 export interface DefenseSchedule {
   coreShield: boolean;
@@ -67,7 +72,7 @@ export interface DefenseSchedule {
 }
 
 export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
-  if (levelId <= 3) {
+  if (levelId <= 1) {
     return {
       coreShield: false,
       faceShields: false,
@@ -78,12 +83,23 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
       elite: false,
     };
   }
+  if (levelId <= 3) {
+    return {
+      coreShield: false,
+      faceShields: false,
+      floatingTurretFallback: 0,
+      enemyDroneCount: 2,
+      cubeFighterCount: 0,
+      layeredShields: false,
+      elite: false,
+    };
+  }
   if (levelId <= 6) {
     return {
       coreShield: true,
       faceShields: false,
       floatingTurretFallback: 0,
-      enemyDroneCount: 0,
+      enemyDroneCount: 2,
       cubeFighterCount: 1,
       layeredShields: false,
       elite: false,
@@ -94,7 +110,7 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
       coreShield: true,
       faceShields: false,
       floatingTurretFallback: 1,
-      enemyDroneCount: 0,
+      enemyDroneCount: 3,
       cubeFighterCount: 2,
       layeredShields: false,
       elite: false,
@@ -105,7 +121,7 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
       coreShield: true,
       faceShields: true,
       floatingTurretFallback: 1,
-      enemyDroneCount: 1,
+      enemyDroneCount: 4,
       cubeFighterCount: 2,
       layeredShields: false,
       elite: false,
@@ -116,7 +132,7 @@ export function defenseScheduleForLevel(levelId: number): DefenseSchedule {
       coreShield: true,
       faceShields: true,
       floatingTurretFallback: 1,
-      enemyDroneCount: 3,
+      enemyDroneCount: 5,
       cubeFighterCount: 3,
       layeredShields: false,
       elite: false,
@@ -203,6 +219,9 @@ export class CubeDefense {
   private readonly playerVel = new THREE.Vector3();
   private readonly lastPlayer = new THREE.Vector3();
   private playerVelPrimed = false;
+  private harassAcc = 0;
+  private stageElapsed = 0;
+  private expectedClear = 90;
 
   constructor() {
     this.group.add(this.projectileRoot);
@@ -329,9 +348,13 @@ export class CubeDefense {
       }
     }
 
-    for (let i = 0; i < this.schedule.enemyDroneCount; i++) {
-      this.spawnEnemyDrone('attack', false);
-    }
+    const L = getLevel(levelId);
+    const work = L.size ** 3 * L.density * L.avgHP;
+    const dps = 42 + levelId * 5.5;
+    this.expectedClear = Math.min(420, Math.max(48, work / dps));
+    this.stageElapsed = 0;
+    this.harassAcc = 2.2;
+    if (this.schedule.enemyDroneCount > 0) this.spawnEnemyDrone('attack', false);
     for (let i = 0; i < this.schedule.cubeFighterCount; i++) {
       this.spawnEnemyDrone('cube-fighter', false);
     }
@@ -421,7 +444,9 @@ export class CubeDefense {
         ? kami?.damage ?? 14
         : isCubeFighter
           ? (CUBE_FIGHTER_BASE_DAMAGE + this.levelId * CUBE_FIGHTER_DAMAGE_PER_LEVEL) * dmgMul
-          : (ENEMY_DRONE_BASE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL) * dmgMul,
+          : isRepair
+            ? (ENEMY_DRONE_BASE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL) * dmgMul
+            : (ENEMY_HARASS_DRONE_DAMAGE + this.levelId * ENEMY_DRONE_DAMAGE_PER_LEVEL) * dmgMul,
       fireRate: isCubeFighter
         ? CUBE_FIGHTER_FIRE_RATE * this.fireRateMul
         : (this.schedule.elite ? ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER : 1.0) * this.fireRateMul,
@@ -437,15 +462,23 @@ export class CubeDefense {
       repairFrac: ENEMY_DRONE_REPAIR_FRACTION,
       ...(isKami ? { range: NUCLEUS_KAMIKAZE_PROXIMITY + 40 } : {}),
       ...(isCubeFighter ? { range: CUBE_FIGHTER_RANGE } : {}),
+      ...(!isKami && !isCubeFighter && !isRepair ? { range: ENEMY_ATTACK_DRONE_RANGE } : {}),
     });
     if (enraged) d.setEnraged(true);
-    // Spawn near cube surface
-    const ang = Math.random() * Math.PI * 2;
-    d.group.position.set(
-      Math.cos(ang) * he * 1.2,
-      (Math.random() - 0.5) * he,
-      Math.sin(ang) * he * 1.2
-    );
+    // Harassers peel off the cube toward the ship so they enter the gun sight
+    const player = this.hooks?.getPlayerPosition();
+    if (role === 'attack' && player && player.lengthSq() > 0.4) {
+      const dir = player.clone().normalize();
+      d.group.position.copy(dir).multiplyScalar(he * 1.18);
+      d.group.position.y += (Math.random() - 0.5) * 2.2;
+    } else {
+      const ang = Math.random() * Math.PI * 2;
+      d.group.position.set(
+        Math.cos(ang) * he * 1.2,
+        (Math.random() - 0.5) * he,
+        Math.sin(ang) * he * 1.2
+      );
+    }
     this.enemyDrones.push(d);
     this.group.add(d.group);
     return d;
@@ -791,6 +824,33 @@ export class CubeDefense {
       );
     }
 
+    this.stageElapsed += dt;
+    const destablized = this.cube.nucleus.snapshot().decaying;
+    if (
+      this.levelId >= 2 &&
+      this.schedule.enemyDroneCount > 0 &&
+      !destablized
+    ) {
+      this.harassAcc += dt;
+      const progress = Math.min(1.25, this.stageElapsed / Math.max(30, this.expectedClear));
+      const ease = progress * progress;
+      const interval =
+        ENEMY_HARASS_SPAWN_INTERVAL_START +
+        (ENEMY_HARASS_SPAWN_INTERVAL_MIN - ENEMY_HARASS_SPAWN_INTERVAL_START) * ease;
+      const extra = 1 + Math.floor(this.levelId / 8);
+      const cap = Math.min(
+        ENEMY_DRONE_SOFT_CAP - 4,
+        Math.round(
+          1 + (this.schedule.enemyDroneCount + extra - 1) * Math.min(1, progress)
+        )
+      );
+      const aliveAtk = this.enemyDrones.filter((d) => d.alive && d.role === 'attack').length;
+      if (aliveAtk < Math.max(1, cap) && this.harassAcc >= interval) {
+        this.harassAcc = 0;
+        this.spawnEnemyDrone('attack', false);
+      }
+    }
+
     // Legacy rage bolts (overload spray)
     if (allowFire) this.updateArcs(dt, playerPos);
 
@@ -957,6 +1017,8 @@ export class CubeDefense {
       this.group.remove(d.group);
     }
     this.enemyDrones = [];
+    this.harassAcc = 0;
+    this.stageElapsed = 0;
     for (const a of this.arcs) {
       this.projectileRoot.remove(a.mesh);
       a.mesh.geometry.dispose();

@@ -111,6 +111,13 @@ import {
   normalizeMainGunAmmo,
   type MainGunAmmoId,
 } from '../data/ammo';
+import { coreAttributeForLevel } from '../data/core';
+import { getPilot } from '../data/pilots';
+import { PilotRuntime } from '../combat/PilotRuntime';
+import { PilotState, type PilotUnlockContext } from '../progression/PilotState';
+import { PilotSplashUI } from '../ui/PilotSplashUI';
+import { FlyerRun } from '../flyer/FlyerRun';
+import { flyerSceneTitle, pickFlyerScene, shouldRunTransit, type FlyerSceneId } from '../data/flyer';
 
 type Mode =
   | 'menu'
@@ -126,7 +133,8 @@ type Mode =
   | 'settings'
   | 'paused'
   | 'dying'
-  | 'dead';
+  | 'dead'
+  | 'transit';
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -157,6 +165,8 @@ export class Game {
   private tech = new TechTree();
   private research = new ResearchTree();
   private idle = new IdleSimulator();
+  private readonly pilotRuntime = new PilotRuntime();
+  private readonly pilots = new PilotState(this.pilotRuntime);
   private particles: ParticlePool;
   private shatter: ShatterSystem;
   private rings: ImpactRings;
@@ -182,6 +192,7 @@ export class Game {
   private tutorial!: TutorialDirector;
   private evolveReady!: EvolveReadyUI;
   private evolveConfirm!: EvolveConfirmUI;
+  private pilotSplash!: PilotSplashUI;
   private screenFx!: ScreenTransition;
   private overlay: HTMLElement;
   private toastRoot: HTMLElement;
@@ -230,7 +241,15 @@ export class Game {
     frag: number;
     core: number;
     doubled: boolean;
+    transitStars?: 1 | 2 | 3;
+    transitLattice?: number;
+    transitScene?: FlyerSceneId;
   } | null = null;
+  private flyer: FlyerRun | null = null;
+  private readonly _flyerPos = new THREE.Vector3();
+  private readonly _flyerLook = new THREE.Vector3();
+  private readonly _flyerCam = new THREE.Vector3();
+  private prevCamFar = 500;
   private sessionBlocksDestroyed = 0;
   private sessionPurchased = false;
   private shopOpen = false;
@@ -254,6 +273,8 @@ export class Game {
   private corePurchaseLock = false;
   /** Once-per-clear Lattice overshield available. */
   private overshieldReady = false;
+  /** Warden OVERSHIELD pulse bonus currently on ShipVitals.maxShield. */
+  private wardenPulseBonus = 0;
   /** Scan-pulse damage buff timer (seconds remaining). */
   private scanPulseTimer = 0;
   private readonly _aimPoint = new THREE.Vector3();
@@ -392,6 +413,8 @@ export class Game {
     this.evolveConfirm = new EvolveConfirmUI(document.getElementById('ui-root')!);
     this.evolveConfirm.onConfirm = () => this.performEvolve();
     this.evolveConfirm.onCancel = () => undefined;
+    this.pilotSplash = new PilotSplashUI(document.getElementById('ui-root')!);
+    this.pilotSplash.onContinue = () => undefined;
     this.screenFx = new ScreenTransition(document.getElementById('app') ?? document.body);
 
     const els = this.hud.elements;
@@ -871,6 +894,11 @@ export class Game {
       void this.audio.resume();
       this.startLevel(id);
     };
+    this.levelUI.onSelectTransit = (afterId) => {
+      this.levelUI.hide();
+      void this.audio.resume();
+      this.startTransitReplay(afterId);
+    };
     this.levelUI.onReplayIntro = () => {
       this.levelUI.hide();
       void this.audio.resume();
@@ -1085,14 +1113,18 @@ export class Game {
     this.save.data.currentLevel = EVOLVE_RESET_LEVEL;
     this.pendingNextLevelId = EVOLVE_RESET_LEVEL;
 
-    // Retrain combat shop only — keep weapons, branches, research
+    // Run-layer shop reset. KEEP: ownedWeapons, pilots (if present).
+    // RESET: upgrades, drones, bases, hardpoint buys.
+    // Research / Ascension baseline stay (meta).
     this.tech.resetCombatUpgrades();
     this.tech.setAscensionTier(newTier);
     this.tech.setBaseline(this.save.data.baseline);
     this.tech.setResearch(this.research.bonuses);
-    this.loadout.resetBranchRanks();
-    this.groundBays.resetRanks();
+    this.loadout.resetForEvolve();
+    this.droneBays.resetToDefault();
+    this.groundBays.resetToDefault();
     this.groundBays.setRankCap(repeatableUpgradeCap(newTier));
+    this.mainGunAmmo = 'standard';
     this.hardpoints.rebuildFromLoadout();
     this.syncGroundStations();
     this.syncDronesFromBays();
@@ -1359,6 +1391,7 @@ export class Game {
     this.reticle.setVisible(false);
     this.hardpoints.reset();
     this.weapon.reset();
+    this.teardownTransitVisuals();
     this.persist();
 
     // Initial detonation
@@ -1683,7 +1716,8 @@ export class Game {
       canBuy,
       firstDrone || firstWeapon,
       hint,
-      shopVisible
+      shopVisible,
+      rec?.name ?? weapon?.name ?? ''
     );
   }
 
@@ -1897,6 +1931,7 @@ export class Game {
     this.save.data.baseUnlockedTypes = gb.unlockedTypes;
     this.save.data.baseRanks = gb.ranks;
     this.syncLoadoutToSave();
+    // KEEP `pilots` as loaded — do not wipe or synthesize a blob.
     const adSnap = this.ads.toJSON();
     this.save.data.adsDayKey = adSnap.day;
     this.save.data.adsWatchedToday = adSnap.counts as Record<string, number>;
@@ -2115,11 +2150,14 @@ export class Game {
       return;
     }
     if (this.mode !== 'paused') {
-      this.prePauseMode = this.mode === 'settings' || this.mode === 'tech' || this.mode === 'levels' || this.mode === 'research'
-        ? this.prePauseMode || 'playing'
-        : this.mode === 'intro'
-          ? 'intro'
-          : 'playing';
+      this.prePauseMode =
+        this.mode === 'transit'
+          ? 'transit'
+          : this.mode === 'settings' || this.mode === 'tech' || this.mode === 'levels' || this.mode === 'research'
+            ? this.prePauseMode || 'playing'
+            : this.mode === 'intro'
+              ? 'intro'
+              : 'playing';
     }
     this.pendingReturnMode = 'playing';
     this.returnToPause = true;
@@ -2157,12 +2195,21 @@ export class Game {
       this.syncMusicToMode();
       return;
     }
+    if (this.prePauseMode === 'transit' && this.flyer) {
+      this.mode = 'transit';
+      this.shopOpen = false;
+      this.hud.setVisible(true);
+      this.hud.setFlyerVisible(true);
+      this.syncMusicToMode();
+      return;
+    }
     this.resumeGameplayFromShop();
   }
 
   private extractFromPause(): void {
     this.hidePauseCard();
     this.returnToPause = false;
+    this.teardownTransitVisuals();
     this.persist();
     this.showMenu({ forceReloadDemo: true });
   }
@@ -2198,7 +2245,7 @@ export class Game {
       return;
     }
 
-    if (this.mode === 'core_death' || this.mode === 'dying' || this.mode === 'dead') {
+    if (this.mode === 'core_death' || this.mode === 'dying' || this.mode === 'dead' || this.mode === 'transit') {
       return;
     }
     // Block shop during black cut — opening mid-fade left tech-tree empty + ship at scale 0
@@ -2287,9 +2334,11 @@ export class Game {
     });
     this.pendingReturnMode = fromCombat ? 'playing' : 'menu';
     this.returnToPause = keepPauseReturn && fromCombat;
+    const transitAfter =
+      this.mode === 'transit' || this.prePauseMode === 'transit' ? this.currentLevelId : 0;
     this.mode = 'levels';
     this.hud.setVisible(false);
-    this.levelUI.show(this.save.data.highestLevel, this.currentLevelId);
+    this.levelUI.show(this.save.data.highestLevel, this.currentLevelId, transitAfter);
     this.syncMusicToMode();
   }
 
@@ -2827,6 +2876,129 @@ export class Game {
       core: coreGain,
       doubled: this.clearRewardMul >= 2,
     };
+    if (shouldRunTransit(this.currentLevelId)) {
+      this.beginTransit();
+      return;
+    }
+    this.presentLevelClearCard();
+  }
+
+  /** Jump to a transfer flight from the sector browser (no cube payout). */
+  private startTransitReplay(afterId: number): void {
+    if (!shouldRunTransit(afterId)) return;
+    this.hidePauseCard();
+    this.returnToPause = false;
+    this.returnToClear = false;
+    this.menu.hide();
+    this.shopUI.hide();
+    this.overlay.innerHTML = '';
+    this.wipeCombatSession();
+    this.currentLevelId = afterId;
+    this.pendingNextLevelId = nextStageAfterClear(
+      afterId,
+      this.save.data.lifetimeHighestLevel
+    );
+    this.clearCard = {
+      name: flyerSceneTitle(pickFlyerScene(afterId)),
+      frag: 0,
+      core: 0,
+      doubled: true,
+    };
+    this.levelClearHandled = true;
+    this.beginTransit();
+  }
+
+  private beginTransit(): void {
+    const sceneId = pickFlyerScene(this.currentLevelId);
+    this.flyer?.dispose();
+    this.flyer = new FlyerRun(sceneId);
+    this.scene.add(this.flyer.root);
+    this.mode = 'transit';
+    this.vitals.fullRestore();
+    this.ship.beginManualFlight();
+    this.ship.group.visible = true;
+    this.ship.group.scale.setScalar(1);
+    this.hud.setVisible(true);
+    this.hud.setFlyerVisible(true);
+    this.hud.setCrosshairVisible(false);
+    this.reticle.setVisible(false);
+    this.prevCamFar = this.cameraCtrl.camera.far;
+    this.cameraCtrl.camera.far = 260;
+    this.cameraCtrl.camera.updateProjectionMatrix();
+    this.scene.fog = new THREE.Fog(this.flyer.fogColor, 18, 90);
+    this.input.releaseAll();
+    this.toast(`${this.flyer.title} · relocating defense grid`);
+  }
+
+  private teardownTransitVisuals(): void {
+    if (this.flyer) {
+      this.scene.remove(this.flyer.root);
+      this.flyer.dispose();
+      this.flyer = null;
+    }
+    this.ship.endManualFlight();
+    this.hud.setFlyerVisible(false);
+    this.cameraCtrl.camera.far = this.prevCamFar;
+    this.cameraCtrl.camera.updateProjectionMatrix();
+    this.scene.fog = null;
+  }
+
+  private updateTransit(dt: number): void {
+    const run = this.flyer;
+    if (!run) {
+      this.presentLevelClearCard();
+      return;
+    }
+    this.input.update(dt);
+    const fire = this.input.consumeFirePulse();
+    run.update(dt, this.input.axisX, this.input.axisY, fire, (_kind, sh, hullPlus) => {
+      const died = this.vitals.takeSplitDamage(sh, hullPlus).died;
+      this.cameraCtrl.shake(0.22);
+      this.updateHudVitals();
+      return died;
+    });
+    run.shipPos(this._flyerPos);
+    run.lookTarget(this._flyerLook);
+    run.camPos(this._flyerCam);
+    this.ship.placeManual(this._flyerPos, this._flyerLook);
+    this.ship.update(this.cameraCtrl, dt, this.particles);
+    this.cameraCtrl.camera.position.copy(this._flyerCam);
+    this.cameraCtrl.camera.lookAt(this._flyerLook);
+    this.hud.updateFlyer({
+      title: run.title,
+      time: run.t,
+      speed: run.speedMul,
+      lock: run.lockOn,
+    });
+    this.updateHudVitals();
+    if (run.failed) {
+      this.endTransit(true);
+      return;
+    }
+    if (run.finished) this.endTransit(false);
+  }
+
+  private endTransit(failed: boolean): void {
+    const run = this.flyer;
+    const snap = this.vitals.snapshot();
+    const hullRatio = snap.hull / Math.max(1, snap.maxHull);
+    if (run && !failed) {
+      const res = run.result(this.currentLevelId, hullRatio);
+      this.currency.addCoreEnergy(res.lattice, 1);
+      if (this.clearCard) {
+        this.clearCard.transitStars = res.stars;
+        this.clearCard.transitLattice = res.lattice;
+        this.clearCard.transitScene = res.scene;
+        this.clearCard.core += res.lattice;
+      }
+      this.toast(`${res.stars}★ TRANSFER · +${res.lattice} CORE`);
+    }
+    this.teardownTransitVisuals();
+    this.persist();
+    if (failed) {
+      this.beginShipDeath();
+      return;
+    }
     this.presentLevelClearCard();
   }
 
@@ -2857,6 +3029,11 @@ export class Game {
         <div class="card-body overlay-body">
           <h2 id="clear-title">LEVEL CLEAR</h2>
           <p>${card.name}</p>
+          ${
+            card.transitStars
+              ? `<div class="reward">TRANSFER ${'★'.repeat(card.transitStars)}${'☆'.repeat(3 - card.transitStars)} · +${card.transitLattice ?? 0} CORE</div>`
+              : ''
+          }
           <div class="reward">${rewardText}</div>
         </div>
         <div class="overlay-actions card-actions">
@@ -3307,6 +3484,9 @@ export class Game {
         // Nucleus dead → death FX, then clear UI (not instant card)
         if (this.cube.isLevelComplete()) this.beginCoreDeathSequence();
       }
+    } else if (this.mode === 'transit') {
+      this.post.setPresentation(true);
+      this.updateTransit(dt);
     } else if (this.mode === 'core_death') {
       this.updateCoreDeath(dt);
     } else if (this.mode === 'dying') {

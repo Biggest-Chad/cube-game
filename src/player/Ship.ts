@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { COLORS, ORBIT } from '../data/constants';
 import type { OrbitalCamera } from './OrbitalCamera';
+import { createHeroShip } from './heroShipFactory';
 import { SHIP_MUZZLE, SHIP_THRUSTERS } from './ShipMounts';
+import { loadHeroVisual } from './heroGlb';
 
 /**
  * Aggressive cinematic interceptor — dagger silhouette, forward-swept wings,
@@ -38,32 +39,37 @@ export class Ship {
   private runningLights: THREE.Mesh[] = [];
   private readonly _thrusterWorld = new THREE.Vector3();
   private readonly _aft = new THREE.Vector3();
+  private manualFlight = false;
 
   constructor() {
-    this.body = this.buildMesh();
+    this.body = new THREE.Group();
     this.group.add(this.body);
     this.setupLights();
     this.setupThrusterLights();
-    this.buildExhaustTrails();
     void this.adoptHeroVisual();
   }
 
   /**
-   * Prefer the 3DHaupt Intergalactic hull (CC-BY-NC). Fall back to interceptor-v2.
+   * Load original nyx-mako.glb when present; otherwise interceptor-v2.glb
+   * (in-house interim). Never load intergalactic.glb (3DHaupt CC-BY-NC).
+   * TypeScript box factories are last-resort only — not the Android default.
    * Mounts stay on `ship.group` (see ShipMounts).
    */
   async adoptHeroVisual(): Promise<void> {
-    const loader = new GLTFLoader();
-    const tryUrls = ['./ships/intergalactic.glb', './ships/interceptor-v2.glb'];
-    for (const url of tryUrls) {
-      try {
-        const gltf = await loader.loadAsync(url);
-        this.installHeroVisual(gltf.scene, url.includes('intergalactic') ? 'Intergalactic' : 'InterceptorV2');
-        return;
-      } catch {
-        // next candidate
-      }
+    try {
+      const hero = await loadHeroVisual();
+      this.installHeroVisual(hero.group, hero.name);
+      return;
+    } catch (err) {
+      console.warn('[ship] hero GLB failed', err);
     }
+    try {
+      this.installHeroVisual(createHeroShip(), 'VesperDagger');
+      return;
+    } catch (err) {
+      console.warn('[ship] VesperDagger factory failed', err);
+    }
+    this.installHeroVisual(this.buildMesh(), 'BoxDagger');
   }
 
   private installHeroVisual(next: THREE.Group, name: string): void {
@@ -751,6 +757,7 @@ export class Ship {
       ) => void;
     } | null
   ): void {
+    if (!this.manualFlight) {
     camera.getShipPosition(this._desired);
     const posLag =
       typeof camera.getShipVisualLagRate === 'function'
@@ -778,6 +785,7 @@ export class Ship {
     const targetMotion = THREE.MathUtils.clamp(camera.turnRate * 1.8 + 0.12, 0.08, 1.4);
     const mK = 1 - Math.exp(-6 * dt);
     this.motionIntensity += (targetMotion - this.motionIntensity) * mK;
+    }
 
     this.thrusterPulse += dt * (6 + this.motionIntensity * 8);
     const flicker =
@@ -858,6 +866,21 @@ export class Ship {
         }
       }
     }
+  }
+
+  beginManualFlight(): void {
+    this.manualFlight = true;
+    this.motionIntensity = 1.1;
+  }
+
+  endManualFlight(): void {
+    this.manualFlight = false;
+  }
+
+  placeManual(pos: THREE.Vector3, lookAt: THREE.Vector3): void {
+    this.group.position.copy(pos);
+    this._m.lookAt(pos, lookAt, this._up);
+    this.group.quaternion.setFromRotationMatrix(this._m);
   }
 
   getMotionIntensity(): number {

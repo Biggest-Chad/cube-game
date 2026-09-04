@@ -12,6 +12,9 @@ import {
   ENEMY_DRONE_DEFAULT_SPEED,
 } from '../data/constraints';
 import type { CubeManager } from './CubeManager';
+import { createEnemyDrone } from './enemyDroneFactory';
+import { disposeUnshared, iffHaloTex } from '../drones/droneGeom';
+import { loadEnemyDroneGlb } from '../drones/droneGlb';
 
 export type EnemyDroneRole = 'attack' | 'repair' | 'kamikaze' | 'cube-fighter';
 
@@ -42,28 +45,6 @@ const DEFAULT: EnemyDroneConfig = {
   fireMul: 1,
   repairFrac: ENEMY_DRONE_DEFAULT_REPAIR_FRACTION,
 };
-
-let haloTex: THREE.CanvasTexture | null = null;
-function enemyHaloTex(): THREE.CanvasTexture {
-  if (haloTex) return haloTex;
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const ctx = c.getContext('2d')!;
-  const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 31);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.28, 'rgba(255,255,255,0.55)');
-  g.addColorStop(0.65, 'rgba(255,255,255,0.12)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 64);
-  haloTex = new THREE.CanvasTexture(c);
-  haloTex.needsUpdate = true;
-  return haloTex;
-}
-
-function hullMat(color: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({ color, toneMapped: false, fog: true });
-}
 
 function glowMat(color: number, opacity = 0.9): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
@@ -97,9 +78,11 @@ export class EnemyDrone {
   private huntShip = true;
   private retargetT = 0;
   private droneIndex = 0;
-  private halo!: THREE.Sprite;
+  private hullRoot = new THREE.Group();
+  private halo!: THREE.Sprite | THREE.Mesh;
   private flash!: THREE.Mesh;
-  private haloSize = 2.4;
+  private rotor: THREE.Group | null = null;
+  private haloSize = 1.7;
   private pulseT = 0;
 
   constructor(id: string, index: number, halfExtent: number, cfg: Partial<EnemyDroneConfig> = {}) {
@@ -112,7 +95,10 @@ export class EnemyDrone {
     this.orbitRadius = halfExtent * 1.35 + 1;
     this.orbitHeight = (index % 3) * 1.8 - 1.5;
 
+    this.hullRoot.name = 'HullVisual';
+    this.group.add(this.hullRoot);
     this.buildMesh();
+    void this.adoptGlbVisual();
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
     this.beam = new THREE.Line(
@@ -132,67 +118,63 @@ export class EnemyDrone {
   }
 
   private buildMesh(): void {
-    const c = this.cfg.color;
-    const accent = this.role === 'repair' ? 0xaaffcc : this.role === 'kamikaze' ? 0xffee88 : 0xffa0c8;
-    this.haloSize = this.role === 'kamikaze' ? 3.1 : this.role === 'cube-fighter' ? 2.8 : 2.35;
-
-    if (this.role === 'cube-fighter') {
-      const hull = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), hullMat(0x2a0510));
-      this.group.add(hull);
-      const core = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.38, 0.38), glowMat(c, 1));
-      this.group.add(core);
-      const rim = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.08, 0.78), glowMat(c, 0.85));
-      rim.position.y = 0.38;
-      this.group.add(rim);
-      for (const s of [-1, 1]) {
-        const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.42, 0.55), glowMat(accent, 0.9));
-        fin.position.set(s * 0.46, 0, 0.04);
-        this.group.add(fin);
-      }
-    } else {
-      const body = new THREE.Mesh(new THREE.OctahedronGeometry(0.48, 0), hullMat(0x220810));
-      body.scale.set(1.05, 0.72, 1.55);
-      this.group.add(body);
-      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), glowMat(c, 1));
-      core.scale.set(1, 0.7, 1.4);
-      this.group.add(core);
-      for (const side of [-1, 1]) {
-        const wing = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.07, 0.28), glowMat(c, 0.95));
-        wing.position.set(side * 0.42, 0, 0.04);
-        this.group.add(wing);
-      }
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 10), glowMat(accent, 1));
-      eye.position.set(0, 0.02, -0.52);
-      this.group.add(eye);
-      if (this.role === 'kamikaze') {
-        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.55, 6), glowMat(0xffee66, 1));
-        spike.rotation.x = -Math.PI / 2;
-        spike.position.z = -0.72;
-        this.group.add(spike);
-      }
-    }
-
-    this.halo = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: enemyHaloTex(),
-        color: c,
-        transparent: true,
-        opacity: 0.7,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        fog: true,
-        toneMapped: false,
-      })
-    );
-    this.halo.scale.setScalar(this.haloSize);
-    this.halo.renderOrder = 2;
-    this.group.add(this.halo);
-
-    this.flash = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), glowMat(0xffffff, 0));
-    this.flash.visible = false;
-    this.flash.position.z = -0.55;
-    this.group.add(this.flash);
+    const visual = createEnemyDrone(this.role, this.cfg.color);
+    const kids = visual.children.slice();
+    for (const c of kids) this.hullRoot.add(c);
+    this.bindSockets();
     this.group.renderOrder = 2;
+  }
+
+  private bindSockets(): void {
+    this.rotor = this.group.getObjectByName('rotor') as THREE.Group | null;
+    const namedHalo = this.group.getObjectByName('halo');
+    const namedFlash = this.group.getObjectByName('flash');
+
+    const haloIsSprite = !!(namedHalo && (namedHalo as THREE.Sprite).isSprite);
+    const haloIsMesh = !!(namedHalo && (namedHalo as THREE.Mesh).isMesh);
+    if (haloIsSprite || haloIsMesh) {
+      this.halo = namedHalo as THREE.Sprite | THREE.Mesh;
+    } else {
+      this.halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: iffHaloTex('enemy'),
+          color: 0xff2244,
+          transparent: true,
+          opacity: 0.42,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          fog: true,
+          toneMapped: false,
+        })
+      );
+      this.halo.name = 'halo';
+      this.halo.scale.setScalar(1.7);
+      this.halo.renderOrder = 2;
+      this.group.add(this.halo);
+    }
+    this.haloSize = this.halo.scale.x;
+
+    if (namedFlash instanceof THREE.Mesh) {
+      this.flash = namedFlash;
+    } else {
+      this.flash = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 6), glowMat(0xffffff, 0));
+      this.flash.name = 'flash';
+      this.flash.visible = false;
+      this.flash.position.z = -0.55;
+      this.group.add(this.flash);
+    }
+  }
+
+  private async adoptGlbVisual(): Promise<void> {
+    try {
+      const visual = await loadEnemyDroneGlb(this.role);
+      while (this.hullRoot.children.length) this.hullRoot.remove(this.hullRoot.children[0]);
+      const kids = visual.children.slice();
+      for (const c of kids) this.hullRoot.add(c);
+      this.bindSockets();
+    } catch (err) {
+      console.warn('[enemy-drone] GLB miss', this.role, err);
+    }
   }
 
   get position(): THREE.Vector3 {
@@ -256,12 +238,7 @@ export class EnemyDrone {
       return;
     }
     this.orbitRadius = halfExtent * (this.role === 'repair' ? 1.05 : 1.35) + 1;
-    this.orbitAngle += dt * 0.35 * this.cfg.speedMul;
-    this._pos.set(
-      Math.cos(this.orbitAngle) * this.orbitRadius,
-      this.orbitHeight + Math.sin(this.orbitAngle * 1.3) * 0.8,
-      Math.sin(this.orbitAngle) * this.orbitRadius
-    );
+    this.orbitAngle += dt * 0.4 * this.cfg.speedMul;
     const ally = this.nearestAlly(playerDronePositions);
     if (this.role === 'kamikaze') {
       const ram = ally ?? playerPos;
@@ -276,16 +253,18 @@ export class EnemyDrone {
       return;
     }
 
-    // Attack drones hunt player drones first, then the ship
     if (this.role === 'attack') {
-      const hunt = ally ?? playerPos;
-      const dive = Math.sin(this.orbitAngle * 0.5) > 0.7;
-      if (dive) this._pos.lerp(hunt, 0.22);
-      this.group.lookAt(hunt);
+      this.stationInFrontOfShip(playerPos, halfExtent, now);
+      this.group.lookAt(playerPos);
     } else {
+      this._pos.set(
+        Math.cos(this.orbitAngle) * this.orbitRadius,
+        this.orbitHeight + Math.sin(this.orbitAngle * 1.3) * 0.8,
+        Math.sin(this.orbitAngle) * this.orbitRadius
+      );
       this.group.lookAt(0, 0, 0);
     }
-    this.group.position.lerp(this._pos, 1 - Math.exp(-speed * 0.35 * dt));
+    this.group.position.lerp(this._pos, 1 - Math.exp(-speed * 0.42 * dt));
 
     if (this.beamLife > 0) {
       this.beamLife -= dt;
@@ -311,9 +290,13 @@ export class EnemyDrone {
       return;
     }
 
-    // Hunt player drones first; only shoot the ship when no allies remain
-    const target = ally ?? playerPos;
-    const isDrone = !!ally;
+    // Harassers always threaten the ship. Only peel onto an ally inside beam range.
+    let target = playerPos;
+    let isDrone = false;
+    if (ally && this.group.position.distanceTo(ally) <= this.cfg.range) {
+      target = ally;
+      isDrone = true;
+    }
 
     const dist = this.group.position.distanceTo(target);
     if (dist > this.cfg.range) return;
@@ -323,6 +306,29 @@ export class EnemyDrone {
     if (isDrone && ally) extras?.onDroneHit?.(ally, this.cfg.damage * 0.8);
     else onPlayerHit(this.cfg.damage);
     bus.emit('enemy-drone-fire', { id: this.id });
+  }
+
+  /** Hover in the ship's gun sight, between ship and cube. */
+  private stationInFrontOfShip(playerPos: THREE.Vector3, halfExtent: number, now: number): void {
+    const len = playerPos.length();
+    if (len < 0.25) {
+      this._pos.set(0, 1.6, halfExtent + 4);
+      return;
+    }
+    this._target.copy(playerPos).multiplyScalar(-1 / len);
+    this._lead.set(0, 1, 0).cross(this._target);
+    if (this._lead.lengthSq() < 1e-5) this._lead.set(1, 0, 0);
+    else this._lead.normalize();
+    const slot = (Math.floor(this.orbitAngle * 2.1) % 3) - 1;
+    const stand = 5.2 + (this.orbitAngle % 1) * 1.4;
+    this._pos
+      .copy(playerPos)
+      .addScaledVector(this._target, stand)
+      .addScaledVector(this._lead, slot * 1.75);
+    this._pos.y += Math.sin(now * 1.55 + this.orbitAngle) * 0.65;
+    const r = this._pos.length();
+    const minR = halfExtent + 2.5;
+    if (r < minR) this._pos.multiplyScalar(minR / Math.max(0.1, r));
   }
 
   private nearestAlly(drones: THREE.Vector3[] | undefined): THREE.Vector3 | undefined {
@@ -420,10 +426,13 @@ export class EnemyDrone {
 
   private pulseHalo(dt: number): void {
     this.pulseT += dt;
-    const k = 1 + Math.sin(this.pulseT * 7 + this.orbitAngle) * 0.16;
+    const k = 1 + Math.sin(this.pulseT * 5.2 + this.orbitAngle) * 0.1;
     this.halo.scale.setScalar(this.haloSize * k);
-    (this.halo.material as THREE.SpriteMaterial).opacity =
-      0.55 + Math.sin(this.pulseT * 9 + this.orbitAngle) * 0.22;
+    const haloMat = (this.halo as THREE.Sprite).material as THREE.SpriteMaterial | THREE.MeshBasicMaterial;
+    if (haloMat && 'opacity' in haloMat) {
+      haloMat.opacity = 0.44 + Math.sin(this.pulseT * 6.4 + this.orbitAngle) * 0.08;
+    }
+    if (this.rotor) this.rotor.rotation.z += dt * (this.role === 'kamikaze' ? 10 : 6);
     if (this.flash.visible) {
       const f = this.flash.material as THREE.MeshBasicMaterial;
       f.opacity = Math.max(0, f.opacity - dt * 7);
@@ -455,12 +464,6 @@ export class EnemyDrone {
   }
 
   dispose(): void {
-    this.group.traverse((o) => {
-      if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
-        o.geometry.dispose();
-        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-        else (o.material as THREE.Material).dispose();
-      }
-    });
+    disposeUnshared(this.group);
   }
 }

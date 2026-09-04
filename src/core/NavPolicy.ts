@@ -20,12 +20,14 @@ export type GameNavMode =
   | 'settings'
   | 'paused'
   | 'dying'
-  | 'dead';
+  | 'dead'
+  | 'transit';
 
 const LIVE_COMBAT_MODES: ReadonlySet<GameNavMode> = new Set([
   'playing',
   'intro',
   'paused',
+  'transit',
 ]);
 
 const OVERLAY_MODES: ReadonlySet<GameNavMode> = new Set([
@@ -45,7 +47,7 @@ export function canOpenOverlay(mode: GameNavMode): boolean {
 
 /** True when HUD Menu should pause the live sector instead of extracting. */
 export function shouldPauseInsteadOfExtract(mode: GameNavMode): boolean {
-  return mode === 'playing' || mode === 'intro' || mode === 'paused';
+  return mode === 'playing' || mode === 'intro' || mode === 'paused' || mode === 'transit';
 }
 
 /**
@@ -155,6 +157,9 @@ export function assertNavPolicyInvariants(): void {
   }
   if (shouldPauseInsteadOfExtract('menu') !== false) {
     throw new Error('title screen must not enter pause');
+  }
+  if (shouldPauseInsteadOfExtract('transit') !== true) {
+    throw new Error('HUD menu during transit must pause');
   }
   const closeClear = resolveOverlayClose({
     pendingReturnPlaying: true,

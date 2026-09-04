@@ -48,8 +48,8 @@ export const MAIN_GUN_AUTO_FIRE = true;
 /** Stick aim cone half-angle (radians) around ship→cube. */
 export const MAIN_GUN_AIM_STICK_CONE_RADIANS = 0.56;
 
-/** Soft-lock angular slack vs enemy drones (1 − dot). */
-export const MAIN_GUN_ENEMY_LOCK_ANGULAR_SLACK = 0.18;
+/** Soft-lock angular slack vs enemy drones (1 − dot). Wider so frontal harassers snap easily. */
+export const MAIN_GUN_ENEMY_LOCK_ANGULAR_SLACK = 0.28;
 
 /** Block raycast half-extent used for main-gun aim assist. */
 export const MAIN_GUN_AIM_BLOCK_HALF_EXTENT = 0.62;
@@ -732,7 +732,15 @@ export const ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL = 3 * ENEMY_DRONE_VITALS_SC
 export const ENEMY_DRONE_BASE_DAMAGE = 6 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_DAMAGE_PER_LEVEL = 0.55 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER = 1.35;
-export const ENEMY_ATTACK_DRONE_SPEED = 6.5;
+export const ENEMY_ATTACK_DRONE_SPEED = 3.2;
+/** Short-range beam — harassers sit in front of the ship, not across the arena. */
+export const ENEMY_ATTACK_DRONE_RANGE = 9;
+/** Per-bolt ship damage if ignored (easy to one-shot; painful if left alone). */
+export const ENEMY_HARASS_DRONE_DAMAGE = 4.5;
+/** Opening spawn gap (seconds) at stage start — ramps down as the fight goes long. */
+export const ENEMY_HARASS_SPAWN_INTERVAL_START = 13;
+/** Fastest spawn gap once the stage is past expected clear time. */
+export const ENEMY_HARASS_SPAWN_INTERVAL_MIN = 3.6;
 export const ENEMY_REPAIR_DRONE_SPEED = 4.5;
 export const ENEMY_DRONE_REPAIR_FRACTION = 0.07;
 export const ENEMY_DRONE_DEFAULT_HIT_POINTS = 45 * ENEMY_DRONE_VITALS_SCALE;
@@ -783,7 +791,7 @@ export const CUBE_FIGHTER_RETARGET_SECONDS = 1.05;
 /** Nucleus visual + outgoing damage multiply by this on every overload. */
 export const NUCLEUS_OVERLOAD_GROWTH_MULTIPLIER = 1.25;
 
-export const ENEMY_WEAPON_TARGET_RADIUS_DRONE = 1.15;
+export const ENEMY_WEAPON_TARGET_RADIUS_DRONE = 1.85;
 export const ENEMY_WEAPON_TARGET_RADIUS_TURRET = 1.05;
 export const ENEMY_INTERCEPT_RADIUS = 0.9;
 export const ENEMY_ARC_DEFAULT_HIT_POINTS = 28;
