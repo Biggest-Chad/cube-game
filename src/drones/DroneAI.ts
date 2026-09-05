@@ -2,6 +2,7 @@ import { BlockType } from '../cube/BlockTypes';
 import type { PlayerStats } from '../progression/TechTree';
 import type { DroneRole } from '../data/drones';
 import { armorClassForBlock } from '../combat/DamageModel';
+import { NUCLEUS_KAMIKAZE_INTERCEPT_RANGE } from '../data/constraints';
 
 export interface EnemyUnitRef {
   id: string;
@@ -15,6 +16,7 @@ export interface InterceptTarget {
   position: { x: number; y: number; z: number };
   /** Larger = easier to shoot (missiles/arcs). */
   radius: number;
+  kind?: string;
 }
 
 /**
@@ -74,7 +76,7 @@ export function enemyPriority(
   return 110 / d + kindBias + (enemy.hp < 30 ? 5 : 0);
 }
 
-export const ENEMY_DRONE_KINDS = new Set(['attack', 'repair', 'kamikaze', 'cube-fighter']);
+export const ENEMY_DRONE_KINDS = new Set(['attack', 'repair', 'cube-fighter']);
 export const ENEMY_WEAPON_KINDS = new Set(['turret']);
 
 export function pickBestEnemyOfKinds(
@@ -124,7 +126,8 @@ export function pickBestIntercept(
     const dy = t.position.y - selfPos.y;
     const dz = t.position.z - selfPos.z;
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (d > maxDist) continue;
+    const range = t.kind === 'kamikaze' ? NUCLEUS_KAMIKAZE_INTERCEPT_RANGE : maxDist;
+    if (d > range) continue;
     const s = 120 / (d + 0.01) + t.radius * 8;
     if (s > bestScore) {
       bestScore = s;

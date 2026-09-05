@@ -312,11 +312,16 @@ export const ARC_BEAM_RETARGET_SECONDS = 1.65;
 /** Random hull sample radius around the current peel / lock. */
 export const ARC_BEAM_SHELL_SAMPLE_RADIUS = 5.0;
 
-export const ROCKET_POD_BASE_DAMAGE = 58;
+/**
+ * Playfeel 2026-09-05: rockets were ~2× guided (dmg 58 vs 48, splash 3.1 vs 1.1).
+ * Nerf keeps pods slightly ahead: 54 (was 58) ≈ +12.5% vs guided 48, splash 1.45 (was 3.1)
+ * ≈ +32% radius vs guided 1.1. Combined effective ~12–18% above guided, not 2×.
+ */
+export const ROCKET_POD_BASE_DAMAGE = 54;
 export const ROCKET_POD_BASE_FIRE_RATE = 0.85;
 export const ROCKET_POD_BASE_PROJECTILE_SPEED = 36;
 export const ROCKET_POD_BASE_RANGE = 95;
-export const ROCKET_POD_BASE_SPLASH_RADIUS = 3.1;
+export const ROCKET_POD_BASE_SPLASH_RADIUS = 1.45;
 export const ROCKET_POD_BASE_SPLASH_FALLOFF = 0.42;
 export const ROCKET_POD_BASE_ARMOR_PIERCE = 0.12;
 export const ROCKET_POD_BASE_CRIT_CHANCE = 0.05;
@@ -577,8 +582,10 @@ export const NUCLEUS_ATK_POWER_MULTIPLIER_ACCEL = 0.008;
  */
 export const NUCLEUS_ATK_DIFFICULTY_MULTIPLIER = 1;
 
-export const NUCLEUS_BLOB_UNLOCK_STAGE = 10;
-export const NUCLEUS_KAMIKAZE_UNLOCK_STAGE = 20;
+/** Tesla energy orb — stage 2+ (was 10). Stage 1 stays spike-only. */
+export const NUCLEUS_BLOB_UNLOCK_STAGE = 2;
+/** Homing kamikaze seekers — stage 2+ alongside harass (was 20). */
+export const NUCLEUS_KAMIKAZE_UNLOCK_STAGE = 2;
 export const NUCLEUS_MINE_UNLOCK_STAGE = 30;
 export const NUCLEUS_GRAVITY_WELL_UNLOCK_STAGE = 40;
 export const NUCLEUS_MIRROR_SHARD_UNLOCK_STAGE = 50;
@@ -606,9 +613,31 @@ export const ENEMY_DRONE_VITALS_SCALE = 0.25;
 
 export const NUCLEUS_KAMIKAZE_BASE_HIT_POINTS = 18 * ENEMY_DRONE_VITALS_SCALE;
 export const NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE = 1.55 * ENEMY_DRONE_VITALS_SCALE;
-export const NUCLEUS_KAMIKAZE_DAMAGE = 14 * ENEMY_DRONE_VITALS_SCALE;
-export const NUCLEUS_KAMIKAZE_SPEED = 7.2;
+/**
+ * Single-ram ship damage vs 100 hull / 40 shield.
+ * Was 14 * ENEMY_DRONE_VITALS_SCALE = 3.5 (too small to read as a threat).
+ */
+export const NUCLEUS_KAMIKAZE_DAMAGE = 18;
+/** Slow cruise (was 7.2 — lerp homing closed the gap in ~0.25s). */
+export const NUCLEUS_KAMIKAZE_SPEED = 4.1;
 export const NUCLEUS_KAMIKAZE_PROXIMITY = 1.45;
+/** Fuse before mid-air detonate. Uniform roll per spawn. */
+export const NUCLEUS_KAMIKAZE_FUSE_MIN_SECONDS = 8;
+export const NUCLEUS_KAMIKAZE_FUSE_MAX_SECONDS = 12;
+/** Defender PD max range vs kamikaze. Other intercepts keep 35. Was 35. */
+export const NUCLEUS_KAMIKAZE_INTERCEPT_RANGE = 10;
+/** Peel onto an ally only if already this close (in the inbound path). */
+export const NUCLEUS_KAMIKAZE_ALLY_PEEL_RANGE = 6;
+/** Kit idle seeker cadence (overload still bursts). */
+export const NUCLEUS_KAMIKAZE_COOLDOWN_SECONDS = 13;
+/** Opening spawn gap for regular CubeDefense waves (seconds). */
+export const NUCLEUS_KAMIKAZE_SPAWN_INTERVAL_START = 10.5;
+/** Fastest regular-wave gap once the stage runs long. */
+export const NUCLEUS_KAMIKAZE_SPAWN_INTERVAL_MIN = 5.5;
+/** Early-stage regular wave size (1–2 at a time). */
+export const NUCLEUS_KAMIKAZE_WAVE_SIZE_EARLY = 1;
+/** Live-seeker cap before extra stage pressure. */
+export const NUCLEUS_KAMIKAZE_MAX_LIVE_BASE = 2;
 
 export const NUCLEUS_MINE_COOLDOWN_SECONDS = 16;
 export const NUCLEUS_MINE_MAX_LIVE = 3;
@@ -733,14 +762,22 @@ export const ENEMY_DRONE_BASE_DAMAGE = 6 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_DAMAGE_PER_LEVEL = 0.55 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER = 1.35;
 export const ENEMY_ATTACK_DRONE_SPEED = 3.2;
-/** Short-range beam — harassers sit in front of the ship, not across the arena. */
+/** Short-range bolt — harassers sit in front of the ship, not across the arena. */
 export const ENEMY_ATTACK_DRONE_RANGE = 9;
+/** Slow harass RoF (shots/sec). Annoying, not a lethal spray. Was 1.0. */
+export const ENEMY_ATTACK_DRONE_FIRE_RATE = 0.32;
+/** Telegraph glow before each bolt. */
+export const ENEMY_DRONE_TELEGRAPH_SECONDS = 0.45;
+/** Distinct harass bolt speed (readable, dodgeable). */
+export const ENEMY_DRONE_BOLT_SPEED = 16;
 /** Per-bolt ship damage if ignored (easy to one-shot; painful if left alone). */
 export const ENEMY_HARASS_DRONE_DAMAGE = 4.5;
-/** Opening spawn gap (seconds) at stage start — ramps down as the fight goes long. */
-export const ENEMY_HARASS_SPAWN_INTERVAL_START = 13;
-/** Fastest spawn gap once the stage is past expected clear time. */
-export const ENEMY_HARASS_SPAWN_INTERVAL_MIN = 3.6;
+/** Opening spawn gap (seconds) at stage start — ramps down as the fight goes long. Was 13. */
+export const ENEMY_HARASS_SPAWN_INTERVAL_START = 6.2;
+/** Fastest spawn gap once the stage is past expected clear time. Was 3.6. */
+export const ENEMY_HARASS_SPAWN_INTERVAL_MIN = 2.2;
+/** Drones per harass wave (early stages already spawn a group). */
+export const ENEMY_HARASS_WAVE_SIZE = 3;
 export const ENEMY_REPAIR_DRONE_SPEED = 4.5;
 export const ENEMY_DRONE_REPAIR_FRACTION = 0.07;
 export const ENEMY_DRONE_DEFAULT_HIT_POINTS = 45 * ENEMY_DRONE_VITALS_SCALE;

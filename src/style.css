@@ -13,9 +13,9 @@
   --safe-right: max(env(safe-area-inset-right, 0px), var(--vv-right, 0px), 8px);
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--vv-bottom, 0px), 16px);
   --safe-left: max(env(safe-area-inset-left, 0px), var(--vv-left, 0px), 8px);
-  --hud-pad-x: max(12px, var(--safe-left), var(--safe-right));
-  --hud-pad-top: max(10px, calc(var(--safe-top) + 6px));
-  --hud-pad-bottom: max(18px, calc(var(--safe-bottom) + 8px));
+  --hud-pad-x: max(14px, var(--safe-left), var(--safe-right));
+  --hud-pad-top: max(12px, calc(var(--safe-top) + 8px));
+  --hud-pad-bottom: max(20px, calc(var(--safe-bottom) + 10px));
   --ctrl-size: min(132px, 22vh, 28vw);
 }
 
@@ -122,8 +122,7 @@ body {
 }
 
 #hud-root.hud-cinematic .hud-top,
-#hud-root.hud-cinematic .shop-hint,
-#hud-root.hud-cinematic .desktop-hint {
+#hud-root.hud-cinematic .shop-hint {
   opacity: 0;
   pointer-events: none;
 }
@@ -233,12 +232,13 @@ body {
 }
 
 .progress-bar {
+  position: relative;
   margin-top: 6px;
   width: min(280px, 42vw);
-  height: 3px;
+  height: 4px;
   background: rgba(0, 240, 255, 0.12);
   border: 1px solid rgba(0, 240, 255, 0.3);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .progress-bar > span {
@@ -248,6 +248,33 @@ body {
   background: linear-gradient(90deg, var(--cyan), var(--magenta));
   box-shadow: var(--glow-cyan);
   transition: width 0.15s linear;
+}
+
+.hud-destab-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: #ffb040;
+  box-shadow: 0 0 6px rgba(255, 140, 40, 0.85);
+  pointer-events: none;
+  opacity: 0.72;
+  z-index: 2;
+}
+.progress-bar.destab-hot {
+  border-color: rgba(255, 90, 40, 0.7);
+  box-shadow: 0 0 10px rgba(255, 80, 30, 0.35);
+}
+.progress-bar.destab-hot .hud-destab-mark {
+  background: #ff4422;
+  opacity: 1;
+  box-shadow: 0 0 10px rgba(255, 50, 20, 0.95);
+  animation: destab-mark-pulse 0.7s ease-in-out infinite;
+}
+@keyframes destab-mark-pulse {
+  0%, 100% { transform: scaleY(1); filter: brightness(1); }
+  50% { transform: scaleY(1.35); filter: brightness(1.4); }
 }
 
 .hud-bottom,
@@ -361,21 +388,30 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 118px;
-  padding: 8px 10px;
+  min-width: 124px;
+  min-height: 44px;
+  padding: 8px 12px 8px 10px;
   border: 1px solid var(--cyan);
-  background: rgba(0, 30, 40, 0.88);
+  background:
+    linear-gradient(180deg, rgba(0, 50, 62, 0.95), rgba(0, 18, 26, 0.92));
   color: var(--white);
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.25);
+  box-shadow:
+    0 0 10px rgba(0, 240, 255, 0.28),
+    inset 0 1px 0 rgba(0, 240, 255, 0.18);
   position: relative;
   text-align: left;
+  overflow: visible;
+  transform-origin: center center;
 }
 
 .shop-btn-icon {
-  font-size: 20px;
+  font-size: 18px;
   color: var(--cyan);
   line-height: 1;
+  width: 22px;
+  text-align: center;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.55);
 }
 
 .shop-btn-title {
@@ -396,36 +432,56 @@ body {
 
 .shop-btn-badge {
   position: absolute;
-  top: -8px;
-  right: -8px;
+  top: 4px;
+  right: 4px;
   background: var(--magenta);
   color: #fff;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
   letter-spacing: 0.12em;
-  padding: 3px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 8px rgba(255, 0, 170, 0.55);
+  pointer-events: none;
 }
 
 .shop-btn.shop-ready {
   border-color: var(--magenta);
-  animation: shop-pulse 1.2s ease-in-out infinite;
-  box-shadow: 0 0 14px rgba(255, 0, 170, 0.45);
+  animation: shop-glow 1.2s ease-in-out infinite;
+  box-shadow:
+    0 0 14px rgba(255, 0, 170, 0.45),
+    inset 0 1px 0 rgba(255, 120, 200, 0.25);
 }
 
 .shop-btn.shop-ready .shop-btn-title {
   color: var(--magenta);
 }
 
+@keyframes shop-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 10px rgba(255, 0, 170, 0.35),
+      inset 0 1px 0 rgba(255, 120, 200, 0.18);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow:
+      0 0 18px rgba(255, 0, 170, 0.7),
+      inset 0 0 10px rgba(255, 0, 170, 0.12);
+    filter: brightness(1.12);
+  }
+}
+
 @keyframes shop-pulse {
   0%,
   100% {
-    transform: scale(1);
     box-shadow: 0 0 10px rgba(255, 0, 170, 0.35);
+    filter: brightness(1);
   }
   50% {
-    transform: scale(1.04);
     box-shadow: 0 0 20px rgba(255, 0, 170, 0.65);
+    filter: brightness(1.15);
   }
 }
 
@@ -434,13 +490,17 @@ body {
   align-items: center;
   gap: 6px;
   min-width: 108px;
+  min-height: 40px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background:
+    linear-gradient(180deg, rgba(0, 36, 46, 0.92), rgba(0, 12, 18, 0.88));
   color: var(--cyan);
   cursor: pointer;
   font-size: 11px;
   letter-spacing: 0.08em;
+  box-shadow: inset 0 1px 0 rgba(0, 240, 255, 0.12);
+  overflow: visible;
 }
 
 .action-btn-icon {
@@ -456,9 +516,10 @@ body {
 .shop-hint {
   position: absolute;
   top: max(58px, calc(var(--safe-top) + 48px));
-  right: var(--hud-pad-x);
-  width: min(260px, 34vw);
-  max-height: min(40vh, 220px);
+  right: max(132px, calc(var(--hud-pad-x) + 118px));
+  width: min(240px, 32vw);
+  max-width: calc(100vw - var(--hud-pad-x) * 2 - 140px);
+  max-height: min(36vh, 200px);
   overflow-y: auto;
   background: rgba(0, 12, 18, 0.94);
   border: 1px solid var(--magenta);
@@ -466,7 +527,11 @@ body {
   padding: 12px 14px;
   z-index: 30;
   pointer-events: auto;
-  animation: toast-in 0.3s ease-out;
+  animation: shop-hint-in 0.3s ease-out;
+}
+@keyframes shop-hint-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
 }
 
 .shop-hint-title {
@@ -1370,6 +1435,29 @@ body {
   color: #ff7ad0;
   font-size: 15px;
 }
+.fly-test-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+  padding: 10px 18px 4px;
+  flex-shrink: 0;
+}
+.fly-test-head {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--cyan);
+  opacity: 0.7;
+}
+.level-card.fly-test {
+  border-color: rgba(0, 240, 255, 0.45);
+  background: rgba(0, 24, 36, 0.7);
+  min-height: 76px;
+  padding: 10px 8px;
+}
+.level-card.fly-test .lv {
+  font-size: 16px;
+}
 
 /* Toast — non-blocking, lives under #toast-root */
 .toast {
@@ -1402,17 +1490,7 @@ body {
   }
 }
 
-.desktop-hint {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 9px;
-  letter-spacing: 0.15em;
-  opacity: 0.35;
-  pointer-events: none;
-  white-space: nowrap;
-}
+
 
 /* —— Cinematic titles —— */
 .cinematic-title {
@@ -1556,9 +1634,6 @@ body.orientation-portrait #rotate-overlay {
 }
 
 @media (max-width: 700px) and (orientation: landscape) {
-  .desktop-hint {
-    display: none;
-  }
   .menu-layout {
     grid-template-columns: 1fr 1fr;
     gap: 16px;
@@ -2340,12 +2415,24 @@ body.orientation-portrait #rotate-overlay {
   min-width: 0;
 }
 
-/* Main-gun magazine — sits just above vitals */
-.hud-ammo {
+/* Ammo + pilot — compact tray above the aim stick, clear of vitals */
+.hud-combat-tray {
   position: absolute;
-  left: 50%;
-  bottom: max(58px, calc(var(--hud-pad-bottom) + 52px));
-  transform: translateX(-50%);
+  right: max(8px, var(--hud-pad-x));
+  bottom: calc(var(--ctrl-size) + var(--hud-pad-bottom) + 16px);
+  left: auto;
+  z-index: 17;
+  pointer-events: none;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: stretch;
+  gap: 6px;
+}
+.hud-ammo {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: none;
   z-index: 17;
   pointer-events: none;
   display: flex;
@@ -2355,22 +2442,44 @@ body.orientation-portrait #rotate-overlay {
 .hud-ammo-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   pointer-events: auto;
-  padding: 5px 10px 5px 6px;
-  background: rgba(0, 10, 16, 0.62);
-  border: 1px solid rgba(0, 240, 255, 0.28);
+  padding: 6px 8px 6px 7px;
+  background:
+    linear-gradient(180deg, rgba(0, 36, 46, 0.88), rgba(0, 10, 16, 0.78));
+  border: 1px solid rgba(0, 240, 255, 0.38);
   color: #d8f8ff;
-  min-width: 168px;
+  min-width: 0;
+  min-height: 40px;
+  box-shadow: inset 0 1px 0 rgba(0, 240, 255, 0.14), 0 0 8px rgba(0, 240, 255, 0.12);
 }
+.hud-ammo-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--cyan);
+}
+.hud-ammo-icon svg {
+  display: none;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+.hud-ammo-icon .ico-std { display: block; }
+.hud-ammo.ap .hud-ammo-icon { color: #ffd078; }
+.hud-ammo.he .hud-ammo-icon { color: #ffb090; }
+.hud-ammo.ap .hud-ammo-icon .ico-std,
+.hud-ammo.he .hud-ammo-icon .ico-std { display: none; }
+.hud-ammo.ap .hud-ammo-icon .ico-ap { display: block; }
+.hud-ammo.he .hud-ammo-icon .ico-he { display: block; }
 .hud-ammo-tag {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   font-weight: 700;
-  padding: 3px 6px;
+  padding: 2px 5px;
   border: 1px solid rgba(0, 240, 255, 0.45);
   background: rgba(0, 240, 255, 0.12);
-  min-width: 32px;
+  min-width: 28px;
   text-align: center;
 }
 .hud-ammo.ap .hud-ammo-tag {
@@ -2383,34 +2492,17 @@ body.orientation-portrait #rotate-overlay {
   background: rgba(255, 70, 20, 0.16);
   color: #ffb090;
 }
-.hud-ammo-copy {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  min-width: 0;
-}
-.hud-ammo-name {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  font-weight: 600;
-}
-.hud-ammo-hint {
-  font-size: 8px;
-  letter-spacing: 0.06em;
-  opacity: 0.62;
-  white-space: nowrap;
-}
 .hud-ammo-key {
-  margin-left: auto;
+  margin-left: 2px;
   font-size: 9px;
   letter-spacing: 0.12em;
   opacity: 0.45;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  padding: 1px 5px;
+  padding: 1px 4px;
 }
 .hud-ammo-btn.locked .hud-ammo-key { opacity: 0.2; }
-.hud-ammo.ap .hud-ammo-btn { border-color: rgba(255, 176, 32, 0.35); }
-.hud-ammo.he .hud-ammo-btn { border-color: rgba(255, 90, 40, 0.35); }
+.hud-ammo.ap .hud-ammo-btn { border-color: rgba(255, 176, 32, 0.45); }
+.hud-ammo.he .hud-ammo-btn { border-color: rgba(255, 90, 40, 0.45); }
 
 .hud-pilot-btn {
   position: relative;
@@ -2419,10 +2511,12 @@ body.orientation-portrait #rotate-overlay {
   gap: 6px;
   pointer-events: auto;
   padding: 5px 8px 5px 6px;
-  background: rgba(0, 10, 16, 0.62);
+  background:
+    linear-gradient(180deg, rgba(40, 10, 28, 0.88), rgba(0, 10, 16, 0.78));
   border: 1px solid rgba(255, 0, 170, 0.32);
   color: #d8f8ff;
   min-width: 92px;
+  min-height: 40px;
 }
 .hud-pilot-ring {
   width: 18px;
@@ -2452,17 +2546,18 @@ body.orientation-portrait #rotate-overlay {
 }
 .hud-pilot-btn.cooling { opacity: 0.72; }
 @media (max-height: 420px) {
-  .hud-ammo { bottom: max(44px, calc(var(--hud-pad-bottom) + 40px)); }
-  .hud-ammo-hint { display: none; }
+  .hud-combat-tray { bottom: calc(var(--ctrl-size) + var(--hud-pad-bottom) + 8px); }
+  .hud-ammo-btn { min-height: 36px; padding: 4px 6px; }
 }
 
-/* Bottom-center ship shield + hull */
+/* Bottom-center ship shield + hull — independent of drones / ammo */
 .hud-vitals {
   position: absolute;
   left: 50%;
   bottom: max(10px, calc(var(--hud-pad-bottom) + 4px));
   transform: translateX(-50%);
-  width: min(280px, 46vw);
+  width: min(220px, 34vw);
+  max-width: calc(100vw - var(--ctrl-size) * 2 - var(--hud-pad-x) * 2 - 28px);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2481,9 +2576,18 @@ body.orientation-portrait #rotate-overlay {
 .hud-vital-label {
   font-size: 9px;
   letter-spacing: 0.14em;
-  width: 34px;
+  width: 18px;
   flex-shrink: 0;
-  opacity: 0.8;
+  opacity: 0.9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hud-vital-ico {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  display: block;
 }
 .hud-vital-row.shield .hud-vital-label { color: #66ccff; }
 .hud-vital-row.hull .hud-vital-label { color: #00ffaa; }
@@ -2523,12 +2627,51 @@ body.orientation-portrait #rotate-overlay {
   opacity: 0.45;
 }
 .hud-drones {
+  position: absolute;
+  left: max(8px, var(--hud-pad-x));
+  bottom: calc(var(--ctrl-size) + var(--hud-pad-bottom) + 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: 5px;
+  margin-top: 0;
+  pointer-events: none;
+  z-index: 17;
+  padding: 6px 8px;
+  background: rgba(0, 10, 16, 0.55);
+  border: 1px solid rgba(255, 208, 96, 0.28);
+  backdrop-filter: blur(6px);
+  max-width: min(200px, 28vw);
+}
+.hud-landscape.flyer-mode .hud-drones,
+.hud-landscape.flyer-mode .hud-combat-tray {
+  display: none;
+}
+.hud-drone-group {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 3px;
-  pointer-events: none;
+  gap: 6px;
+}
+.hud-drone-ico {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  fill: currentColor;
+}
+.hud-drone-group.fighter { color: #ffd060; }
+.hud-drone-group.bomber { color: #ff8a3a; }
+.hud-drone-group.defender { color: #3dffb8; }
+.hud-drone-count {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 10px;
+}
+.hud-drone-pips {
+  display: flex;
+  gap: 3px;
+  align-items: center;
 }
 .hud-flyer {
   position: absolute;
@@ -2569,17 +2712,17 @@ body.orientation-portrait #rotate-overlay {
   box-shadow: 0 0 16px rgba(255, 68, 204, 0.7);
   opacity: 1;
 }
-.hud-drones-label {
-  font-size: 8px;
-  letter-spacing: 0.14em;
-  opacity: 0.55;
-  width: 34px;
-  flex-shrink: 0;
+.tutorial-card.flyer-brief {
+  bottom: auto;
+  top: max(92px, calc(var(--safe-top) + 78px));
+  width: min(420px, 86vw);
+  left: 50%;
+  transform: translateX(-50%);
 }
 .hud-drone-pip {
   position: relative;
   width: 22px;
-  height: 12px;
+  height: 8px;
   border: 1px solid rgba(255, 208, 96, 0.35);
   background: rgba(255, 255, 255, 0.05);
   overflow: hidden;
@@ -2596,18 +2739,6 @@ body.orientation-portrait #rotate-overlay {
 }
 .hud-drone-pip.defender > i {
   background: linear-gradient(90deg, rgba(0, 180, 120, 0.35), rgba(0, 255, 170, 0.85));
-}
-.hud-drone-pip > em {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 8px;
-  font-style: normal;
-  letter-spacing: 0.04em;
-  color: #fff;
-  text-shadow: 0 0 4px #000;
 }
 .hud-drone-pip.dead {
   opacity: 0.45;
@@ -2648,35 +2779,38 @@ body.orientation-portrait #rotate-overlay {
 }
 @media (max-height: 420px) {
   .hud-vitals {
-    width: min(220px, 40vw);
+    width: min(180px, 32vw);
     bottom: max(6px, var(--hud-pad-bottom));
     padding: 4px 8px;
   }
   .hud-vital-bar { height: 5px; }
+  .hud-drones {
+    bottom: calc(var(--ctrl-size) + var(--hud-pad-bottom) + 8px);
+    padding: 4px 6px;
+    max-width: min(160px, 26vw);
+  }
 }
 .hud-center-stack .blocks {
-  font-size: 10px;
-  margin-top: 6px;
-  opacity: 0.65;
+  font-size: 9px;
+  margin-top: 4px;
+  opacity: 0.55;
+  letter-spacing: 0.12em;
 }
 .hud-side-rail {
   position: absolute;
   top: max(48px, calc(var(--safe-top) + 40px));
   right: max(8px, var(--hud-pad-x));
-  bottom: max(120px, calc(var(--ctrl-size) + var(--hud-pad-bottom) + 12px));
+  bottom: max(132px, calc(var(--ctrl-size) + var(--hud-pad-bottom) + 56px));
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   z-index: 20;
   align-items: flex-end;
   max-height: none;
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  overflow: visible;
   pointer-events: none;
   /* Keep shop icons clear of nav gesture / system bar region */
-  padding-bottom: 4px;
+  padding: 6px 4px 4px 8px;
 }
 .hud-side-rail .shop-btn,
 .hud-side-rail .action-btn {
@@ -4648,33 +4782,25 @@ body.orientation-portrait #rotate-overlay {
   gap: 10px;
 }
 
-/* —— Nucleus HUD —— */
+/* —— Nucleus HUD (phase via color / glow / scan — no status text) —— */
 .hud-nucleus {
   margin-top: 6px;
-  padding: 6px 10px 8px;
-  min-width: 180px;
+  padding: 5px 8px 6px;
+  min-width: 160px;
   border: 1px solid rgba(255, 68, 136, 0.45);
   background: rgba(20, 0, 12, 0.55);
   box-shadow: 0 0 14px rgba(255, 0, 100, 0.2);
 }
-.hud-nucleus-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  color: #ff88bb;
-  margin-bottom: 4px;
-}
+.hud-nucleus-top,
 .hud-nucleus-status {
-  color: #ffd0e8;
-  font-weight: 700;
+  display: none;
 }
 .hud-nucleus-bar {
-  height: 6px;
+  height: 7px;
   background: rgba(255, 255, 255, 0.08);
   border-radius: 2px;
   overflow: hidden;
+  position: relative;
 }
 .hud-nucleus-bar > i {
   display: block;
@@ -4682,27 +4808,43 @@ body.orientation-portrait #rotate-overlay {
   width: 100%;
   background: linear-gradient(90deg, #ff4488, #ff00aa);
   box-shadow: 0 0 8px rgba(255, 0, 170, 0.6);
-  transition: width 0.12s linear;
+  transition: width 0.12s linear, background 0.2s ease;
 }
 .hud-nucleus-val {
   display: block;
-  margin-top: 3px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: rgba(255, 220, 235, 0.85);
+  margin-top: 2px;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 220, 235, 0.42);
   text-align: right;
 }
 .hud-nucleus.exposed {
   border-color: rgba(255, 80, 80, 0.8);
+  box-shadow: 0 0 16px rgba(255, 70, 40, 0.45);
   animation: nucleus-pulse 0.9s ease-in-out infinite;
+}
+.hud-nucleus.exposed .hud-nucleus-bar > i {
+  background: linear-gradient(90deg, #ff6644, #ffaa66);
+  box-shadow: 0 0 10px rgba(255, 80, 40, 0.7);
 }
 .hud-nucleus.overload {
   border-color: #ff2200;
   box-shadow: 0 0 22px rgba(255, 40, 0, 0.55);
   animation: nucleus-pulse 0.35s linear infinite;
 }
+.hud-nucleus.decaying .hud-nucleus-bar {
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 140, 40, 0.22) 0 5px,
+      rgba(40, 8, 0, 0.35) 5px 10px
+    );
+  background-size: 14px 14px;
+  animation: nucleus-scan 0.7s linear infinite;
+}
 .hud-nucleus.decaying .hud-nucleus-bar > i {
-  background: linear-gradient(90deg, #ffaa44, #ff6622);
+  background: linear-gradient(90deg, #ffaa44, #ff4422);
+  box-shadow: 0 0 10px rgba(255, 90, 20, 0.7);
 }
 .hud-nucleus.overload .hud-nucleus-bar > i {
   background: linear-gradient(90deg, #ff2200, #ffee00);
@@ -4712,12 +4854,26 @@ body.orientation-portrait #rotate-overlay {
   box-shadow: 0 0 20px rgba(255, 60, 0, 0.55);
   animation: nucleus-pulse 0.45s linear infinite;
 }
+.hud-nucleus.laser .hud-nucleus-bar {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 80, 20, 0.18) 0 8px,
+      rgba(255, 220, 120, 0.12) 8px 16px
+    );
+  background-size: 24px 100%;
+  animation: nucleus-scan 0.45s linear infinite;
+}
 .hud-nucleus.laser .hud-nucleus-bar > i {
   background: linear-gradient(90deg, #ff6610, #ffe0a0);
 }
 @keyframes nucleus-pulse {
   0%, 100% { filter: brightness(1); }
   50% { filter: brightness(1.35); }
+}
+@keyframes nucleus-scan {
+  from { background-position: 0 0; }
+  to { background-position: 14px 0; }
 }
 
 /* Nucleus phase chip — small, non-blocking, purely informational */
@@ -4727,7 +4883,7 @@ body.orientation-portrait #rotate-overlay {
   right: max(12px, env(safe-area-inset-right, 0px));
   z-index: 45;
   pointer-events: none;
-  max-width: min(42vw, 220px);
+  max-width: min(48vw, 260px);
   padding: 6px 10px;
   font-size: 10px;
   font-weight: 600;
@@ -4739,9 +4895,20 @@ body.orientation-portrait #rotate-overlay {
   border-radius: 2px;
   box-shadow: 0 0 10px rgba(255, 0, 100, 0.12);
   animation: phase-chip-in 0.2s ease-out;
-  white-space: nowrap;
+  white-space: normal;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.phase-chip b {
+  display: block;
+  font-weight: 700;
+}
+.phase-chip span {
+  display: block;
+  margin-top: 3px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  opacity: 0.88;
 }
 .phase-chip.phase-overload {
   border-color: rgba(255, 80, 40, 0.55);

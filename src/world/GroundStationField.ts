@@ -659,6 +659,7 @@ export class GroundStationField {
     let best: InterceptTarget | null = null;
     let bestD = maxDist * maxDist;
     for (const t of this.intercepts) {
+      if (t.kind === 'kamikaze') continue;
       const dx = t.position.x - from.x;
       const dy = t.position.y - from.y;
       const dz = t.position.z - from.z;

@@ -198,6 +198,17 @@ export function makeFlash(color: number, r = 0.2): THREE.Mesh {
   );
 }
 
+/** Hostile drone bolt — hot core, red sheath, readable vs player cyan. */
+export function makeTeslaBolt(): THREE.Group {
+  return makeLayeredBolt({
+    coreColor: 0xfff2c8,
+    sheathColor: 0xff2244,
+    length: 0.78,
+    coreR: 0.05,
+    sheathR: 0.11,
+  });
+}
+
 export function orientZForward(
   obj: THREE.Object3D,
   dir: THREE.Vector3,

@@ -3,6 +3,20 @@
  * Rockets drop from under the wing, free-fall briefly, then ignite and punch forward.
  */
 import * as THREE from 'three';
+import {
+  ROCKET_POD_BASE_ARMOR_PIERCE,
+  ROCKET_POD_BASE_CRIT_CHANCE,
+  ROCKET_POD_BASE_CRIT_MULT,
+  ROCKET_POD_BASE_DAMAGE,
+  ROCKET_POD_BASE_FIRE_RATE,
+  ROCKET_POD_BASE_PROJECTILE_SPEED,
+  ROCKET_POD_BASE_RANGE,
+  ROCKET_POD_BASE_SPLASH_FALLOFF,
+  ROCKET_POD_BASE_SPLASH_RADIUS,
+  ROCKET_POD_BURST_SIZE,
+  ROCKET_POD_HEAT_COOL_RATE,
+  ROCKET_POD_HEAT_PER_SHOT,
+} from '../data/constraints';
 import type { WeaponStats } from '../data/weapons';
 import { NUCLEUS_HIT_ID, type CubeManager } from '../cube/CubeManager';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
@@ -70,23 +84,24 @@ export class RocketWeapon implements WeaponBehavior {
   private readonly dropDir = new THREE.Vector3();
 
   constructor() {
+    // Defaults track constraints (54 / 1.45 after 2026-09-05 nerf from 58 / 3.1).
     this.stats = {
-      damage: 58,
-      fireRate: 0.85,
-      projectileSpeed: 36,
-      range: 95,
-      splashRadius: 3.1,
-      splashFalloff: 0.42,
-      armorPierce: 0.12,
-      critChance: 0.05,
-      critMult: 1.85,
-      heatPerShot: 0.2,
+      damage: ROCKET_POD_BASE_DAMAGE,
+      fireRate: ROCKET_POD_BASE_FIRE_RATE,
+      projectileSpeed: ROCKET_POD_BASE_PROJECTILE_SPEED,
+      range: ROCKET_POD_BASE_RANGE,
+      splashRadius: ROCKET_POD_BASE_SPLASH_RADIUS,
+      splashFalloff: ROCKET_POD_BASE_SPLASH_FALLOFF,
+      armorPierce: ROCKET_POD_BASE_ARMOR_PIERCE,
+      critChance: ROCKET_POD_BASE_CRIT_CHANCE,
+      critMult: ROCKET_POD_BASE_CRIT_MULT,
+      heatPerShot: ROCKET_POD_HEAT_PER_SHOT,
       heatCapacity: 1,
-      heatCoolRate: 0.26,
+      heatCoolRate: ROCKET_POD_HEAT_COOL_RATE,
       chargeTime: 0,
       projectileCount: 1,
       homing: 0,
-      burstSize: 2,
+      burstSize: ROCKET_POD_BURST_SIZE,
       flags: new Set(),
     };
 

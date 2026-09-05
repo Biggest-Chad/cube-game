@@ -17,6 +17,15 @@ export const FLYER_LOCK_AHEAD = 16;
 export const FLYER_LOCK_XY = 2.35;
 export const FLYER_HIT_COOLDOWN = 0.55;
 
+/** Stick up/down. −1: axisY up (W / stick up, negative) raises the ship. Flip only here. */
+export const FLYER_STICK_Y_SIGN: -1 | 1 = -1;
+
+/** Rollback: false uses a near-linear +Z polyline that mimics the old corridor. */
+export const FLYER_USE_SPLINE = true;
+
+/** Centerline debug ribbon. Off in playable builds. */
+export const FLYER_DEBUG_PATH = false;
+
 /** After clearing this sector, run transit before the next cube. 2, 7, 12, 17… */
 export function shouldRunTransit(clearedLevelId: number): boolean {
   return clearedLevelId >= 2 && clearedLevelId % 5 === 2;
@@ -25,6 +34,26 @@ export function shouldRunTransit(clearedLevelId: number): boolean {
 export function pickFlyerScene(clearedLevelId: number): FlyerSceneId {
   const i = Math.floor(Math.max(0, clearedLevelId - 2) / 5) % FLYER_SCENES.length;
   return FLYER_SCENES[i];
+}
+
+export function flyerSceneFromQuery(raw: string | null | undefined): FlyerSceneId | null {
+  if (!raw) return null;
+  const id = raw.toLowerCase();
+  if (id === 'canyon' || id === 'wormhole' || id === 'yard' || id === 'rift') return id;
+  return null;
+}
+
+export function flyerLevelForScene(id: FlyerSceneId): number {
+  switch (id) {
+    case 'canyon':
+      return 2;
+    case 'wormhole':
+      return 7;
+    case 'yard':
+      return 12;
+    case 'rift':
+      return 17;
+  }
 }
 
 export function flyerSceneTitle(id: FlyerSceneId): string {

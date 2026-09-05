@@ -4,17 +4,24 @@
 import * as THREE from 'three';
 import { bus } from '../core/EventBus';
 import {
+  ENEMY_DRONE_BOLT_SPEED,
   ENEMY_DRONE_DEFAULT_DAMAGE,
   ENEMY_DRONE_DEFAULT_FIRE_RATE,
   ENEMY_DRONE_DEFAULT_HIT_POINTS,
   ENEMY_DRONE_DEFAULT_RANGE,
   ENEMY_DRONE_DEFAULT_REPAIR_FRACTION,
   ENEMY_DRONE_DEFAULT_SPEED,
+  ENEMY_DRONE_TELEGRAPH_SECONDS,
+  NUCLEUS_KAMIKAZE_ALLY_PEEL_RANGE,
+  NUCLEUS_KAMIKAZE_FUSE_MAX_SECONDS,
+  NUCLEUS_KAMIKAZE_FUSE_MIN_SECONDS,
+  NUCLEUS_KAMIKAZE_PROXIMITY,
 } from '../data/constraints';
 import type { CubeManager } from './CubeManager';
 import { createEnemyDrone } from './enemyDroneFactory';
 import { disposeUnshared, iffHaloTex } from '../drones/droneGeom';
 import { loadEnemyDroneGlb } from '../drones/droneGlb';
+import { makeTeslaBolt, orientZForward } from '../vfx/ProjectileVfx';
 
 export type EnemyDroneRole = 'attack' | 'repair' | 'kamikaze' | 'cube-fighter';
 
@@ -32,6 +39,17 @@ export interface EnemyDroneConfig {
   /** Repair amount per pulse as fraction of block max HP. */
   repairFrac: number;
 }
+
+interface DroneBolt {
+  active: boolean;
+  mesh: THREE.Group;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  life: number;
+  damage: number;
+}
+
+const BOLT_POOL = 3;
 
 const DEFAULT: EnemyDroneConfig = {
   hp: ENEMY_DRONE_DEFAULT_HIT_POINTS,
@@ -82,8 +100,18 @@ export class EnemyDrone {
   private halo!: THREE.Sprite | THREE.Mesh;
   private flash!: THREE.Mesh;
   private rotor: THREE.Group | null = null;
-  private haloSize = 1.7;
+  private haloSize = 2.35;
   private pulseT = 0;
+  private telegraphT = 0;
+  private charging = false;
+  private bolts: DroneBolt[] = [];
+  private nextBolt = 0;
+  private telegraphRing!: THREE.Mesh;
+  private readonly _boltDir = new THREE.Vector3();
+  private fuse = 0;
+  private fuseMax = NUCLEUS_KAMIKAZE_FUSE_MAX_SECONDS;
+  private lastRamDist = 99;
+  private didBoom = false;
 
   constructor(id: string, index: number, halfExtent: number, cfg: Partial<EnemyDroneConfig> = {}) {
     this.id = id;
@@ -115,6 +143,40 @@ export class EnemyDrone {
     );
     this.beam.visible = false;
     this.group.add(this.beam);
+    this.telegraphRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.55, 0.045, 6, 18),
+      glowMat(0xff6622, 0)
+    );
+    this.telegraphRing.rotation.x = Math.PI / 2;
+    this.telegraphRing.visible = false;
+    this.telegraphRing.renderOrder = 3;
+    this.group.add(this.telegraphRing);
+    for (let i = 0; i < BOLT_POOL; i++) {
+      const mesh = makeTeslaBolt();
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      this.bolts.push({
+        active: false,
+        mesh,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        life: 0,
+        damage: 0,
+      });
+    }
+    if (this.role === 'kamikaze') this.rollFuse();
+  }
+
+  private rollFuse(): void {
+    const span = Math.max(0, NUCLEUS_KAMIKAZE_FUSE_MAX_SECONDS - NUCLEUS_KAMIKAZE_FUSE_MIN_SECONDS);
+    this.fuseMax = NUCLEUS_KAMIKAZE_FUSE_MIN_SECONDS + Math.random() * span;
+    this.fuse = this.fuseMax;
+    this.didBoom = false;
+  }
+
+  /** World-space harass bolts — CubeDefense parents these off the drone. */
+  getProjectileMeshes(): THREE.Object3D[] {
+    return this.bolts.map((b) => b.mesh);
   }
 
   private buildMesh(): void {
@@ -148,7 +210,7 @@ export class EnemyDrone {
         })
       );
       this.halo.name = 'halo';
-      this.halo.scale.setScalar(1.7);
+      this.halo.scale.setScalar(2.35);
       this.halo.renderOrder = 2;
       this.group.add(this.halo);
     }
@@ -184,13 +246,33 @@ export class EnemyDrone {
   applyDamage(amount: number): boolean {
     if (!this.alive) return false;
     this.hp -= amount;
-    // Hit flash
-    this.group.scale.setScalar(0.85);
+    this.group.scale.setScalar(0.72);
+    this.flash.visible = true;
+    (this.flash.material as THREE.MeshBasicMaterial).opacity = 1;
+    const haloMat = (this.halo as THREE.Sprite).material as THREE.SpriteMaterial | THREE.MeshBasicMaterial;
+    if (haloMat && 'opacity' in haloMat) haloMat.opacity = 0.95;
+    bus.emit('enemy-drone-hit', {
+      id: this.id,
+      role: this.role,
+      x: this.group.position.x,
+      y: this.group.position.y,
+      z: this.group.position.z,
+      killed: this.hp <= 0,
+    });
     if (this.hp <= 0) {
       this.alive = false;
       this.group.visible = false;
       this.beam.visible = false;
-      bus.emit('enemy-drone-destroyed', { id: this.id, role: this.role });
+      this.telegraphRing.visible = false;
+      this.charging = false;
+      if (this.role === 'kamikaze') this.emitKamiBoom();
+      bus.emit('enemy-drone-destroyed', {
+        id: this.id,
+        role: this.role,
+        x: this.group.position.x,
+        y: this.group.position.y,
+        z: this.group.position.z,
+      });
       return true;
     }
     return false;
@@ -216,7 +298,15 @@ export class EnemyDrone {
       onDroneHit?: (aim: THREE.Vector3, damage: number) => void;
     }
   ): void {
-    if (!this.alive) return;
+    if (!this.alive) {
+      this.simBolts(dt, playerPos, onPlayerHit, extras, playerDronePositions);
+      return;
+    }
+
+    if (this.role === 'kamikaze') {
+      this.updateKamikaze(dt, playerPos, onPlayerHit, playerDronePositions, extras);
+      return;
+    }
 
     // Recover scale after hit flash
     const s = this.group.scale.x;
@@ -240,18 +330,6 @@ export class EnemyDrone {
     this.orbitRadius = halfExtent * (this.role === 'repair' ? 1.05 : 1.35) + 1;
     this.orbitAngle += dt * 0.4 * this.cfg.speedMul;
     const ally = this.nearestAlly(playerDronePositions);
-    if (this.role === 'kamikaze') {
-      const ram = ally ?? playerPos;
-      this._pos.copy(ram);
-      this.group.lookAt(ram);
-      this.group.position.lerp(this._pos, 1 - Math.exp(-speed * 0.55 * dt));
-      if (this.group.position.distanceTo(ram) <= 1.45) {
-        if (ally) extras?.onDroneHit?.(ally, this.cfg.damage);
-        else onPlayerHit(this.cfg.damage);
-        this.applyDamage(1e9);
-      }
-      return;
-    }
 
     if (this.role === 'attack') {
       this.stationInFrontOfShip(playerPos, halfExtent, now);
@@ -271,10 +349,18 @@ export class EnemyDrone {
       if (this.beamLife <= 0) this.beam.visible = false;
     }
 
+    this.simBolts(dt, playerPos, onPlayerHit, extras, playerDronePositions);
+
     this.cooldown = Math.max(0, this.cooldown - dt);
-    if (!allowFire || this.cooldown > 0) return;
+    if (!allowFire) {
+      this.charging = false;
+      this.telegraphT = 0;
+      this.telegraphRing.visible = false;
+      return;
+    }
 
     if (this.role === 'repair' && cube) {
+      if (this.cooldown > 0) return;
       const near = cube.findNearest(this.group.position, this.cfg.range, () => 1);
       if (!near) return;
       this.cooldown = 1 / Math.max(0.3, this.cfg.fireRate * this.cfg.fireMul);
@@ -290,7 +376,7 @@ export class EnemyDrone {
       return;
     }
 
-    // Harassers always threaten the ship. Only peel onto an ally inside beam range.
+    // Harassers always threaten the ship. Only peel onto an ally inside bolt range.
     let target = playerPos;
     let isDrone = false;
     if (ally && this.group.position.distanceTo(ally) <= this.cfg.range) {
@@ -299,13 +385,106 @@ export class EnemyDrone {
     }
 
     const dist = this.group.position.distanceTo(target);
-    if (dist > this.cfg.range) return;
+    if (dist > this.cfg.range) {
+      this.charging = false;
+      this.telegraphT = 0;
+      this.telegraphRing.visible = false;
+      return;
+    }
 
+    if (this.role === 'attack') {
+      this.updateHarassShot(dt, target, isDrone, ally, extras);
+      return;
+    }
+
+    if (this.cooldown > 0) return;
     this.cooldown = 1 / Math.max(0.25, this.cfg.fireRate * this.cfg.fireMul);
     this.showBeam(this.group.position, target);
     if (isDrone && ally) extras?.onDroneHit?.(ally, this.cfg.damage * 0.8);
     else onPlayerHit(this.cfg.damage);
     bus.emit('enemy-drone-fire', { id: this.id });
+  }
+
+  private updateHarassShot(
+    dt: number,
+    target: THREE.Vector3,
+    isDrone: boolean,
+    ally: THREE.Vector3 | undefined,
+    extras?: { onDroneHit?: (aim: THREE.Vector3, damage: number) => void }
+  ): void {
+    if (!this.charging) {
+      if (this.cooldown > 0) return;
+      this.charging = true;
+      this.telegraphT = ENEMY_DRONE_TELEGRAPH_SECONDS;
+      this.telegraphRing.visible = true;
+      this.showBeam(this.group.position, target);
+      this.beamLife = ENEMY_DRONE_TELEGRAPH_SECONDS;
+      (this.beam.material as THREE.LineBasicMaterial).color.setHex(0xffaa44);
+      bus.emit('enemy-drone-telegraph', { id: this.id });
+    }
+    this.telegraphT -= dt;
+    this.showBeam(this.group.position, target);
+    this.beamLife = Math.max(this.beamLife, 0.05);
+    const u = 1 - Math.max(0, this.telegraphT) / ENEMY_DRONE_TELEGRAPH_SECONDS;
+    this.telegraphRing.scale.setScalar(0.7 + u * 0.9);
+    (this.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0.25 + u * 0.7;
+    this.telegraphRing.rotation.z += dt * (4 + u * 10);
+    if (this.telegraphT > 0) return;
+
+    this.charging = false;
+    this.telegraphRing.visible = false;
+    this.cooldown = 1 / Math.max(0.12, this.cfg.fireRate * this.cfg.fireMul);
+    this.spawnBolt(target, isDrone && ally ? this.cfg.damage * 0.8 : this.cfg.damage);
+    bus.emit('enemy-drone-fire', { id: this.id });
+  }
+
+  private spawnBolt(target: THREE.Vector3, damage: number): void {
+    const b = this.bolts[this.nextBolt % BOLT_POOL];
+    this.nextBolt++;
+    b.active = true;
+    b.damage = damage;
+    b.life = 2.4;
+    b.pos.copy(this.group.position);
+    this._boltDir.copy(target).sub(b.pos);
+    if (this._boltDir.lengthSq() < 1e-8) this._boltDir.set(0, 0, -1);
+    else this._boltDir.normalize();
+    b.vel.copy(this._boltDir).multiplyScalar(ENEMY_DRONE_BOLT_SPEED);
+    b.mesh.visible = true;
+    b.mesh.position.copy(b.pos);
+    orientZForward(b.mesh, b.vel);
+  }
+
+  private simBolts(
+    dt: number,
+    playerPos: THREE.Vector3,
+    onPlayerHit: (damage: number) => void,
+    extras?: { onDroneHit?: (aim: THREE.Vector3, damage: number) => void },
+    playerDronePositions?: THREE.Vector3[]
+  ): void {
+    for (const b of this.bolts) {
+      if (!b.active) continue;
+      b.life -= dt;
+      b.pos.addScaledVector(b.vel, dt);
+      b.mesh.position.copy(b.pos);
+      if (b.vel.lengthSq() > 1e-8) orientZForward(b.mesh, b.vel);
+      let hit = false;
+      if (b.pos.distanceTo(playerPos) < 1.05) {
+        onPlayerHit(b.damage);
+        hit = true;
+      } else if (playerDronePositions) {
+        for (const pd of playerDronePositions) {
+          if (b.pos.distanceTo(pd) < 0.95) {
+            extras?.onDroneHit?.(pd, b.damage);
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (hit || b.life <= 0 || b.pos.length() > 90) {
+        b.active = false;
+        b.mesh.visible = false;
+      }
+    }
   }
 
   /** Hover in the ship's gun sight, between ship and cube. */
@@ -329,6 +508,71 @@ export class EnemyDrone {
     const r = this._pos.length();
     const minR = halfExtent + 2.5;
     if (r < minR) this._pos.multiplyScalar(minR / Math.max(0.1, r));
+  }
+
+  private updateKamikaze(
+    dt: number,
+    playerPos: THREE.Vector3,
+    onPlayerHit: (damage: number) => void,
+    playerDronePositions: THREE.Vector3[] | undefined,
+    extras?: { onDroneHit?: (aim: THREE.Vector3, damage: number) => void }
+  ): void {
+    this.fuse = Math.max(0, this.fuse - dt);
+    const ally = this.nearestAlly(playerDronePositions);
+    let ram = playerPos;
+    if (ally && this.group.position.distanceTo(ally) <= NUCLEUS_KAMIKAZE_ALLY_PEEL_RANGE) {
+      ram = ally;
+    }
+    this._pos.copy(ram).sub(this.group.position);
+    const dist = this._pos.length();
+    this.lastRamDist = dist;
+    if (dist > 0.001) {
+      this.group.lookAt(ram);
+      const step = Math.min(dist, this.cfg.speed * dt);
+      this.group.position.addScaledVector(this._pos.multiplyScalar(1 / dist), step);
+    }
+    this.pulseHalo(dt);
+    if (dist <= NUCLEUS_KAMIKAZE_PROXIMITY) {
+      if (ram === ally && ally) extras?.onDroneHit?.(ally, this.cfg.damage);
+      else onPlayerHit(this.cfg.damage);
+      this.boomAndDie();
+      return;
+    }
+    if (this.fuse <= 0) {
+      if (ally && this.group.position.distanceTo(ally) <= NUCLEUS_KAMIKAZE_PROXIMITY) {
+        extras?.onDroneHit?.(ally, this.cfg.damage);
+      } else if (this.group.position.distanceTo(playerPos) <= NUCLEUS_KAMIKAZE_PROXIMITY) {
+        onPlayerHit(this.cfg.damage);
+      }
+      this.boomAndDie();
+    }
+  }
+
+  /** 0..1 audio / VFX urgency — closes on the ship and the fuse. */
+  seekIntensity(playerPos: THREE.Vector3): number {
+    if (!this.alive || this.role !== 'kamikaze') return 0;
+    const dist = this.group.position.distanceTo(playerPos);
+    const close = 1 - Math.min(1, dist / 38);
+    const fuseU = 1 - this.fuse / Math.max(0.001, this.fuseMax);
+    return Math.min(1, close * 0.7 + fuseU * 0.45 + (close > 0.65 ? 0.15 : 0));
+  }
+
+  private boomAndDie(): void {
+    this.emitKamiBoom();
+    this.applyDamage(1e9);
+  }
+
+  private emitKamiBoom(): void {
+    if (this.didBoom) return;
+    this.didBoom = true;
+    const p = this.group.position;
+    bus.emit('explosion', {
+      x: p.x,
+      y: p.y,
+      z: p.z,
+      radius: 3.6,
+      family: 'missile',
+    });
   }
 
   private nearestAlly(drones: THREE.Vector3[] | undefined): THREE.Vector3 | undefined {
@@ -425,19 +669,72 @@ export class EnemyDrone {
   }
 
   private pulseHalo(dt: number): void {
+    if (this.role === 'kamikaze') {
+      this.pulseKamikaze(dt);
+      return;
+    }
     this.pulseT += dt;
     const k = 1 + Math.sin(this.pulseT * 5.2 + this.orbitAngle) * 0.1;
-    this.halo.scale.setScalar(this.haloSize * k);
+    const charge = this.charging ? 1.35 : 1;
+    this.halo.scale.setScalar(this.haloSize * k * charge);
     const haloMat = (this.halo as THREE.Sprite).material as THREE.SpriteMaterial | THREE.MeshBasicMaterial;
     if (haloMat && 'opacity' in haloMat) {
-      haloMat.opacity = 0.44 + Math.sin(this.pulseT * 6.4 + this.orbitAngle) * 0.08;
+      haloMat.opacity = this.charging
+        ? 0.72 + Math.sin(this.pulseT * 14) * 0.22
+        : 0.58 + Math.sin(this.pulseT * 6.4 + this.orbitAngle) * 0.12;
     }
-    if (this.rotor) this.rotor.rotation.z += dt * (this.role === 'kamikaze' ? 10 : 6);
+    if (this.rotor) this.rotor.rotation.z += dt * 6;
     if (this.flash.visible) {
       const f = this.flash.material as THREE.MeshBasicMaterial;
       f.opacity = Math.max(0, f.opacity - dt * 7);
       if (f.opacity <= 0.04) this.flash.visible = false;
     }
+  }
+
+  private pulseKamikaze(dt: number): void {
+    const fuseU = 1 - this.fuse / Math.max(0.001, this.fuseMax);
+    const closeU = 1 - Math.min(1, this.lastRamDist / 18);
+    const urgency = Math.min(1, Math.max(fuseU, closeU));
+    this.pulseT += dt * (1 + urgency * 2.4);
+    const rate = 5.2 + urgency * 16;
+    const w = 0.5 + 0.5 * Math.sin(this.pulseT * rate + this.orbitAngle);
+    const amp = 0.1 + urgency * 0.28;
+    const k = 1 + (w * 2 - 1) * amp;
+    this.hullRoot.scale.setScalar(k);
+    this.halo.scale.setScalar(this.haloSize * (1.15 + urgency * 0.7) * (0.85 + w * 0.4));
+    const haloMat = (this.halo as THREE.Sprite).material as THREE.SpriteMaterial | THREE.MeshBasicMaterial;
+    if (haloMat && 'opacity' in haloMat) {
+      haloMat.opacity = 0.55 + urgency * 0.35 + w * 0.2;
+    }
+    if (haloMat && 'color' in haloMat) {
+      const hot = 0.35 + urgency * 0.65;
+      haloMat.color.setRGB(1, 0.55 + (1 - hot) * 0.35, 0.08 + (1 - hot) * 0.2);
+    }
+    this.telegraphRing.visible = true;
+    this.telegraphRing.scale.setScalar(0.75 + urgency * 1.1 + w * 0.35);
+    (this.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0.22 + urgency * 0.55 + w * 0.2;
+    this.telegraphRing.rotation.z += dt * (4 + urgency * 14);
+    this.flash.visible = true;
+    (this.flash.material as THREE.MeshBasicMaterial).opacity = 0.2 + urgency * 0.55 + w * 0.25;
+    if (this.rotor) this.rotor.rotation.z += dt * (10 + urgency * 18);
+    this.pulseKamiEmissive(urgency, w);
+  }
+
+  private pulseKamiEmissive(urgency: number, w: number): void {
+    this.hullRoot.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const raw of mats) {
+        const m = raw as THREE.MeshStandardMaterial & THREE.MeshBasicMaterial;
+        if ('emissiveIntensity' in m && typeof m.emissiveIntensity === 'number') {
+          m.emissiveIntensity = 0.35 + urgency * 1.8 + w * 0.55;
+        }
+        if (m.transparent && m.blending === THREE.AdditiveBlending && 'opacity' in m) {
+          m.opacity = 0.4 + urgency * 0.45 + w * 0.2;
+        }
+      }
+    });
   }
 
   toUnitRef(): {
@@ -461,6 +758,16 @@ export class EnemyDrone {
   reset(): void {
     this.cooldown = 0.3;
     this.beam.visible = false;
+    this.charging = false;
+    this.telegraphT = 0;
+    this.telegraphRing.visible = false;
+    this.hullRoot.scale.setScalar(1);
+    this.didBoom = false;
+    if (this.role === 'kamikaze') this.rollFuse();
+    for (const b of this.bolts) {
+      b.active = false;
+      b.mesh.visible = false;
+    }
   }
 
   dispose(): void {

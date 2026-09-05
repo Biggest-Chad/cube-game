@@ -19,6 +19,10 @@ export class DroneBayController {
     this.state = normalizeDroneBayState(raw);
   }
 
+  resetToDefault(): void {
+    this.load(null);
+  }
+
   toJSON(): DroneBayState {
     return normalizeDroneBayState(this.state);
   }

@@ -257,6 +257,10 @@ export class LoadoutState {
     bus.emit('loadout-changed', this.toJSON());
   }
 
+  resetForEvolve(): void {
+    this.resetBranchRanks();
+  }
+
   upgradeBranch(slot: number, branchId: string): boolean {
     const check = this.canUpgradeBranch(slot, branchId, Infinity);
     if (!check.nextRank) return false;

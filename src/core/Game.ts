@@ -117,7 +117,15 @@ import { PilotRuntime } from '../combat/PilotRuntime';
 import { PilotState, type PilotUnlockContext } from '../progression/PilotState';
 import { PilotSplashUI } from '../ui/PilotSplashUI';
 import { FlyerRun } from '../flyer/FlyerRun';
-import { flyerSceneTitle, pickFlyerScene, shouldRunTransit, type FlyerSceneId } from '../data/flyer';
+import {
+  FLYER_DEBUG_PATH,
+  flyerLevelForScene,
+  flyerSceneFromQuery,
+  flyerSceneTitle,
+  pickFlyerScene,
+  shouldRunTransit,
+  type FlyerSceneId,
+} from '../data/flyer';
 
 type Mode =
   | 'menu'
@@ -249,7 +257,10 @@ export class Game {
   private readonly _flyerPos = new THREE.Vector3();
   private readonly _flyerLook = new THREE.Vector3();
   private readonly _flyerCam = new THREE.Vector3();
+  private readonly _flyerUp = new THREE.Vector3(0, 1, 0);
+  private readonly _flyerAhead = new THREE.Vector3();
   private prevCamFar = 500;
+  private prevCubeVisible = true;
   private sessionBlocksDestroyed = 0;
   private sessionPurchased = false;
   private shopOpen = false;
@@ -406,6 +417,7 @@ export class Game {
       loadoutDone: false,
       fleetDone: false,
       gunDone: false,
+      flyerDone: false,
     });
     this.evolveReady = new EvolveReadyUI(document.getElementById('ui-root')!);
     this.evolveReady.onOpenShop = () => this.openTech();
@@ -439,6 +451,7 @@ export class Game {
 
     assertNavPolicyInvariants();
     this.showMenu();
+    this.maybeDebugFlyer();
     this.loop();
   }
 
@@ -882,6 +895,7 @@ export class Game {
       if (id === 'loadout') this.save.data.tutorialLoadoutDone = true;
       if (id === 'fleet') this.save.data.tutorialFleetDone = true;
       if (id === 'gun') this.save.data.tutorialGunDone = true;
+      if (id === 'flyer') this.save.data.tutorialFlyerDone = true;
       this.persist();
     };
 
@@ -898,6 +912,12 @@ export class Game {
       this.levelUI.hide();
       void this.audio.resume();
       this.startTransitReplay(afterId);
+    };
+    this.levelUI.onSelectFlyerTest = (scene) => {
+      this.levelUI.hide();
+      void this.audio.resume();
+      void this.music.unlock();
+      this.startFlyerTest(scene);
     };
     this.levelUI.onReplayIntro = () => {
       this.levelUI.hide();
@@ -1314,7 +1334,17 @@ export class Game {
       bus.on('crit', () => this.audio.playCrit()),
       bus.on('cube-rotation-start', () => this.audio.playCubeShift()),
       bus.on('turret-fire', () => this.audio.playFire('flak')),
-      bus.on('enemy-drone-fire', () => this.audio.playFire('pulse')),
+      bus.on('enemy-drone-fire', () => this.audio.playFire('drone')),
+      bus.on('enemy-drone-telegraph', () => this.audio.playFire('drone_warn')),
+      bus.on(
+        'enemy-drone-hit',
+        (p: { x: number; y: number; z: number; killed?: boolean }) => {
+          if (p.killed) return;
+          this.particles.spawn(p.x, p.y, p.z, 0xff5533, 12, 6, 'spark');
+          this.particles.spawn(p.x, p.y, p.z, 0xffee88, 6, 4, 'glow');
+          this.audio.playHit(false);
+        }
+      ),
       bus.on('core-rage-laser-charge', () => this.audio.playFire('rail')),
       bus.on('core-rage-laser-fire', () => this.audio.playFire('beam')),
       bus.on('core-spike-telegraph', () => this.audio.playFire('rail')),
@@ -1329,29 +1359,44 @@ export class Game {
         'core-notify',
         (p: { title?: string; body?: string; kind?: string }) => {
           // Purely informational — no shake / SFX / gameplay interrupt
-          this.showPhaseChip(p.title ?? 'NUCLEUS', p.kind ?? '');
+          this.showPhaseChip(p.title ?? 'NUCLEUS', p.kind ?? '', p.body);
         }
       ),
       bus.on('core-destroyed', () => {
         // Full sequence owned by beginCoreDeathSequence (shake + lattice shatter)
         if (this.mode === 'playing') this.beginCoreDeathSequence();
       }),
-      bus.on('enemy-drone-destroyed', () => {
-        this.currency.addFragments(3, this.tech.stats.fragmentMul);
-      })
+      bus.on(
+        'enemy-drone-destroyed',
+        (p: { x?: number; y?: number; z?: number }) => {
+          this.currency.addFragments(3, this.tech.stats.fragmentMul);
+          this.audio.playDestroy(false);
+          if (typeof p?.x === 'number') {
+            this.particles.spawn(p.x, p.y ?? 0, p.z ?? 0, 0xff2244, 16, 8, 'ember');
+          }
+        }
+      )
     );
   }
 
   /** Small non-blocking phase label (does not steal focus or block input). */
-  private showPhaseChip(title: string, kind: string): void {
+  private showPhaseChip(title: string, kind: string, body?: string): void {
     // Host on toast-root — never #overlay-root (that dims + blocks input)
     this.toastRoot.querySelectorAll('.phase-chip').forEach((n) => n.remove());
     const el = document.createElement('div');
     el.className = `phase-chip phase-${kind || 'info'}`;
-    el.textContent = title;
+    if (body) {
+      const head = document.createElement('b');
+      head.textContent = title;
+      const sub = document.createElement('span');
+      sub.textContent = body;
+      el.append(head, sub);
+    } else {
+      el.textContent = title;
+    }
     el.setAttribute('aria-live', 'polite');
     this.toastRoot.appendChild(el);
-    setTimeout(() => el.remove(), 1600);
+    setTimeout(() => el.remove(), body ? 2800 : 1600);
   }
 
   private onPlayerDamaged(amount: number): void {
@@ -1804,7 +1849,8 @@ export class Game {
       !!data.tutorialStage1Done,
       !!data.tutorialLoadoutDone,
       !!data.tutorialFleetDone,
-      !!data.tutorialGunDone
+      !!data.tutorialGunDone,
+      !!data.tutorialFlyerDone
     );
 
     this.vitals.syncFromStats(this.tech.stats);
@@ -2658,7 +2704,8 @@ export class Game {
         this.save.data.tutorialStage1Done,
         this.save.data.tutorialLoadoutDone,
         this.save.data.tutorialFleetDone,
-        this.save.data.tutorialGunDone
+        this.save.data.tutorialGunDone,
+        this.save.data.tutorialFlyerDone
       );
       this.tutorial.tryStartStage1();
       // Tutorial: hold fire until welcome is acknowledged or player moves
@@ -2877,10 +2924,31 @@ export class Game {
       doubled: this.clearRewardMul >= 2,
     };
     if (shouldRunTransit(this.currentLevelId)) {
-      this.beginTransit();
+      this.queueTransitCinematic();
       return;
     }
     this.presentLevelClearCard();
+  }
+
+  /** Dev/test: fly any FLYER_SCENES entry with no sector-clear gate. */
+  private startFlyerTest(scene: FlyerSceneId): void {
+    this.hidePauseCard();
+    this.returnToPause = false;
+    this.returnToClear = false;
+    this.menu.hide();
+    this.shopUI.hide();
+    this.overlay.innerHTML = '';
+    this.wipeCombatSession();
+    this.currentLevelId = flyerLevelForScene(scene);
+    this.pendingNextLevelId = this.currentLevelId + 1;
+    this.clearCard = {
+      name: flyerSceneTitle(scene),
+      frag: 0,
+      core: 0,
+      doubled: true,
+    };
+    this.levelClearHandled = true;
+    this.queueTransitCinematic(scene);
   }
 
   /** Jump to a transfer flight from the sector browser (no cube payout). */
@@ -2905,42 +2973,108 @@ export class Game {
       doubled: true,
     };
     this.levelClearHandled = true;
-    this.beginTransit();
+    this.queueTransitCinematic();
   }
 
-  private beginTransit(): void {
-    const sceneId = pickFlyerScene(this.currentLevelId);
+  /** Web playtest: `?flyer=canyon` | `wormhole` | `yard` | `rift`. */
+  private maybeDebugFlyer(): void {
+    let q = '';
+    try {
+      q = new URLSearchParams(window.location.search).get('flyer')?.toLowerCase() ?? '';
+    } catch {
+      return;
+    }
+    if (q !== 'canyon' && q !== 'wormhole' && q !== 'yard' && q !== 'rift') return;
+    const scene = flyerSceneFromQuery(q);
+    if (!scene) return;
+    this.currentLevelId = flyerLevelForScene(scene);
+    this.pendingNextLevelId = this.currentLevelId + 1;
+    this.clearCard = {
+      name: flyerSceneTitle(scene),
+      frag: 0,
+      core: 0,
+      doubled: true,
+    };
+    this.levelClearHandled = true;
+    this.menu.hide();
+    this.overlay.innerHTML = '';
+    this.queueTransitCinematic(scene);
+  }
+
+  /** Letterbox fade + transfer chip between cube shoot and flyer. */
+  private queueTransitCinematic(sceneId?: FlyerSceneId): void {
+    this.showPhaseChip('GRID TRANSFER', 'transit');
+    this.toast('Relocating defense grid');
+    this.screenFx.play({
+      fadeOut: 0.45,
+      hold: 0.22,
+      fadeIn: 0.6,
+      onBlack: () => this.beginTransit(sceneId),
+    });
+  }
+
+  private beginTransit(sceneId?: FlyerSceneId): void {
+    const id = sceneId ?? pickFlyerScene(this.currentLevelId);
     this.flyer?.dispose();
-    this.flyer = new FlyerRun(sceneId);
+    let ribbon = FLYER_DEBUG_PATH;
+    try {
+      ribbon = ribbon || new URLSearchParams(window.location.search).get('ribbon') === '1';
+    } catch {
+      /* ignore */
+    }
+    this.flyer = new FlyerRun(id, { debugRibbon: ribbon });
     this.scene.add(this.flyer.root);
     this.mode = 'transit';
     this.vitals.fullRestore();
     this.ship.beginManualFlight();
-    this.ship.group.visible = true;
+    this.ship.group.visible = false;
     this.ship.group.scale.setScalar(1);
     this.hud.setVisible(true);
     this.hud.setFlyerVisible(true);
     this.hud.setCrosshairVisible(false);
     this.reticle.setVisible(false);
+    this.prevCubeVisible = this.cube.group.visible;
+    this.cube.group.visible = false;
+    this.cubeAnimator.group.visible = false;
+    this.cubeDefense.group.visible = false;
+    this.drones.group.visible = false;
+    this.groundStations.group.visible = false;
+    this.hardpoints.worldGroup.visible = false;
+    this.weapon.group.visible = false;
     this.prevCamFar = this.cameraCtrl.camera.far;
-    this.cameraCtrl.camera.far = 260;
+    this.cameraCtrl.camera.far = 480;
+    this.cameraCtrl.camera.layers.disable(1);
     this.cameraCtrl.camera.updateProjectionMatrix();
-    this.scene.fog = new THREE.Fog(this.flyer.fogColor, 18, 90);
+    this.scene.fog = new THREE.Fog(this.flyer.fogColor, this.flyer.fogNear, this.flyer.fogFar);
+    this.scene.background = new THREE.Color(this.flyer.fogColor);
     this.input.releaseAll();
     this.toast(`${this.flyer.title} · relocating defense grid`);
+    if (!this.save.data.tutorialFlyerDone) this.tutorial.tryStartFlyer();
   }
 
   private teardownTransitVisuals(): void {
+    this.tutorial.completeIf('flyer');
     if (this.flyer) {
       this.scene.remove(this.flyer.root);
       this.flyer.dispose();
       this.flyer = null;
     }
     this.ship.endManualFlight();
+    this.ship.group.visible = true;
     this.hud.setFlyerVisible(false);
+    this.cube.group.visible = this.prevCubeVisible;
+    this.cubeAnimator.group.visible = true;
+    this.cubeDefense.group.visible = true;
+    this.drones.group.visible = true;
+    this.groundStations.group.visible = true;
+    this.hardpoints.worldGroup.visible = true;
+    this.weapon.group.visible = true;
+    this.cameraCtrl.camera.up.set(0, 1, 0);
+    this.cameraCtrl.camera.layers.enable(1);
     this.cameraCtrl.camera.far = this.prevCamFar;
     this.cameraCtrl.camera.updateProjectionMatrix();
     this.scene.fog = null;
+    this.scene.background = null;
   }
 
   private updateTransit(dt: number): void {
@@ -2960,15 +3094,42 @@ export class Game {
     run.shipPos(this._flyerPos);
     run.lookTarget(this._flyerLook);
     run.camPos(this._flyerCam);
-    this.ship.placeManual(this._flyerPos, this._flyerLook);
+    run.camUp(this._flyerUp);
+    run.shipAhead(this._flyerAhead);
+    this.ship.placeManual(this._flyerPos, this._flyerAhead, this._flyerUp);
     this.ship.update(this.cameraCtrl, dt, this.particles);
+    this.cameraCtrl.camera.up.copy(this._flyerUp);
     this.cameraCtrl.camera.position.copy(this._flyerCam);
     this.cameraCtrl.camera.lookAt(this._flyerLook);
+    run.applyMusicBass(this.music.getBassLevel(), dt);
+    const fogCol = run.fogPulseColor;
+    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(fogCol);
+    if (this.scene.background instanceof THREE.Color) this.scene.background.copy(fogCol);
     this.hud.updateFlyer({
       title: run.title,
       time: run.t,
       speed: run.speedMul,
       lock: run.lockOn,
+    });
+    this.tutorial.update(dt, {
+      orbitMag: Math.hypot(this.input.axisX, this.input.axisY),
+      aimMag: 0,
+      blocksDestroyedSession: 0,
+      shopOpen: false,
+      purchasedThisSession: false,
+      ownsArcBeam: false,
+      hasEquippedWeapon: false,
+      canAffordShop: false,
+      canAffordArcBeam: false,
+      canAffordDrone: false,
+      ownsDrone: false,
+      fragments: this.currency.dataFragments,
+      canAffordSecondDrone: false,
+      fleetExpanded: false,
+      ownsSplitBeam: false,
+      flyerStrafe: Math.hypot(this.input.axisX, this.input.axisY),
+      flyerLock: run.lockOn,
+      flyerFire: fire,
     });
     this.updateHudVitals();
     if (run.failed) {
@@ -3259,6 +3420,7 @@ export class Game {
 
     this.arena.update(dt);
     this.screenFx.update(dt);
+    if (this.mode !== 'playing') this.audio.setKamikazeSeek(0);
 
     if (this.mode === 'menu' || (this.mode === 'settings' && this.menuDemoActive)) {
       // Demo cube: smooth orbit presentation (settings must not pop the cube)
@@ -3328,6 +3490,7 @@ export class Game {
       this.ship.update(this.cameraCtrl, dt, this.particles);
 
       if (this.mode === 'playing') {
+        this.audio.setKamikazeSeek(this.cubeDefense.kamikazeSeekIntensity(this.ship.position));
         if (this.reviveImmunity > 0) {
           this.reviveImmunity = Math.max(0, this.reviveImmunity - dt);
         }

@@ -1,9 +1,21 @@
+import { CORE } from '../data/core';
+
+const DRONE_ICONS: Record<string, string> = {
+  fighter: `<svg class="hud-drone-ico" viewBox="0 0 16 16" aria-hidden="true"><polygon points="8,1.2 14.5,14.2 8,11 1.5,14.2"/></svg>`,
+  bomber: `<svg class="hud-drone-ico" viewBox="0 0 16 16" aria-hidden="true"><polygon points="8,1.5 15,8 8,14.5 1,8"/><rect x="3.2" y="7.1" width="9.6" height="1.8"/></svg>`,
+  defender: `<svg class="hud-drone-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.2 L14 4.2 V8.6 C14 12.2 8 14.8 8 14.8 C8 14.8 2 12.2 2 8.6 V4.2 Z"/></svg>`,
+};
+
+const DRONE_ROLE_ORDER = ['fighter', 'bomber', 'defender'] as const;
+
 export class HUD {
   private root: HTMLElement;
+  private landscapeEl!: HTMLElement;
   private fragEl!: HTMLElement;
   private coreEl!: HTMLElement;
   private levelEl!: HTMLElement;
   private progressEl!: HTMLElement;
+  private progressWrap!: HTMLElement;
   private blocksEl!: HTMLElement;
   private joyZone!: HTMLElement;
   private stickEl!: HTMLElement;
@@ -24,8 +36,9 @@ export class HUD {
   private nucleusWrap!: HTMLElement;
   private nucleusBar!: HTMLElement;
   private nucleusVal!: HTMLElement;
-  private nucleusStatus!: HTMLElement;
   private vitalsEl!: HTMLElement | null;
+  private dronesEl!: HTMLElement | null;
+  private ammoWrap!: HTMLElement | null;
 
   private lastFrag = Number.NaN;
   private lastCore = Number.NaN;
@@ -67,13 +80,12 @@ export class HUD {
           </div>
           <div class="hud-center-stack">
             <div class="level-banner" id="hud-level">LEVEL 1</div>
-            <div class="progress-bar"><span id="hud-progress"></span></div>
+            <div class="progress-bar" id="hud-progress-wrap">
+              <span id="hud-progress"></span>
+              <i class="hud-destab-mark" id="hud-destab-mark" aria-hidden="true"></i>
+            </div>
             <div class="level-banner blocks" id="hud-blocks"></div>
             <div class="hud-nucleus panel-hidden" id="hud-nucleus" aria-label="Cube nucleus">
-              <div class="hud-nucleus-top">
-                <span class="hud-nucleus-label">NUCLEUS</span>
-                <span class="hud-nucleus-status" id="hud-nucleus-status">STABLE</span>
-              </div>
               <div class="hud-nucleus-bar"><i id="hud-nucleus-bar"></i></div>
               <span class="hud-nucleus-val" id="hud-nucleus-val">—</span>
             </div>
@@ -81,15 +93,20 @@ export class HUD {
           <div class="hud-top-spacer" aria-hidden="true"></div>
         </div>
 
-        <div class="hud-ammo" id="hud-ammo">
-          <button class="hud-ammo-btn interactive ui-btn" id="hud-ammo-btn" type="button" aria-label="Cycle main gun ammo">
-            <span class="hud-ammo-tag" id="hud-ammo-tag">STD</span>
-            <span class="hud-ammo-copy">
-              <span class="hud-ammo-name" id="hud-ammo-name">STANDARD</span>
-              <span class="hud-ammo-hint" id="hud-ammo-hint">Balanced pierce / splash</span>
-            </span>
-            <span class="hud-ammo-key">R</span>
-          </button>
+        <div class="hud-drones panel-hidden" id="hud-drones" aria-label="Drone fleet"></div>
+
+        <div class="hud-combat-tray" id="hud-combat-tray">
+          <div class="hud-ammo" id="hud-ammo">
+            <button class="hud-ammo-btn interactive ui-btn" id="hud-ammo-btn" type="button" aria-label="Cycle main gun ammo, Standard">
+              <span class="hud-ammo-icon" aria-hidden="true">
+                <svg class="ico-std" viewBox="0 0 16 16"><polygon points="8,1 10.2,6.4 16,7.2 11.6,10.6 13,16 8,13.1 3,16 4.4,10.6 0,7.2 5.8,6.4"/></svg>
+                <svg class="ico-ap" viewBox="0 0 16 16"><polygon points="8,1 10,6 10,14 8,15.4 6,14 6,6"/></svg>
+                <svg class="ico-he" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.1"/><path d="M8 1.2 V3.6 M8 12.4 V14.8 M1.2 8 H3.6 M12.4 8 H14.8 M3.1 3.1 L4.8 4.8 M11.2 11.2 L12.9 12.9 M12.9 3.1 L11.2 4.8 M4.8 11.2 L3.1 12.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+              </span>
+              <span class="hud-ammo-tag" id="hud-ammo-tag">STD</span>
+              <span class="hud-ammo-key">R</span>
+            </button>
+          </div>
           <button class="hud-pilot-btn interactive ui-btn panel-hidden" id="hud-pilot-btn" type="button" aria-label="Pilot active">
             <span class="hud-pilot-ring" id="hud-pilot-ring"></span>
             <span class="hud-pilot-call" id="hud-pilot-call">—</span>
@@ -99,16 +116,19 @@ export class HUD {
 
         <div class="hud-vitals" id="hud-vitals" aria-label="Ship integrity">
           <div class="hud-vital-row shield">
-            <span class="hud-vital-label">SHD</span>
+            <span class="hud-vital-label" title="Shield" aria-label="Shield">
+              <svg class="hud-vital-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.4 L13.6 3.8 V8.2 C13.6 11.6 8 14.4 8 14.4 C8 14.4 2.4 11.6 2.4 8.2 V3.8 Z"/></svg>
+            </span>
             <div class="hud-vital-bar"><i id="hud-shield-bar"></i></div>
             <span class="hud-vital-val" id="hud-shield-val">40</span>
           </div>
           <div class="hud-vital-row hull">
-            <span class="hud-vital-label">HULL</span>
+            <span class="hud-vital-label" title="Hull" aria-label="Hull">
+              <svg class="hud-vital-ico" viewBox="0 0 16 16" aria-hidden="true"><polygon points="8,1.6 13.6,5.2 13.6,11.2 8,14.4 2.4,11.2 2.4,5.2"/></svg>
+            </span>
             <div class="hud-vital-bar"><i id="hud-hull-bar"></i></div>
             <span class="hud-vital-val" id="hud-hull-val">100</span>
           </div>
-          <div class="hud-drones panel-hidden" id="hud-drones" aria-label="Drone fleet"></div>
         </div>
 
         <div class="hud-flyer panel-hidden" id="hud-flyer" aria-label="Transit">
@@ -183,13 +203,14 @@ export class HUD {
           </div>
         </div>
 
-        <div class="desktop-hint">WASD ORBIT · IJKL / RIGHT STICK AIM · R AMMO · Q PILOT · AUTO-FIRE · SCROLL ZOOM</div>
       </div>
     `;
+    this.landscapeEl = this.root.querySelector('.hud-landscape')!;
     this.fragEl = this.root.querySelector('#hud-frag')!;
     this.coreEl = this.root.querySelector('#hud-core')!;
     this.levelEl = this.root.querySelector('#hud-level')!;
     this.progressEl = this.root.querySelector('#hud-progress')!;
+    this.progressWrap = this.root.querySelector('#hud-progress-wrap')!;
     this.blocksEl = this.root.querySelector('#hud-blocks')!;
     this.joyZone = this.root.querySelector('#joy-zone')!;
     this.stickEl = this.root.querySelector('#joy-stick')!;
@@ -210,8 +231,13 @@ export class HUD {
     this.nucleusWrap = this.root.querySelector('#hud-nucleus')!;
     this.nucleusBar = this.root.querySelector('#hud-nucleus-bar')!;
     this.nucleusVal = this.root.querySelector('#hud-nucleus-val')!;
-    this.nucleusStatus = this.root.querySelector('#hud-nucleus-status')!;
     this.vitalsEl = this.root.querySelector('#hud-vitals');
+    this.dronesEl = this.root.querySelector('#hud-drones');
+    this.ammoWrap = this.root.querySelector('#hud-ammo');
+    const destabMark = this.root.querySelector('#hud-destab-mark') as HTMLElement | null;
+    if (destabMark) {
+      destabMark.style.left = `${((1 - CORE.destabilizeShellRatio) * 100).toFixed(2)}%`;
+    }
   }
 
   get elements() {
@@ -241,16 +267,19 @@ export class HUD {
     if (key === this.lastAmmoKey) return;
     this.lastAmmoKey = key;
     const tag = this.root.querySelector('#hud-ammo-tag');
-    const name = this.root.querySelector('#hud-ammo-name');
-    const hint = this.root.querySelector('#hud-ammo-hint');
-    const wrap = this.root.querySelector('#hud-ammo');
+    const wrap = this.ammoWrap ?? this.root.querySelector('#hud-ammo');
     const btn = this.root.querySelector('#hud-ammo-btn');
     if (tag) tag.textContent = info.short;
-    if (name) name.textContent = info.name.toUpperCase();
-    if (hint) hint.textContent = info.hint;
     wrap?.classList.toggle('ap', info.id === 'ap');
     wrap?.classList.toggle('he', info.id === 'he');
+    wrap?.classList.toggle('std', info.id === 'standard');
     btn?.classList.toggle('locked', !info.canCycle);
+    btn?.setAttribute(
+      'aria-label',
+      info.canCycle
+        ? `Cycle main gun ammo, ${info.name}. ${info.hint}`
+        : `Main gun ammo, ${info.name}. ${info.hint}`
+    );
   }
 
   updatePilot(info: {
@@ -360,13 +389,13 @@ export class HUD {
   }
 
   /**
-   * Compact drone pips under ship vitals. Hidden when the bay is empty.
-   * Dead units show remaining respawn seconds.
+   * Dedicated drone cluster (left of vitals). Hidden when the bay is empty.
+   * Role icons + counts; per-unit HP fill. Dead units show remaining respawn.
    */
   updateDrones(
     entries: Array<{ role: string; alive: boolean; hp: number; maxHp: number; respawn: number }>
   ): void {
-    const el = this.root.querySelector('#hud-drones') as HTMLElement | null;
+    const el = this.dronesEl ?? (this.root.querySelector('#hud-drones') as HTMLElement | null);
     if (!el) return;
     if (!entries.length) {
       if (this.lastDroneKey !== '') {
@@ -385,21 +414,38 @@ export class HUD {
     if (key === this.lastDroneKey) return;
     this.lastDroneKey = key;
     el.classList.remove('panel-hidden');
-    const letter = (role: string) =>
-      role === 'fighter' ? 'F' : role === 'bomber' ? 'B' : role === 'defender' ? 'D' : '?';
-    el.innerHTML =
-      `<span class="hud-drones-label">DRN</span>` +
-      entries
-        .map((d) => {
-          const pct = d.alive ? Math.max(0, Math.min(100, (d.hp / Math.max(1, d.maxHp)) * 100)) : 0;
-          const wait = !d.alive ? `${Math.max(0, Math.ceil(d.respawn))}s` : '';
-          return `<span class="hud-drone-pip ${d.role}${d.alive ? '' : ' dead'}" title="${d.role}">
-            <i style="width:${pct.toFixed(0)}%"></i>
-            <em>${letter(d.role)}</em>
-            ${wait ? `<b>${wait}</b>` : ''}
-          </span>`;
-        })
-        .join('');
+    const groups = new Map<string, typeof entries>();
+    for (const d of entries) {
+      const list = groups.get(d.role);
+      if (list) list.push(d);
+      else groups.set(d.role, [d]);
+    }
+    const roles = [
+      ...DRONE_ROLE_ORDER.filter((r) => groups.has(r)),
+      ...[...groups.keys()].filter((r) => !(DRONE_ROLE_ORDER as readonly string[]).includes(r)),
+    ];
+    el.innerHTML = roles
+      .map((role) => {
+        const list = groups.get(role)!;
+        const alive = list.filter((d) => d.alive).length;
+        const icon = DRONE_ICONS[role] ?? DRONE_ICONS.fighter;
+        const pips = list
+          .map((d) => {
+            const pct = d.alive ? Math.max(0, Math.min(100, (d.hp / Math.max(1, d.maxHp)) * 100)) : 0;
+            const wait = !d.alive ? `${Math.max(0, Math.ceil(d.respawn))}s` : '';
+            return `<span class="hud-drone-pip ${d.role}${d.alive ? '' : ' dead'}">
+              <i style="width:${pct.toFixed(0)}%"></i>
+              ${wait ? `<b>${wait}</b>` : ''}
+            </span>`;
+          })
+          .join('');
+        return `<div class="hud-drone-group ${role}" title="${role}" aria-label="${role} ${alive} of ${list.length}">
+          ${icon}
+          <span class="hud-drone-count">${list.length}</span>
+          <span class="hud-drone-pips">${pips}</span>
+        </div>`;
+      })
+      .join('');
   }
 
   /** Shield + hull bars at bottom of combat HUD. */
@@ -446,7 +492,7 @@ export class HUD {
   updateLevel(id: number, name: string, progress: number, alive: number, total: number): void {
     const levelText = `L${id} · ${name}`;
     const progressBar = `${Math.min(100, progress * 100).toFixed(1)}%`;
-    const blocksText = `${alive} / ${total} BLOCKS`;
+    const blocksText = `${alive} / ${total}`;
     if (levelText !== this.lastLevelText) {
       this.lastLevelText = levelText;
       this.levelEl.textContent = levelText;
@@ -459,6 +505,8 @@ export class HUD {
       this.lastBlocksText = blocksText;
       this.blocksEl.textContent = blocksText;
     }
+    const remaining = total > 0 ? alive / total : 1;
+    this.progressWrap?.classList.toggle('destab-hot', remaining <= CORE.destabilizeShellRatio);
   }
 
   updateNucleus(snap: {
@@ -477,11 +525,13 @@ export class HUD {
       if (this.lastNucleusActive !== false) {
         this.nucleusWrap.classList.add('panel-hidden');
         this.nucleusWrap.classList.remove('exposed', 'overload', 'decaying', 'laser');
+        this.nucleusWrap.setAttribute('aria-label', 'Cube nucleus');
         this.lastNucleusActive = false;
         this.lastNucleusExposed = false;
         this.lastNucleusOverload = false;
         this.lastNucleusDecaying = false;
         this.lastNucleusLaser = false;
+        this.lastNucleusStatus = '';
       }
       return;
     }
@@ -503,18 +553,18 @@ export class HUD {
     const laserHot =
       snap.laserPhase === 'warmup' || snap.laserPhase === 'charge' || snap.laserPhase === 'fire';
     const spikeHot = snap.spikePhase === 'telegraph' || snap.spikePhase === 'fire';
-    let status = snap.attributeLabel;
-    if (snap.laserPhase === 'fire') status = 'RAGE LASER';
-    else if (snap.laserPhase === 'charge') status = 'CANNON LOCK';
-    else if (snap.laserPhase === 'warmup') status = 'RAGE WIND-UP';
-    else if (snap.spikePhase === 'telegraph') status = 'SPIKE BURST';
-    else if (snap.spikePhase === 'fire') status = 'SPIKES';
-    else if (snap.overloadActive) status = 'OVERLOAD';
-    else if (snap.decaying) status = 'DESTABILIZING';
-    else if (snap.exposed) status = 'EXPOSED';
-    if (this.nucleusStatus && status !== this.lastNucleusStatus) {
+    let status = snap.attributeLabel || 'stable';
+    if (snap.laserPhase === 'fire') status = 'rage laser';
+    else if (snap.laserPhase === 'charge') status = 'cannon lock';
+    else if (snap.laserPhase === 'warmup') status = 'rage wind-up';
+    else if (snap.spikePhase === 'telegraph') status = 'spike burst';
+    else if (snap.spikePhase === 'fire') status = 'spikes';
+    else if (snap.overloadActive) status = 'overload';
+    else if (snap.decaying) status = 'destabilizing';
+    else if (snap.exposed) status = 'exposed';
+    if (status !== this.lastNucleusStatus) {
       this.lastNucleusStatus = status;
-      this.nucleusStatus.textContent = status;
+      this.nucleusWrap.setAttribute('aria-label', `Cube nucleus, ${status}`);
     }
     const exposed = snap.exposed && !snap.overloadActive && !laserHot;
     const laser = laserHot || spikeHot;
@@ -576,8 +626,10 @@ export class HUD {
   }
 
   setFlyerVisible(on: boolean): void {
+    this.landscapeEl?.classList.toggle('flyer-mode', on);
     this.root.querySelector('#hud-flyer')?.classList.toggle('panel-hidden', !on);
-    this.root.querySelector('#hud-ammo')?.classList.toggle('panel-hidden', on);
+    this.root.querySelector('#hud-combat-tray')?.classList.toggle('panel-hidden', on);
+    this.ammoWrap?.classList.toggle('panel-hidden', on);
     const labels = this.root.querySelectorAll('.control-label');
     if (labels[0]) labels[0].textContent = on ? 'STRAFE' : 'ORBIT';
     if (labels[1]) labels[1].textContent = on ? 'FIRE' : 'AIM';

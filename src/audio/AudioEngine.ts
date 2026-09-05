@@ -41,6 +41,14 @@ export class AudioEngine {
   muted = false;
   volume = 0.7;
   private started = false;
+  private kamiGain: GainNode | null = null;
+  private kamiOsc: OscillatorNode | null = null;
+  private kamiOsc2: OscillatorNode | null = null;
+  private kamiLfo: OscillatorNode | null = null;
+  private kamiFilter: BiquadFilterNode | null = null;
+  private kamiNoise: AudioBufferSourceNode | null = null;
+  private kamiNoiseGain: GainNode | null = null;
+  private kamiIntensity = 0;
 
   /** Rate limits (seconds since epoch in audio time) */
   private lastFireAt = 0;
@@ -62,6 +70,7 @@ export class AudioEngine {
 
   /** Stop every SFX/ambient voice immediately (app backgrounded / closed). */
   suspend(): void {
+    this.stopKamikazeSeek();
     if (!this.ctx) return;
     if (this.ctx.state === 'running') {
       void this.ctx.suspend().catch(() => undefined);
@@ -108,6 +117,12 @@ export class AudioEngine {
       case 'pulse':
         this.sfxPulseFire(t);
         break;
+      case 'drone':
+        this.sfxDroneZap(t);
+        break;
+      case 'drone_warn':
+        this.sfxDroneWarn(t);
+        break;
       case 'beam':
       default:
         this.sfxLaserFire(t);
@@ -131,6 +146,112 @@ export class AudioEngine {
     if (t - this.lastDestroyAt < 0.022) return;
     this.lastDestroyAt = t;
     this.sfxShatter(t, heavy);
+  }
+
+  /**
+   * Looping seeker chirp. Intensity 0..1 — rate and pitch climb as they close
+   * or as the fuse runs out. 0 fades the voice out.
+   */
+  setKamikazeSeek(intensity: number): void {
+    const v = Math.max(0, Math.min(1, intensity));
+    this.kamiIntensity = v;
+    if (v <= 0.02 || this.muted) {
+      this.stopKamikazeSeek();
+      return;
+    }
+    if (!this.ctx || !this.sfxBus || this.ctx.state !== 'running' || !this.started) return;
+    if (!this.kamiGain) this.startKamikazeSeek();
+    if (!this.kamiGain || !this.ctx) return;
+    const t = this.now();
+    const peak = 0.012 + v * 0.055;
+    this.kamiGain.gain.cancelScheduledValues(t);
+    this.kamiGain.gain.setTargetAtTime(peak, t, 0.08);
+    if (this.kamiOsc) this.kamiOsc.frequency.setTargetAtTime(420 + v * 520, t, 0.1);
+    if (this.kamiOsc2) this.kamiOsc2.frequency.setTargetAtTime(640 + v * 780, t, 0.1);
+    if (this.kamiLfo) this.kamiLfo.frequency.setTargetAtTime(3.2 + v * 11, t, 0.12);
+    if (this.kamiFilter) this.kamiFilter.frequency.setTargetAtTime(900 + v * 2200, t, 0.1);
+    if (this.kamiNoiseGain) this.kamiNoiseGain.gain.setTargetAtTime(0.004 + v * 0.03, t, 0.1);
+  }
+
+  private startKamikazeSeek(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    this.stopKamikazeSeek();
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1100;
+    filter.Q.value = 3.4;
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = 480;
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'triangle';
+    osc2.frequency.value = 720;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 4;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 180;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+    lfoGain.connect(osc2.frequency);
+    osc.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.noiseBuffer;
+    noise.loop = true;
+    const nf = ctx.createBiquadFilter();
+    nf.type = 'highpass';
+    nf.frequency.value = 1800;
+    const ng = ctx.createGain();
+    ng.gain.value = 0.0001;
+    noise.connect(nf);
+    nf.connect(ng);
+    ng.connect(gain);
+    gain.connect(this.sfxBus);
+    osc.start(t);
+    osc2.start(t);
+    lfo.start(t);
+    noise.start(t);
+    this.kamiGain = gain;
+    this.kamiOsc = osc;
+    this.kamiOsc2 = osc2;
+    this.kamiLfo = lfo;
+    this.kamiFilter = filter;
+    this.kamiNoise = noise;
+    this.kamiNoiseGain = ng;
+  }
+
+  private stopKamikazeSeek(): void {
+    const t = this.now();
+    if (this.kamiGain) {
+      try {
+        this.kamiGain.gain.cancelScheduledValues(t);
+        this.kamiGain.gain.setTargetAtTime(0.0001, t, 0.05);
+      } catch {
+        /* ignore */
+      }
+    }
+    const stopAt = t + 0.18;
+    for (const n of [this.kamiOsc, this.kamiOsc2, this.kamiLfo, this.kamiNoise]) {
+      try {
+        n?.stop(stopAt);
+      } catch {
+        /* ignore */
+      }
+    }
+    this.kamiGain = null;
+    this.kamiOsc = null;
+    this.kamiOsc2 = null;
+    this.kamiLfo = null;
+    this.kamiFilter = null;
+    this.kamiNoise = null;
+    this.kamiNoiseGain = null;
+    this.kamiIntensity = 0;
   }
 
   /** Splash / missile / rocket detonation. */
@@ -422,6 +543,7 @@ export class AudioEngine {
 
   dispose(): void {
     try {
+      this.stopKamikazeSeek();
       this.stopCinematicBed();
       for (const o of this.ambientOscs) o.stop();
       this.ambientLfo?.stop();
@@ -685,6 +807,36 @@ export class AudioEngine {
       type: 'highpass',
       freq: 2800,
       q: 0.6,
+    });
+  }
+
+  /** Hostile drone bolt — thin zap sting. */
+  private sfxDroneZap(t: number): void {
+    const f0 = 1480 + Math.random() * 220;
+    this.tone(f0, 'square', 0.045, 0.001, 0.07, t, {
+      endFreq: f0 * 0.45,
+      filter: { type: 'highpass', freq: 700, q: 0.8 },
+    });
+    this.tone(f0 * 0.5, 'sawtooth', 0.03, 0.001, 0.06, t, {
+      endFreq: 180,
+      filter: { type: 'bandpass', freq: 900, q: 1.4 },
+    });
+    this.noiseBurst(0.025, 0.001, 0.04, t, {
+      type: 'highpass',
+      freq: 2400,
+      q: 0.7,
+    });
+  }
+
+  /** Telegraph chirp before a drone bolt. */
+  private sfxDroneWarn(t: number): void {
+    const f0 = 620 + Math.random() * 80;
+    this.tone(f0, 'triangle', 0.035, 0.02, 0.16, t, {
+      endFreq: f0 * 1.85,
+      filter: { type: 'bandpass', freq: 1400, q: 1.1 },
+    });
+    this.tone(f0 * 2, 'sine', 0.02, 0.04, 0.12, t, {
+      endFreq: f0 * 3.1,
     });
   }
 

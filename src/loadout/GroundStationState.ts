@@ -94,6 +94,10 @@ export class GroundStationController {
     bus.emit('ground-ranks-reset', {});
   }
 
+  resetToDefault(): void {
+    this.resetRanks();
+  }
+
   canUpgrade(id: GroundWeaponId): boolean {
     return this.isTypeUnlocked(id) && this.state.ranks[id] < this.rankCap;
   }

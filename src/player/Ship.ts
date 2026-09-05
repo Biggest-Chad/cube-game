@@ -877,9 +877,9 @@ export class Ship {
     this.manualFlight = false;
   }
 
-  placeManual(pos: THREE.Vector3, lookAt: THREE.Vector3): void {
+  placeManual(pos: THREE.Vector3, lookAt: THREE.Vector3, up?: THREE.Vector3): void {
     this.group.position.copy(pos);
-    this._m.lookAt(pos, lookAt, this._up);
+    this._m.lookAt(pos, lookAt, up ?? this._up);
     this.group.quaternion.setFromRotationMatrix(this._m);
   }
 

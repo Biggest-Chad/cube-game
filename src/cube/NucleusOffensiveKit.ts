@@ -28,9 +28,11 @@ import {
   NUCLEUS_JAVELIN_TELEGRAPH_SECONDS,
   NUCLEUS_KAMIKAZE_BASE_COUNT,
   NUCLEUS_KAMIKAZE_BASE_HIT_POINTS,
+  NUCLEUS_KAMIKAZE_COOLDOWN_SECONDS,
   NUCLEUS_KAMIKAZE_DAMAGE,
   NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE,
   NUCLEUS_KAMIKAZE_SPEED,
+  NUCLEUS_KAMIKAZE_UNLOCK_STAGE,
   NUCLEUS_MINE_BLAST_DAMAGE,
   NUCLEUS_MINE_BLAST_RADIUS,
   NUCLEUS_MINE_COOLDOWN_SECONDS,
@@ -69,8 +71,10 @@ interface Proj {
   hp: number;
   lightning?: THREE.Line;
   lightning2?: THREE.Line;
+  lightning3?: THREE.Line;
   sheath?: THREE.Mesh;
   corona?: THREE.Mesh;
+  rings?: THREE.Mesh[];
   pulse?: number;
 }
 
@@ -118,6 +122,7 @@ export class NucleusOffensiveKit {
   private readonly lastPlayer = new THREE.Vector3();
   private readonly sph = new THREE.SphereGeometry(1, 12, 10);
   private readonly cyl = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+  private readonly torus = new THREE.TorusGeometry(1, 0.07, 6, 20);
 
   constructor() {
     this.wellMesh = this.glowSphere(0x8866ff, 0);
@@ -136,7 +141,7 @@ export class NucleusOffensiveKit {
   notifyOverload(): void {
     this.overloadPulse = 2.4;
     const u = nucleusKitUnlocks(this.levelId);
-    if (u.kamikaze) this.spawnKamikaze();
+    if (u.kamikaze) this.spawnKamikaze(false);
     if (u.blob) {
       this.fireBlobs(true);
       this.cd.blob = NUCLEUS_BLOB_COOLDOWN_SECONDS * 0.55;
@@ -294,6 +299,9 @@ export class NucleusOffensiveKit {
     if (u.blob && this.ready('blob', NUCLEUS_BLOB_COOLDOWN_SECONDS * cd)) {
       this.fireBlobs(this.overloadPulse > 0);
     }
+    if (u.kamikaze && this.ready('kami', NUCLEUS_KAMIKAZE_COOLDOWN_SECONDS * cd)) {
+      this.spawnKamikaze(true);
+    }
     if (u.mine && this.mines.length < NUCLEUS_MINE_MAX_LIVE) {
       if (this.ready('mine', NUCLEUS_MINE_COOLDOWN_SECONDS * cd)) this.spawnMine(origin);
     }
@@ -321,10 +329,10 @@ export class NucleusOffensiveKit {
     if (to.lengthSq() < 1e-6) to.set(0, 0, 1);
     else to.normalize();
     bus.emit('core-notify', {
-      title: overload ? 'ION CLUSTER' : 'ION CHARGE',
+      title: overload ? 'TESLA CLUSTER' : 'TESLA ORB',
       body: overload
-        ? 'Nucleus fans electric orbs — stay out of the arc.'
-        : 'Energy orb inbound — shoot it down. Arcs nearby.',
+        ? 'Nucleus fans tesla orbs — stay out of the arc.'
+        : 'Tesla orb inbound — shoot it down. Arcs nearby.',
       kind: 'overload',
     });
     const right = new THREE.Vector3().crossVectors(to, new THREE.Vector3(0, 1, 0));
@@ -358,10 +366,21 @@ export class NucleusOffensiveKit {
     const corona = new THREE.Mesh(this.sph, add(0x88aaff, 0.22));
     corona.scale.setScalar(2.55);
     mesh.add(corona);
+    const rings: THREE.Mesh[] = [];
+    const ringCols = [0xccffff, 0x66ffe8, 0x88aaff];
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(this.torus, add(ringCols[i], 0.55 - i * 0.1));
+      ring.scale.setScalar(1.15 + i * 0.35);
+      ring.rotation.set(i * 0.7, i * 1.1, i * 0.4);
+      mesh.add(ring);
+      rings.push(ring);
+    }
     const lightning = this.makeLightningLine();
     const lightning2 = this.makeLightningLine();
+    const lightning3 = this.makeLightningLine();
     (lightning2.material as THREE.LineBasicMaterial).color.setHex(0x88aaff);
-    mesh.add(lightning, lightning2);
+    (lightning3.material as THREE.LineBasicMaterial).color.setHex(0x66ffe8);
+    mesh.add(lightning, lightning2, lightning3);
     const p: Proj = {
       id: `kit_blob_${this.idSeq++}`,
       mesh,
@@ -373,8 +392,10 @@ export class NucleusOffensiveKit {
       hp: NUCLEUS_BLOB_HIT_POINTS,
       lightning,
       lightning2,
+      lightning3,
       sheath,
       corona,
+      rings,
       pulse: Math.random() * Math.PI * 2,
     };
     mesh.position.copy(p.pos);
@@ -416,23 +437,25 @@ export class NucleusOffensiveKit {
     });
   }
 
-  private spawnKamikaze(): void {
-    const extra = Math.min(3, Math.floor((this.levelId - 20) / 15));
-    const count = NUCLEUS_KAMIKAZE_BASE_COUNT + extra;
+  private spawnKamikaze(light = false): void {
+    const extra = Math.min(3, Math.floor((this.levelId - NUCLEUS_KAMIKAZE_UNLOCK_STAGE) / 15));
+    const count = light ? 1 : NUCLEUS_KAMIKAZE_BASE_COUNT + extra;
     const hp =
       NUCLEUS_KAMIKAZE_BASE_HIT_POINTS +
-      Math.max(0, this.levelId - 20) * NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE;
+      Math.max(0, this.levelId - NUCLEUS_KAMIKAZE_UNLOCK_STAGE) * NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE;
     bus.emit('core-spawn-kamikaze', {
       count,
       hp,
       damage: NUCLEUS_KAMIKAZE_DAMAGE * this.kitDmg(),
       speed: NUCLEUS_KAMIKAZE_SPEED,
     });
-    bus.emit('core-notify', {
-      title: 'KAMIKAZE DRONES',
-      body: 'Seekers inbound — shoot them down.',
-      kind: 'overload',
-    });
+    if (!light) {
+      bus.emit('core-notify', {
+        title: 'KAMIKAZE INBOUND',
+        body: 'Defenders intercept seekers',
+        kind: 'overload',
+      });
+    }
   }
 
   private spawnShards(): void {
@@ -515,33 +538,57 @@ export class NucleusOffensiveKit {
       b.pulse = (b.pulse ?? 0) + dt * 9;
       b.pos.addScaledVector(b.vel, dt);
       b.mesh.position.copy(b.pos);
-      const beat = 1 + Math.sin(b.pulse) * 0.12;
+      b.mesh.rotation.x += dt * 1.35;
+      b.mesh.rotation.y += dt * 2.15;
+      b.mesh.rotation.z += dt * 0.85;
+      const beat = 1 + Math.sin(b.pulse) * 0.14;
       b.mesh.scale.setScalar(b.radius * 0.42 * beat);
       if (b.sheath) {
         (b.sheath.material as THREE.MeshBasicMaterial).opacity = 0.32 + Math.sin(b.pulse * 1.7) * 0.14;
+        b.sheath.rotation.y -= dt * 3.2;
       }
       if (b.corona) {
         b.corona.scale.setScalar(2.3 + Math.sin(b.pulse * 0.9) * 0.35);
         (b.corona.material as THREE.MeshBasicMaterial).opacity = 0.14 + Math.sin(b.pulse * 2.2) * 0.08;
       }
+      if (b.rings) {
+        for (let r = 0; r < b.rings.length; r++) {
+          const ring = b.rings[r];
+          ring.rotation.x += dt * (1.6 + r * 0.7);
+          ring.rotation.y += dt * (2.4 - r * 0.5);
+          ring.rotation.z += dt * (0.9 + r * 1.1);
+          (ring.material as THREE.MeshBasicMaterial).opacity =
+            0.28 + Math.sin(b.pulse * (1.8 + r) + r) * 0.22;
+        }
+      }
       const dist = b.pos.distanceTo(player);
       const hitR = b.radius + shipR;
       const arcR = b.radius * NUCLEUS_BLOB_ARC_RADIUS_MULTIPLIER + shipR;
       const arcing = dist <= arcR;
+      const pu = b.pulse;
+      // Self-arcs always on — twisting tesla cage around the orb.
       if (b.lightning) {
-        b.lightning.visible = arcing;
-        if (arcing) {
-          this.jagLightning(b.lightning, b.mesh.worldToLocal(player.clone()));
-          (b.lightning.material as THREE.LineBasicMaterial).opacity =
-            0.35 + Math.sin(b.pulse * 3.1) * 0.4;
-        }
+        b.lightning.visible = true;
+        this.jagLightning(
+          b.lightning,
+          new THREE.Vector3(Math.sin(pu * 2.1) * 1.4, Math.cos(pu * 1.6) * 1.4, Math.cos(pu * 2.4) * 1.4)
+        );
+        (b.lightning.material as THREE.LineBasicMaterial).opacity = 0.4 + Math.sin(pu * 5.1) * 0.35;
+      }
+      if (b.lightning3) {
+        b.lightning3.visible = true;
+        this.jagLightning(
+          b.lightning3,
+          new THREE.Vector3(Math.cos(pu * 1.7) * 1.5, Math.sin(pu * 2.8) * 1.5, Math.sin(pu * 1.3) * 1.5)
+        );
+        (b.lightning3.material as THREE.LineBasicMaterial).opacity = 0.28 + Math.sin(pu * 4.2 + 0.8) * 0.28;
       }
       if (b.lightning2) {
         b.lightning2.visible = arcing;
         if (arcing) {
           this.jagLightning(b.lightning2, b.mesh.worldToLocal(player.clone()));
           (b.lightning2.material as THREE.LineBasicMaterial).opacity =
-            0.22 + Math.sin(b.pulse * 4.4 + 1.2) * 0.28;
+            0.35 + Math.sin(pu * 4.4 + 1.2) * 0.4;
         }
       }
       if (dist <= hitR) {
@@ -817,6 +864,17 @@ export class NucleusOffensiveKit {
       p.mesh.remove(p.lightning2);
       p.lightning2.geometry.dispose();
       (p.lightning2.material as THREE.Material).dispose();
+    }
+    if (p.lightning3) {
+      p.mesh.remove(p.lightning3);
+      p.lightning3.geometry.dispose();
+      (p.lightning3.material as THREE.Material).dispose();
+    }
+    if (p.rings) {
+      for (const ring of p.rings) {
+        p.mesh.remove(ring);
+        (ring.material as THREE.Material).dispose();
+      }
     }
     if (p.sheath) {
       p.mesh.remove(p.sheath);

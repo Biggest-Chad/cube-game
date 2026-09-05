@@ -288,13 +288,14 @@ const rocket: WeaponDef = {
   name: 'Rocket Pod',
   family: 'rocket',
   description:
-    'Heavy dumb-fire rockets. Drop from the wings, ignite, and smash clusters with punchy splash.',
+    'Dumb-fire rockets. Drop from the wings, ignite, and punch clusters — slightly stronger than guided missiles.',
   color: 0xff6622,
   colorCss: '#ff6622',
   tags: ['splash', 'burst', 'first-loadout'],
   // First hardpoint weapon — stage 3+
   unlock: { type: 'shop', costFragments: ROCKET_POD_SHOP_COST_FRAGMENTS, minLevel: ROCKET_POD_SHOP_MIN_LEVEL },
   baseStats: {
+    // Nerf 2026-09-05: damage 58→54, splash 3.1→1.45 (still ~12–18% above guided).
     damage: ROCKET_POD_BASE_DAMAGE,
     fireRate: ROCKET_POD_BASE_FIRE_RATE,
     projectileSpeed: ROCKET_POD_BASE_PROJECTILE_SPEED,

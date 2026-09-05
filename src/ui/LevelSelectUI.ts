@@ -1,6 +1,13 @@
 import { getLevel, LEVELS } from '../data/levels';
 import { isChronobeacon } from '../data/evolve';
-import { flyerSceneTitle, pickFlyerScene, shouldRunTransit } from '../data/flyer';
+import {
+  FLYER_SCENES,
+  flyerSceneFromQuery,
+  flyerSceneTitle,
+  pickFlyerScene,
+  shouldRunTransit,
+  type FlyerSceneId,
+} from '../data/flyer';
 
 export class LevelSelectUI {
   private root: HTMLElement;
@@ -8,6 +15,8 @@ export class LevelSelectUI {
   onSelect: ((levelId: number) => void) | null = null;
   /** Replay the transfer flight that follows cube `afterLevelId`. */
   onSelectTransit: ((afterLevelId: number) => void) | null = null;
+  /** Dev/test: jump into a flyer scene with no sector-clear gate. */
+  onSelectFlyerTest: ((sceneId: FlyerSceneId) => void) | null = null;
   onReplayIntro: (() => void) | null = null;
 
   constructor(root: HTMLElement) {
@@ -35,6 +44,17 @@ export class LevelSelectUI {
             }
             <button class="icon-btn ui-btn" id="lv-close" type="button" aria-label="Close">✕</button>
           </div>
+        </div>
+        <div class="fly-test-row">
+          <div class="fly-test-head">FLY TEST</div>
+          ${FLYER_SCENES.map(
+            (id) => `
+            <button class="level-card ui-btn fly-test" data-fly-scene="${id}" type="button">
+              <div class="lv">✈</div>
+              <div class="meta">TEST</div>
+              <div class="meta name">${flyerSceneTitle(id)}</div>
+            </button>`
+          ).join('')}
         </div>
         <div class="level-grid landscape-grid">
     `;
@@ -92,6 +112,11 @@ export class LevelSelectUI {
     this.root.querySelectorAll('.level-card:not(:disabled)').forEach((btn) => {
       btn.addEventListener('click', () => {
         const el = btn as HTMLElement;
+        const flyScene = flyerSceneFromQuery(el.dataset.flyScene);
+        if (flyScene) {
+          this.onSelectFlyerTest?.(flyScene);
+          return;
+        }
         const flyAfter = el.dataset.flyAfter;
         if (flyAfter) {
           this.onSelectTransit?.(Number(flyAfter));

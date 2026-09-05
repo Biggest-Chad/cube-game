@@ -25,6 +25,8 @@ export class MusicPlayer {
   private source: MediaElementAudioSourceNode | null = null;
   private gain: GainNode | null = null;
   private filter: BiquadFilterNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private freqBuf: Uint8Array<ArrayBuffer> | null = null;
   private wired = false;
 
   private current: MusicTrack | null = null;
@@ -278,6 +280,29 @@ export class MusicPlayer {
     this.applyGains(0.2);
   }
 
+  /**
+   * Low-frequency energy 0–1 from the music bed. 0 when muted, paused, or
+   * the analyser is not wired. Flyer backdrop envelope is applied by the caller.
+   */
+  getBassLevel(): number {
+    if (this.muted || !this.analyser || !this.freqBuf || !this.isPlaying) return 0;
+    if (this.ctx?.state !== 'running') return 0;
+    this.analyser.getByteFrequencyData(this.freqBuf);
+    const sr = this.ctx?.sampleRate || 44100;
+    const binHz = sr / this.analyser.fftSize;
+    const lo = Math.max(1, Math.floor(30 / binHz));
+    const hi = Math.max(lo + 1, Math.ceil(140 / binHz));
+    let sum = 0;
+    let n = 0;
+    for (let i = lo; i < hi && i < this.freqBuf.length; i++) {
+      sum += this.freqBuf[i];
+      n++;
+    }
+    if (n <= 0) return 0;
+    const avg = sum / n / 255;
+    return Math.max(0, Math.min(1, avg * avg * 1.35 + avg * 0.35));
+  }
+
   private async fadeToTrack(track: MusicTrack, loop: boolean): Promise<void> {
     const token = ++this.fadeToken;
     this.ensureGraph();
@@ -403,7 +428,14 @@ export class MusicPlayer {
       this.filter.Q.value = 0.7;
       this.source.connect(this.filter);
       this.filter.connect(this.gain);
-      this.gain.connect(this.ctx.destination);
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 2048;
+      this.analyser.smoothingTimeConstant = 0.22;
+      this.analyser.minDecibels = -78;
+      this.analyser.maxDecibels = -18;
+      this.freqBuf = new Uint8Array(this.analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+      this.gain.connect(this.analyser);
+      this.analyser.connect(this.ctx.destination);
       this.wired = true;
       this.applyGains(0);
     } catch {

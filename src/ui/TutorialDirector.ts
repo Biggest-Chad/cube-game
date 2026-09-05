@@ -6,7 +6,7 @@ import { FIRST_DRONE_COST } from '../data/drones';
  *  - Fleet: expand to a 2nd drone on the DRONES tab
  *  - Loadout: buy Rocket Pod → equip (after stage 3 weapon unlock)
  */
-export type TutorialId = 'stage1' | 'fleet' | 'loadout' | 'gun';
+export type TutorialId = 'stage1' | 'fleet' | 'loadout' | 'gun' | 'flyer';
 
 export type TutorialStepId =
   | 'welcome'
@@ -26,7 +26,10 @@ export type TutorialStepId =
   | 'loadout_intro'
   | 'loadout_buy'
   | 'loadout_equip'
-  | 'loadout_done';
+  | 'loadout_done'
+  | 'flyer_strafe'
+  | 'flyer_gates'
+  | 'flyer_banks';
 
 export interface TutorialStep {
   id: TutorialStepId;
@@ -48,6 +51,9 @@ export interface TutorialStep {
     | 'gun_owned'
     | 'weapon_owned'
     | 'weapon_equipped'
+    | 'strafe'
+    | 'flyer_lock'
+    | 'time'
     | 'auto';
   /** Optional progress target (e.g. blocks destroyed) */
   target?: number;
@@ -166,6 +172,32 @@ const GUN_STEPS: TutorialStep[] = [
   },
 ];
 
+const FLYER_STEPS: TutorialStep[] = [
+  {
+    id: 'flyer_strafe',
+    title: 'STRAFE',
+    body: 'LEFT stick slides you in the lane. Stick is screen-relative — the ship leans with the path.',
+    highlight: '#joy-zone',
+    advance: 'strafe',
+    target: 0.45,
+  },
+  {
+    id: 'flyer_gates',
+    title: 'SHOOT THE GATES',
+    body: 'RIGHT side fires. Pink lock diamond means a gate is in the pipe — shoot it for a clear line.',
+    highlight: '#aim-zone',
+    advance: 'flyer_lock',
+  },
+  {
+    id: 'flyer_banks',
+    title: 'BANKS AHEAD',
+    body: 'The ribbon banks, sweeps, and loops. Hold the lane through the roll — walls hurt.',
+    advance: 'time',
+    target: 3.2,
+    cta: 'FLY',
+  },
+];
+
 const LOADOUT_STEPS: TutorialStep[] = [
   {
     id: 'loadout_intro',
@@ -217,6 +249,12 @@ export interface TutorialProgressCtx {
   fleetExpanded: boolean;
   /** Owns Split Beam (off_multi_1). */
   ownsSplitBeam: boolean;
+  /** Transit: stick magnitude this frame. */
+  flyerStrafe?: number;
+  /** Transit: gate lock diamond is hot. */
+  flyerLock?: boolean;
+  /** Transit: fire pulse this frame. */
+  flyerFire?: boolean;
 }
 
 /** First drone tech node cost (Ally Protocol). */
@@ -235,6 +273,7 @@ export class TutorialDirector {
   private loadoutDone: boolean;
   private fleetDone: boolean;
   private gunDone: boolean;
+  private flyerDone: boolean;
   private pendingLoadout = false;
   private pendingFleet = false;
   private pendingGun = false;
@@ -248,13 +287,20 @@ export class TutorialDirector {
 
   constructor(
     root: HTMLElement,
-    flags: { stage1Done: boolean; loadoutDone: boolean; fleetDone?: boolean; gunDone?: boolean }
+    flags: {
+      stage1Done: boolean;
+      loadoutDone: boolean;
+      fleetDone?: boolean;
+      gunDone?: boolean;
+      flyerDone?: boolean;
+    }
   ) {
     this.root = root;
     this.stage1Done = flags.stage1Done;
     this.loadoutDone = flags.loadoutDone;
     this.fleetDone = !!flags.fleetDone;
     this.gunDone = !!flags.gunDone;
+    this.flyerDone = !!flags.flyerDone;
     this.ensureDom();
   }
 
@@ -297,6 +343,12 @@ export class TutorialDirector {
     }
   }
 
+  /** First transfer flight — strafe / gates / banks. */
+  tryStartFlyer(): void {
+    if (this.flyerDone || this.active) return;
+    this.begin('flyer', FLYER_STEPS);
+  }
+
   /** After 2 drones, when the player has 100 FRAG again — push Split Beam. */
   tryStartGun(): void {
     if (this.gunDone || this.active || this.pendingGun) return;
@@ -307,11 +359,18 @@ export class TutorialDirector {
     }
   }
 
-  setFlags(stage1Done: boolean, loadoutDone: boolean, fleetDone = false, gunDone = false): void {
+  setFlags(
+    stage1Done: boolean,
+    loadoutDone: boolean,
+    fleetDone = false,
+    gunDone = false,
+    flyerDone = false
+  ): void {
     this.stage1Done = stage1Done;
     this.loadoutDone = loadoutDone;
     this.fleetDone = fleetDone;
     this.gunDone = gunDone;
+    this.flyerDone = flyerDone;
   }
 
   update(dt: number, ctx: TutorialProgressCtx): void {
@@ -366,6 +425,25 @@ export class TutorialDirector {
       this.aimAccum += ctx.aimMag * dt;
       this.setProgress(this.aimAccum / (step.target ?? 1));
       if (this.aimAccum >= (step.target ?? 1)) this.advance();
+      return;
+    }
+    if (step.advance === 'strafe') {
+      this.orbitAccum += (ctx.flyerStrafe ?? ctx.orbitMag) * dt;
+      this.setProgress(this.orbitAccum / (step.target ?? 1));
+      if (this.orbitAccum >= (step.target ?? 1)) this.advance();
+      return;
+    }
+    if (step.advance === 'flyer_lock') {
+      if (ctx.flyerLock) this.orbitAccum += dt * 1.2;
+      if (ctx.flyerFire) this.orbitAccum += 0.35;
+      this.setProgress(this.orbitAccum / 1.2);
+      if ((ctx.flyerLock && ctx.flyerFire) || this.orbitAccum >= 1.2) this.advance();
+      return;
+    }
+    if (step.advance === 'time') {
+      this.orbitAccum += dt;
+      this.setProgress(this.orbitAccum / (step.target ?? 1));
+      if (this.orbitAccum >= (step.target ?? 1)) this.advance();
       return;
     }
     if (step.advance === 'destroy') {
@@ -519,6 +597,7 @@ export class TutorialDirector {
     if (id === 'loadout') this.loadoutDone = true;
     if (id === 'fleet') this.fleetDone = true;
     if (id === 'gun') this.gunDone = true;
+    if (id === 'flyer') this.flyerDone = true;
     this.active = null;
     this.visible = false;
     this.suppressCard = false;
@@ -694,6 +773,10 @@ export class TutorialDirector {
     return this.active === 'stage1';
   }
 
+  completeIf(id: TutorialId): void {
+    if (this.active === id) this.finish();
+  }
+
   private renderStep(): void {
     this.ensureDom();
     const step = this.currentStep;
@@ -719,6 +802,7 @@ export class TutorialDirector {
     }
     this.ensureFarmChip(false);
 
+    card.classList.toggle('flyer-brief', this.active === 'flyer');
     card.classList.remove('panel-hidden');
     const title = card.querySelector('#tutorial-title');
     const body = card.querySelector('#tutorial-body');
@@ -739,7 +823,11 @@ export class TutorialDirector {
       cta.textContent = step.cta ?? 'CONTINUE';
     }
     if (prog) {
-      const showProg = step.advance === 'orbit' || step.advance === 'aim';
+      const showProg =
+        step.advance === 'orbit' ||
+        step.advance === 'aim' ||
+        step.advance === 'strafe' ||
+        step.advance === 'time';
       prog.classList.toggle('panel-hidden', !showProg);
     }
     this.clearHighlight();
