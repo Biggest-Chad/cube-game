@@ -11,6 +11,8 @@ import {
   ENEMY_DRONE_DEFAULT_RANGE,
   ENEMY_DRONE_DEFAULT_REPAIR_FRACTION,
   ENEMY_DRONE_DEFAULT_SPEED,
+  ENEMY_DRONE_SPAWN_ARM_SECONDS,
+  ENEMY_DRONE_SPAWN_SPREAD_DISTANCE,
   ENEMY_DRONE_TELEGRAPH_SECONDS,
   NUCLEUS_KAMIKAZE_ALLY_PEEL_RANGE,
   NUCLEUS_KAMIKAZE_FUSE_MAX_SECONDS,
@@ -112,6 +114,9 @@ export class EnemyDrone {
   private fuseMax = NUCLEUS_KAMIKAZE_FUSE_MAX_SECONDS;
   private lastRamDist = 99;
   private didBoom = false;
+  private armTimer = 0;
+  private readonly armOrigin = new THREE.Vector3();
+  private readonly armSpreadDir = new THREE.Vector3();
 
   constructor(id: string, index: number, halfExtent: number, cfg: Partial<EnemyDroneConfig> = {}) {
     this.id = id;
@@ -243,8 +248,32 @@ export class EnemyDrone {
     return this.group.position;
   }
 
+  get isArming(): boolean {
+    return this.armTimer > 0;
+  }
+
+  /**
+   * First 1.5s after spawn: no fire, no seek/ram, untargetable, lerp outward.
+   * Call after world position is set.
+   */
+  beginSpawnArm(): void {
+    this.armTimer = ENEMY_DRONE_SPAWN_ARM_SECONDS;
+    this.armOrigin.copy(this.group.position);
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    this.armSpreadDir.set(
+      Math.sin(phi) * Math.cos(theta),
+      Math.sin(phi) * Math.sin(theta),
+      Math.cos(phi)
+    );
+    if (this.armOrigin.lengthSq() > 0.04) {
+      this._pos.copy(this.armOrigin).normalize();
+      this.armSpreadDir.addScaledVector(this._pos, 0.9).normalize();
+    }
+  }
+
   applyDamage(amount: number): boolean {
-    if (!this.alive) return false;
+    if (!this.alive || this.armTimer > 0) return false;
     this.hp -= amount;
     this.group.scale.setScalar(0.72);
     this.flash.visible = true;
@@ -278,6 +307,11 @@ export class EnemyDrone {
     return false;
   }
 
+  hasLiveBolts(): boolean {
+    for (let i = 0; i < this.bolts.length; i++) if (this.bolts[i].active) return true;
+    return false;
+  }
+
   setEnraged(on: boolean): void {
     this.cfg.speedMul = on ? 1.55 : 1;
     this.cfg.fireMul = on ? 1.7 : 1;
@@ -300,6 +334,11 @@ export class EnemyDrone {
   ): void {
     if (!this.alive) {
       this.simBolts(dt, playerPos, onPlayerHit, extras, playerDronePositions);
+      return;
+    }
+
+    if (this.armTimer > 0) {
+      this.updateSpawnArm(dt);
       return;
     }
 
@@ -548,9 +587,43 @@ export class EnemyDrone {
     }
   }
 
+  private updateSpawnArm(dt: number): void {
+    this.armTimer = Math.max(0, this.armTimer - dt);
+    const span = Math.max(1e-4, ENEMY_DRONE_SPAWN_ARM_SECONDS);
+    const t = 1 - this.armTimer / span;
+    const ease = t * t * (3 - 2 * t);
+    this.group.position
+      .copy(this.armOrigin)
+      .addScaledVector(this.armSpreadDir, ease * ENEMY_DRONE_SPAWN_SPREAD_DISTANCE);
+    if (this.armSpreadDir.lengthSq() > 1e-6) {
+      this._pos.copy(this.group.position).add(this.armSpreadDir);
+      this.group.lookAt(this._pos);
+    }
+    this.pulseArming(dt, t);
+    if (this.armTimer <= 0) {
+      this.hullRoot.scale.setScalar(1);
+      this.group.scale.setScalar(1);
+    }
+  }
+
+  private pulseArming(dt: number, u: number): void {
+    this.pulseT += dt;
+    const w = 0.5 + 0.5 * Math.sin(this.pulseT * 9.5);
+    this.hullRoot.scale.setScalar(0.78 + u * 0.22);
+    const haloMat = (this.halo as THREE.Sprite).material as THREE.SpriteMaterial | THREE.MeshBasicMaterial;
+    if (haloMat && 'opacity' in haloMat) {
+      haloMat.opacity = 0.12 + w * 0.2 + u * 0.28;
+    }
+    this.telegraphRing.visible = true;
+    this.telegraphRing.scale.setScalar(0.55 + u * 0.7 + w * 0.2);
+    (this.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0.12 + w * 0.22 + u * 0.2;
+    this.telegraphRing.rotation.z += dt * 6;
+    if (this.rotor) this.rotor.rotation.z += dt * 4;
+  }
+
   /** 0..1 audio / VFX urgency — closes on the ship and the fuse. */
   seekIntensity(playerPos: THREE.Vector3): number {
-    if (!this.alive || this.role !== 'kamikaze') return 0;
+    if (!this.alive || this.role !== 'kamikaze' || this.armTimer > 0) return 0;
     const dist = this.group.position.distanceTo(playerPos);
     const close = 1 - Math.min(1, dist / 38);
     const fuseU = 1 - this.fuse / Math.max(0.001, this.fuseMax);
@@ -570,9 +643,10 @@ export class EnemyDrone {
       x: p.x,
       y: p.y,
       z: p.z,
-      radius: 3.6,
-      family: 'missile',
+      radius: 7.4,
+      family: 'kamikaze',
     });
+    bus.emit('camera-shake-request', { amount: 0.34 });
   }
 
   private nearestAlly(drones: THREE.Vector3[] | undefined): THREE.Vector3 | undefined {
@@ -762,6 +836,7 @@ export class EnemyDrone {
     this.telegraphT = 0;
     this.telegraphRing.visible = false;
     this.hullRoot.scale.setScalar(1);
+    this.armTimer = 0;
     this.didBoom = false;
     if (this.role === 'kamikaze') this.rollFuse();
     for (const b of this.bolts) {

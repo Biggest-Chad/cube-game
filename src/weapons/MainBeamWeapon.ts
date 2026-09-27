@@ -12,6 +12,7 @@ import {
   MAIN_GUN_HEAT_COOL_RATE,
   MAIN_GUN_HEAT_PER_SHOT,
 } from '../data/constraints';
+import { mainGunStream } from './mainGunStream';
 import type { CubeManager } from '../cube/CubeManager';
 import { BLOCK_DEFS, BlockType } from '../cube/BlockTypes';
 import { bus } from '../core/EventBus';
@@ -105,7 +106,12 @@ export class MainBeamWeapon implements WeaponBehavior {
   private flashes: Array<{ mesh: THREE.Mesh; life: number }> = [];
   private beamLines: Array<{ line: THREE.Line; life: number }> = [];
   private nextBolt = 0;
-  private shotCounter = 0;
+  /** Index of the next interleaved main-gun bolt inside the current cycle. */
+  private streamSlot = 0;
+  /** Bolt count locked at the start of the current cycle. */
+  private streamCount = 1;
+  /** Completed main-gun cycles. Stutter inserts a bolt on some of these. */
+  private streamCycle = 0;
   private focusId = -1;
   private focusStacks = 0;
   private stats: WeaponStats & { flags: Set<string> };
@@ -114,8 +120,18 @@ export class MainBeamWeapon implements WeaponBehavior {
   private readonly _look = new THREE.Vector3();
   private readonly _fwd = new THREE.Vector3(0, 0, 1);
   private readonly _q = new THREE.Quaternion();
+  private readonly _primaryDir = new THREE.Vector3();
+  private readonly _shotDir = new THREE.Vector3();
+  private readonly _axis = new THREE.Vector3();
+  private readonly _up = new THREE.Vector3(0, 1, 0);
+  private readonly _right = new THREE.Vector3(1, 0, 0);
+  private readonly _end = new THREE.Vector3();
+  private readonly _splashAt = new THREE.Vector3();
+  private readonly _from = new THREE.Vector3();
+  private readonly _np = new THREE.Vector3();
+  private readonly _penDir = new THREE.Vector3();
 
-  constructor() {
+  constructor(pool: number = PERF.maxProjectiles) {
     this.stats = {
       damage: COMBAT.baseDamage,
       fireRate: COMBAT.baseFireRate,
@@ -136,7 +152,7 @@ export class MainBeamWeapon implements WeaponBehavior {
       flags: new Set(),
     };
 
-    for (let i = 0; i < PERF.maxProjectiles; i++) {
+    for (let i = 0; i < pool; i++) {
       const { root, core, sheath, tip } = makePlasmaBoltGeometry();
       root.visible = false;
       this.group.add(root);
@@ -228,6 +244,7 @@ export class MainBeamWeapon implements WeaponBehavior {
     const coolMul = 1 + (ctx.slot < 0 ? ctx.playerStats.heatCoolAdd ?? 0 : 0);
     this.heat = Math.max(0, this.heat - this.stats.heatCoolRate * coolMul * ctx.dt);
     this.cooldown = Math.max(0, this.cooldown - ctx.dt);
+    if (!ctx.firing) this.streamSlot = 0;
     if (!ctx.firing || this.cooldown > 0 || this.heat >= 0.98) return;
 
     const isMain = ctx.slot < 0;
@@ -245,78 +262,116 @@ export class MainBeamWeapon implements WeaponBehavior {
       this.stats.fireRate *
       (isMain ? ctx.playerStats.fireRateMul : 1) *
       (1 - this.heat * 0.35);
-    this.cooldown = 1 / Math.max(0.4, rate);
+    const baseInterval = 1 / Math.max(0.4, rate);
 
-    let shots = Math.max(
-      1,
-      this.stats.projectileCount + (isMain ? Math.floor(ctx.playerStats.multiShotAdd) : 0)
-    );
-    if (isMain && ctx.playerStats.stutterEvery > 0) {
-      this.shotCounter++;
-      if (this.shotCounter % ctx.playerStats.stutterEvery === 0) shots += 1;
-    }
     const ammoDmg = magazine?.damageMul ?? 1;
     const baseDmg = this.stats.damage * (isMain ? ctx.playerStats.damageMul : 1) * ammoDmg;
     const critChance = this.stats.critChance + (isMain ? ctx.playerStats.critChance : 0);
     const splash = magazine ? magazine.splash : this.stats.splashRadius;
-    // Main gun: ignore random spread for reliability (only gentle multi-shot fan)
-    const spreadExtra = isMain
-      ? 0
-      : (this.stats.spread ?? 0) + (ctx.playerStats.spreadAdd ?? 0);
-    const pen = magazine
-      ? magazine.pen
-      : (this.stats.penetration ?? 0);
+    const spreadExtra = (this.stats.spread ?? 0) + (ctx.playerStats.spreadAdd ?? 0);
+    const pen = magazine ? magazine.pen : (this.stats.penetration ?? 0);
     const armorPierce =
       this.stats.armorPierce + (magazine ? magazine.armorPierceAdd : ctx.playerStats.armorPierceAdd ?? 0);
 
-    // Primary direction: exact aim (to locked target if provided)
-    const primaryDir = ctx.direction.clone().normalize();
+    const primaryDir = this._primaryDir.copy(ctx.direction);
+    if (primaryDir.lengthSq() < 1e-12) primaryDir.set(0, 0, 1);
+    else primaryDir.normalize();
     if (isMain && ctx.aimTarget) {
       primaryDir.copy(ctx.aimTarget).sub(ctx.origin).normalize();
     }
 
-    for (let s = 0; s < shots; s++) {
-      let dir: THREE.Vector3;
-      if (isMain && s === 0) {
-        // First bolt is laser-true to crosshair / aim target
-        dir = primaryDir.clone();
-      } else {
-        // Extra multi-shot bolts: small fixed fan only (no random jitter on main)
-        const fan = (s - (shots - 1) / 2) * (isMain ? 0.018 : 0.028);
-        const jitter = !isMain && spreadExtra > 0 ? (Math.random() - 0.5) * spreadExtra * 0.08 : 0;
-        const spread = fan + jitter;
-        const axis =
-          Math.abs(primaryDir.y) < 0.9
-            ? new THREE.Vector3(0, 1, 0)
-            : new THREE.Vector3(1, 0, 0);
-        dir = primaryDir.clone().applyAxisAngle(axis, spread).normalize();
+    if (isMain) {
+      if (this.streamSlot === 0) {
+        this.streamCycle++;
+        let total = 1 + Math.max(0, Math.floor(ctx.playerStats.multiShotAdd));
+        const stutter = ctx.playerStats.stutterEvery;
+        if (stutter > 0 && this.streamCycle % stutter === 0) total += 1;
+        this.streamCount = total;
       }
-
-      const rolled = rollOutgoing({
-        raw: baseDmg,
+      const total = Math.max(1, this.streamCount);
+      const slot = mainGunStream(total, spreadExtra)[this.streamSlot] ?? mainGunStream(1)[0];
+      this.cooldown = baseInterval / total;
+      this.heat = Math.min(1, this.heat + this.stats.heatPerShot / total);
+      this.launchBolt(
+        ctx,
+        this.dirFromAngle(primaryDir, slot.angle),
+        baseDmg,
         critChance,
-        critMult: this.stats.critMult,
-      });
-      if (rolled.crit) bus.emit('crit');
-
-      // Spawn slightly past muzzle so mesh never embeds in hull
-      const spawn = this.tmp.copy(ctx.origin).addScaledVector(dir, 0.15);
-      this.muzzleFlash(spawn, dir);
-      this.fireBolt(spawn, dir, rolled.damage, splash, rolled.crit, armorPierce, pen, ammo);
-
-      // Preview beam: for primary main shot use aim target / same ray as crosshair
-      let end: THREE.Vector3;
-      if (isMain && s === 0 && ctx.aimTarget) {
-        end = ctx.aimTarget.clone();
-      } else {
-        const preview = ctx.cube.raycast(spawn, dir, this.stats.range, -1, 0.55);
-        end = preview ? preview.point : spawn.clone().addScaledVector(dir, 32);
+        splash,
+        armorPierce,
+        pen,
+        ammo,
+        this.streamSlot,
+        slot.angle === 0 ? (ctx.aimTarget ?? null) : null
+      );
+      this.streamSlot++;
+      if (this.streamSlot >= total) this.streamSlot = 0;
+    } else {
+      const shots = Math.max(1, this.stats.projectileCount);
+      this.cooldown = baseInterval;
+      this.heat = Math.min(1, this.heat + this.stats.heatPerShot);
+      for (let s = 0; s < shots; s++) {
+        const fan = (s - (shots - 1) / 2) * 0.028;
+        const jitter = spreadExtra > 0 ? (Math.random() - 0.5) * spreadExtra * 0.08 : 0;
+        this.launchBolt(
+          ctx,
+          this.dirFromAngle(primaryDir, fan + jitter),
+          baseDmg,
+          critChance,
+          splash,
+          armorPierce,
+          pen,
+          ammo,
+          s,
+          null
+        );
       }
-      this.showBeam(spawn, end, s % this.beamLines.length, rolled.crit);
     }
 
-    this.heat = Math.min(1, this.heat + this.stats.heatPerShot);
     bus.emit('weapon-fire', { family: this.family, slot: ctx.slot });
+  }
+
+  /** Yaw a shot off the aim ray. Zero stays on the crosshair. */
+  private dirFromAngle(primary: THREE.Vector3, angle: number): THREE.Vector3 {
+    const dir = this._shotDir;
+    if (Math.abs(angle) < 1e-6) {
+      dir.copy(primary);
+      return dir;
+    }
+    this._axis.copy(Math.abs(primary.y) < 0.9 ? this._up : this._right);
+    dir.copy(primary).applyAxisAngle(this._axis, angle).normalize();
+    return dir;
+  }
+
+  private launchBolt(
+    ctx: WeaponFireContext,
+    dir: THREE.Vector3,
+    baseDmg: number,
+    critChance: number,
+    splash: number,
+    armorPierce: number,
+    pen: number,
+    ammo: MainGunAmmoId,
+    beamIndex: number,
+    aimEnd: THREE.Vector3 | null
+  ): void {
+    const rolled = rollOutgoing({
+      raw: baseDmg,
+      critChance,
+      critMult: this.stats.critMult,
+    });
+    if (rolled.crit) bus.emit('crit');
+    const spawn = this.tmp.copy(ctx.origin).addScaledVector(dir, 0.15);
+    this.muzzleFlash(spawn, dir);
+    this.fireBolt(spawn, dir, rolled.damage, splash, rolled.crit, armorPierce, pen, ammo);
+    let end: THREE.Vector3;
+    if (aimEnd) {
+      end = this._end.copy(aimEnd);
+    } else {
+      const preview = ctx.cube.raycast(spawn, dir, this.stats.range, -1, 0.55);
+      end = preview ? preview.point : this._end.copy(spawn).addScaledVector(dir, 32);
+    }
+    this.showBeam(spawn, end, beamIndex % this.beamLines.length, rolled.crit);
   }
 
   private orientBolt(root: THREE.Group, pos: THREE.Vector3, vel: THREE.Vector3): void {
@@ -407,23 +462,25 @@ export class MainBeamWeapon implements WeaponBehavior {
       b.trail.geometry.computeBoundingSphere();
       (b.trail.material as THREE.LineBasicMaterial).opacity = 0.35 + 0.45 * t;
 
-      const move = this.dir.set(b.pos.x - prevX, b.pos.y - prevY, b.pos.z - prevZ);
-      const dist = move.length();
+      const mx = b.pos.x - prevX;
+      const my = b.pos.y - prevY;
+      const mz = b.pos.z - prevZ;
+      const dist = Math.hypot(mx, my, mz);
       if (dist > 1e-5) {
-        // Enemy drones first (priority targets)
-        if (ctx?.enemyTargets && ctx.onEnemyHit) {
-          let hitEnemy = false;
+        const preferEnemies = (ctx?.lockPriority ?? 'drones') === 'drones';
+        const hitEnemySweep = (): boolean => {
+          if (!ctx?.enemyTargets || !ctx.onEnemyHit) return false;
           for (const et of ctx.enemyTargets) {
             const toEx = et.position.x - prevX;
             const toEy = et.position.y - prevY;
             const toEz = et.position.z - prevZ;
             const tSeg = Math.max(
               0,
-              Math.min(1, (toEx * move.x + toEy * move.y + toEz * move.z) / Math.max(1e-6, dist * dist))
+              Math.min(1, (toEx * mx + toEy * my + toEz * mz) / Math.max(1e-6, dist * dist))
             );
-            const cx = prevX + move.x * tSeg;
-            const cy = prevY + move.y * tSeg;
-            const cz = prevZ + move.z * tSeg;
+            const cx = prevX + mx * tSeg;
+            const cy = prevY + my * tSeg;
+            const cz = prevZ + mz * tSeg;
             const dx = cx - et.position.x;
             const dy = cy - et.position.y;
             const dz = cz - et.position.z;
@@ -442,23 +499,26 @@ export class MainBeamWeapon implements WeaponBehavior {
                 crit: b.crit,
                 style: 'bolt' as const,
               });
-              hitEnemy = true;
-              break;
+              return true;
             }
           }
-          if (hitEnemy) continue;
-        }
-
-        // Generous hit volume + lead so fast bolts don't tunnel past blocks
-        const hit = cube.raycast(
-          this.tmp.set(prevX, prevY, prevZ),
-          move.normalize(),
-          dist + MAIN_GUN_BOLT_RAYCAST_LEAD,
-          b.lastHitId,
-          MAIN_GUN_BOLT_BLOCK_HALF_EXTENT
-        );
-        if (hit) {
+          return false;
+        };
+        const hitBlockSweep = (): boolean => {
+          const hit = cube.raycast(
+            this.tmp.set(prevX, prevY, prevZ),
+            this.dir.set(mx / dist, my / dist, mz / dist),
+            dist + MAIN_GUN_BOLT_RAYCAST_LEAD,
+            b.lastHitId,
+            MAIN_GUN_BOLT_BLOCK_HALF_EXTENT
+          );
+          if (!hit) return false;
           this.resolveHit(b, cube, hit.instanceId, hit.point, now, ctx);
+          return true;
+        };
+        if (preferEnemies) {
+          if (hitEnemySweep() || hitBlockSweep()) continue;
+        } else if (hitBlockSweep() || hitEnemySweep()) {
           continue;
         }
       }
@@ -515,7 +575,7 @@ export class MainBeamWeapon implements WeaponBehavior {
     if (b.penLeft > 0 && !hitNucleus) {
       b.penLeft--;
       b.damage *= 0.78;
-      b.pos.copy(point).addScaledVector(b.vel.clone().normalize(), 0.55);
+      b.pos.copy(point).addScaledVector(this._penDir.copy(b.vel).normalize(), 0.55);
     } else {
       this.deactivateBolt(b);
     }
@@ -545,7 +605,7 @@ export class MainBeamWeapon implements WeaponBehavior {
     const splashNow = b.splash > 0 && (result.destroyed || profile.splashOnChip);
     if (splashNow) {
       const splash = cube.applySplash(
-        new THREE.Vector3(result.x, result.y, result.z),
+        this._splashAt.set(result.x, result.y, result.z),
         b.splash,
         b.damage * (b.ammo === 'he' ? 0.42 : 0.35),
         now,
@@ -568,13 +628,13 @@ export class MainBeamWeapon implements WeaponBehavior {
       }
       const hops = Math.floor(stats.chainJumpsAdd);
       if (hops > 0) {
-        let from = point.clone();
+        const from = this._from.copy(point);
         let ignore = instanceId;
         let chainDmg = hitDamage * 0.55;
         for (let h = 0; h < hops; h++) {
           const next = cube.findNearest(from, 2.35, undefined, ignore);
           if (!next) break;
-          const np = cube.getInstanceWorldPos(next.instanceId, new THREE.Vector3());
+          const np = cube.getInstanceWorldPos(next.instanceId, this._np);
           const cr = cube.applyDamage(next.instanceId, chainDmg, now);
           this.showBeam(from, np, h % this.beamLines.length, true);
           if (cr) bus.emit('beam-hit', { ...cr, style: 'bolt' as const });
@@ -649,7 +709,9 @@ export class MainBeamWeapon implements WeaponBehavior {
   reset(): void {
     this.cooldown = 0;
     this.heat = 0;
-    this.shotCounter = 0;
+    this.streamSlot = 0;
+    this.streamCount = 1;
+    this.streamCycle = 0;
     this.focusId = -1;
     this.focusStacks = 0;
     for (const b of this.bolts) this.deactivateBolt(b);

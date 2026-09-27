@@ -43,6 +43,10 @@ export class NucleusSpikeBurst {
   private wavesLeft = 0;
   private waveTimer = 0;
   private nextSpikeSlot = 0;
+  private sprayClock = 0;
+  private sprayRemain = 0;
+  private aimedLeft = 0;
+  private aimedWait = 0;
 
   private readonly spikes: Spike[] = [];
   private readonly lines: THREE.Mesh[] = [];
@@ -203,17 +207,14 @@ export class NucleusSpikeBurst {
       return;
     }
 
-    // fire — shockwave + flying spikes (optional extra spray waves)
+    // fire — continuous angry spray (Wave51), not one omni packet
     this.timer -= dt;
-    if (this.wavesLeft > 0) {
-      this.waveTimer -= dt;
-      if (this.waveTimer <= 0) this.releaseWave();
-    }
+    this.tickDangerSpray(dt, player);
     const shockT = 1 - Math.max(0, this.timer) / this.profile.shockDuration;
     this.layoutShock(Math.min(1, Math.max(0, shockT)), player, onDamage);
     this.simSpikes(dt, player, onDamage);
     if (this.timer <= 0) this.hideBurstFx();
-    if (!this.anySpike() && this.timer <= 0) {
+    if (!this.anySpike() && this.sprayRemain <= 0 && this.aimedLeft <= 0 && this.timer <= 0) {
       this.phase = 'idle';
       this.group.visible = false;
     }
@@ -303,19 +304,88 @@ export class NucleusSpikeBurst {
 
   private fire(): void {
     this.phase = 'fire';
-    this.timer = Math.max(
-      this.profile.shockDuration,
-      (this.profile.sprayWaves - 1) * 0.28 + 0.15
-    );
     this.shockHit = false;
-    this.wavesLeft = Math.max(1, this.profile.sprayWaves);
+    // Wave51: no releaseWave omni dump — continuous spray is the attack.
+    this.wavesLeft = 0;
     this.waveTimer = 0;
     this.nextSpikeSlot = 0;
     for (const line of this.lines) line.visible = false;
     this.setOpacity(this.warnSphere, 0);
-    this.releaseWave();
-    bus.emit('core-spike-fire', { count: this.dirCount, waves: this.profile.sprayWaves });
+    // Sustained random spray ~1.85s + 3 player-aimed spikes in quick succession.
+    this.sprayRemain = 1.85;
+    this.sprayClock = 0.02;
+    this.aimedLeft = 3;
+    this.aimedWait = 0.05;
+    this.timer = Math.max(this.profile.shockDuration, 2.0);
+    bus.emit('core-spike-fire', { count: this.dirCount, waves: this.profile.sprayWaves, mode: 'continuous' });
     bus.emit('camera-shake-request', { amount: 0.08 });
+  }
+
+
+  /** Wave51: continuous wild spray ~1.8s + 3 aimed spikes (~0.11s apart). */
+  private tickDangerSpray(dt: number, player: THREE.Vector3): void {
+    if (this.phase !== 'fire') return;
+    this.sprayRemain = Math.max(0, this.sprayRemain - dt);
+    this.sprayClock -= dt;
+    while (this.sprayRemain > 0 && this.sprayClock <= 0) {
+      // ~14 spikes/sec random spray — angry continuous threat, not one packet
+      this.sprayClock += 0.07;
+      const slot = this.nextSpikeSlot % Math.max(1, this.dirCount);
+      const dir = this.dirs[slot];
+      const jitter = new THREE.Vector3(
+        (Math.random() - 0.5) * 2.4,
+        (Math.random() - 0.5) * 2.4,
+        (Math.random() - 0.5) * 2.4
+      );
+      if (dir) jitter.addScaledVector(dir, 0.85);
+      if (jitter.lengthSq() < 1e-6) jitter.set(0, 0, 1);
+      this.launchSpike(jitter.normalize(), false);
+      this.nextSpikeSlot++;
+    }
+    this.aimedWait -= dt;
+    if (this.aimedLeft > 0 && this.aimedWait <= 0) {
+      const aim = player.clone().sub(this.origin);
+      if (aim.lengthSq() < 1e-6) aim.set(0, 0, 1);
+      else aim.normalize();
+      aim.x += (Math.random() - 0.5) * 0.06;
+      aim.y += (Math.random() - 0.5) * 0.06;
+      this.launchSpike(aim.normalize(), true);
+      this.aimedLeft--;
+      this.aimedWait = 0.11;
+    }
+  }
+
+  private launchSpike(dir: THREE.Vector3, aimed: boolean): void {
+    let s: Spike | null = null;
+    for (let i = 0; i < this.spikes.length; i++) {
+      const idx = (this.nextSpikeSlot + i) % this.spikes.length;
+      if (!this.spikes[idx].active) {
+        s = this.spikes[idx];
+        this.nextSpikeSlot = idx + 1;
+        break;
+      }
+    }
+    if (!s) {
+      if (!aimed) return;
+      s = this.spikes[this.nextSpikeSlot % this.spikes.length];
+      this.nextSpikeSlot++;
+    }
+    const speed = this.profile.speed;
+    s.active = true;
+    s.aimed = aimed;
+    s.airBurst = !aimed && Math.random() < this.profile.airBurstChance;
+    s.maxLife = this.profile.life;
+    s.life = this.profile.life;
+    s.burstAt = s.airBurst ? s.maxLife * (0.38 + Math.random() * 0.22) : -1;
+    s.hp = aimed ? 24 : 16;
+    s.pos.copy(this.origin).addScaledVector(dir, 1.15);
+    s.vel.copy(dir).multiplyScalar(aimed ? speed * 1.12 : speed * (0.82 + Math.random() * 0.28));
+    s.mesh.visible = true;
+    (s.mesh.material as THREE.MeshBasicMaterial).color.setHex(aimed ? 0xfff4cc : 0xff8844);
+    (s.mesh.material as THREE.MeshBasicMaterial).opacity = 1;
+    this.orient(s.mesh, s.vel);
+    s.mesh.position.copy(s.pos);
+    s.mesh.scale.setScalar(aimed ? 1.45 : 1);
   }
 
   private releaseWave(): void {

@@ -20,13 +20,15 @@ ensureRotateOverlay();
 document.addEventListener(
   'touchmove',
   (e) => {
-    if (
-      (e.target as HTMLElement)?.closest?.(
-        '.tech-scroll, .level-grid, .shop-scroll, .tech-panel, .level-panel, .shop-panel'
-      )
-    ) {
-      return;
-    }
+    // The event target is whichever finger started first. Check every finger
+    // so a stick drag does not cancel a button under the other finger.
+    const onUi = [...e.touches].some((touch) => {
+      const hit = document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null;
+      return !!hit?.closest(
+        'button, .ui-btn, .fire-opt, .interactive, .tech-scroll, .level-grid, .shop-scroll, .tech-panel, .level-panel, .shop-panel, .panel'
+      );
+    });
+    if (onUi) return;
     e.preventDefault();
   },
   { passive: false }

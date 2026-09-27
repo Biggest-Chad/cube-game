@@ -12,6 +12,7 @@ import {
 } from '../data/core';
 import { COLORS, ORBIT } from '../data/constants';
 import {
+  ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS,
   NUCLEUS_MEMBRANE_ICOSAHEDRON_DETAIL,
   NUCLEUS_PROGRESS_CORE_WEIGHT,
   NUCLEUS_PROGRESS_SHELL_WEIGHT,
@@ -41,6 +42,7 @@ export interface CoreSnapshot {
   shellAlive: number;
   shellTotal: number;
   shellRatio: number;
+  shellBonusPct: number;
   exposed: boolean;
   attribute: CoreAttribute;
   attributeLabel: string;
@@ -70,6 +72,7 @@ export class CoreNucleus {
   private overloadTimer = 0;
   private overloadKind: 'none' | 'rage' | 'regen' | 'swarm' = 'none';
   private spawnTimer = 0;
+  private swarmEmitCooldown = 0;
   private arcTimer = 0;
   private enrageTimer = 0;
   private pulse = 0;
@@ -85,6 +88,8 @@ export class CoreNucleus {
   private membraneMat: THREE.ShaderMaterial | null = null;
   private tendrils: THREE.Mesh[] = [];
   private tendrilDirs: THREE.Vector3[] = [];
+  private tendrilAim = new THREE.Vector3();
+  private readonly tendrilUp = new THREE.Vector3(0, 1, 0);
   private ichorPts: THREE.Points | null = null;
   private ichorPos: Float32Array | null = null;
   private ichorLife: Float32Array | null = null;
@@ -276,6 +281,13 @@ export class CoreNucleus {
     return this.segmentHits(from, to, extraPad, outPoint);
   }
 
+  shellBonusPercent(shellRatio = this.shellTotal > 0 ? this.shellAlive / this.shellTotal : 0): number {
+    const intact = Math.max(CORE.minDamageThroughput, 1 - CORE.maxShellDr);
+    const dr = Math.min(CORE.maxShellDr, Math.max(0, shellRatio) * CORE.maxShellDr);
+    const throughput = Math.max(CORE.minDamageThroughput, 1 - dr);
+    return Math.max(0, (throughput / intact - 1) * 100);
+  }
+
   snapshot(): CoreSnapshot {
     const shellRatio =
       this.shellTotal > 0 ? this.shellAlive / this.shellTotal : 0;
@@ -286,6 +298,7 @@ export class CoreNucleus {
       shellAlive: this.shellAlive,
       shellTotal: this.shellTotal,
       shellRatio,
+      shellBonusPct: this.shellBonusPercent(shellRatio),
       exposed: this.exposed,
       attribute: this.attribute,
       attributeLabel: coreAttributeLabel(this.attribute),
@@ -704,6 +717,8 @@ export class CoreNucleus {
         this.overloadTimer = CORE.swarmEnrageDuration;
         this.overloadKind = 'swarm';
         this.enrageTimer = CORE.swarmEnrageDuration;
+        this.spawnTimer = 0;
+        this.swarmEmitCooldown = ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS;
         bus.emit('core-spawn-drones', {
           count: CORE.swarmExposedBurst + 2,
           role: 'mixed' as const,
@@ -789,6 +804,7 @@ export class CoreNucleus {
     this.hitFlinch = Math.max(0, this.hitFlinch - dt * 2.4);
     this.overloadTimer = Math.max(0, this.overloadTimer - dt);
     this.enrageTimer = Math.max(0, this.enrageTimer - dt);
+    this.swarmEmitCooldown = Math.max(0, this.swarmEmitCooldown - dt);
 
     // Shell-alone decay
     if (this.decaying && this.hp > 0) {
@@ -813,13 +829,16 @@ export class CoreNucleus {
       this.cube.tickInnerRevive(dt, now, CORE.regenRevivePerSecOfDead);
     }
 
-    // Swarm factory
+    // Swarm factory — batches only, never faster than the global 2s wave cooldown
     if (this.attribute === 'swarm') {
       this.spawnTimer += dt;
-      const interval =
-        this.exposed ? CORE.swarmSpawnInterval * 0.55 : CORE.swarmSpawnInterval;
-      if (this.spawnTimer >= interval) {
+      const interval = Math.max(
+        ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS,
+        this.exposed ? CORE.swarmSpawnInterval * 0.55 : CORE.swarmSpawnInterval
+      );
+      if (this.spawnTimer >= interval && this.swarmEmitCooldown <= 0) {
         this.spawnTimer = 0;
+        this.swarmEmitCooldown = ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS;
         bus.emit('core-spawn-drones', {
           count: this.exposed ? 2 : 1,
           role: Math.random() > 0.55 ? ('attack' as const) : ('repair' as const),
@@ -926,12 +945,12 @@ export class CoreNucleus {
       const wiggle = Math.sin(t * (2.4 + i * 0.37) + i) * (0.22 + pain * 0.45);
       const reach = this.baseScale * this.overloadSizeMul * (0.85 + Math.sin(t * 1.7 + i) * 0.12 + pain * 0.2);
       const reachDying = this.dying ? reach * (1.4 - this.deathT * 0.5) : reach;
-      const aim = dir.clone();
+      const aim = this.tendrilAim.copy(dir);
       aim.x += wiggle;
       aim.y += Math.cos(t * 1.9 + i * 0.6) * 0.18;
       aim.normalize();
       mesh.position.copy(aim).multiplyScalar(this.baseScale * this.overloadSizeMul * 0.55);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), aim);
+      mesh.quaternion.setFromUnitVectors(this.tendrilUp, aim);
       mesh.scale.set(
         this.dying ? 1.1 + Math.sin(t * 17.0 + i) * 0.4 : 1,
         reachDying / Math.max(0.01, this.baseScale * this.overloadSizeMul),
@@ -1021,6 +1040,7 @@ export class CoreNucleus {
     this.overloadTimer = 0;
     this.overloadKind = 'none';
     this.spawnTimer = 0;
+    this.swarmEmitCooldown = 0;
     this.arcTimer = 0;
     this.enrageTimer = 0;
     this.pulse = 0;

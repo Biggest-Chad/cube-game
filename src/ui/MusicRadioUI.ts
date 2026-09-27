@@ -18,6 +18,7 @@ export class MusicRadioUI {
     host.appendChild(this.root);
     this.player = player;
     this.render();
+    this.hide();
     player.onTrackChange = (t) => this.updateTrack(t);
     this.tick();
   }
@@ -78,8 +79,13 @@ export class MusicRadioUI {
     this.root.classList.toggle('playing', this.player.isPlaying);
   }
 
+  private shownPlaying = false;
+
   private tick = (): void => {
     this.raf = requestAnimationFrame(this.tick);
+    const playing = this.player.isPlaying;
+    if (playing === this.shownPlaying) return;
+    this.shownPlaying = playing;
     this.syncPlayIcon();
   };
 

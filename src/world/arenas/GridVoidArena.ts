@@ -155,14 +155,10 @@ export class GridVoidArena implements ArenaInstance {
     this.scene = scene;
     this.prevFog = scene.fog;
     this.prevBg = scene.background as THREE.Color | THREE.Texture | null;
+    // Wave51: CubeStageSky owns stage atmosphere. Fog only — no equirect bubble bg.
     scene.fog = this.fog;
-    if (this.envMap) {
-      scene.background = this.envMap;
-      // No scene.environment — IBL on every city MeshStandardMaterial is a mobile killer.
-      scene.environment = null;
-    } else {
-      scene.background = new THREE.Color(0x02060a);
-    }
+    scene.background = null;
+    scene.environment = null;
     if (!this.root.parent) scene.add(this.root);
   }
 
@@ -179,8 +175,9 @@ export class GridVoidArena implements ArenaInstance {
   setQuality(tier: 0 | 1 | 2): void {
     this.quality = tier;
     // Same cheap ambience on every tier — gameplay keeps the GPU.
-    this.fog.near = 48;
-    this.fog.far = 155;
+    // Wave51: distant wash matching stage-wide halo (Game/CubeStageSky retints).
+    this.fog.near = 70;
+    this.fog.far = 520;
   }
 
   update(dt: number): void {

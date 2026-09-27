@@ -21,6 +21,8 @@ export class ResearchUI {
   onPurchase: ((nodeId: string) => boolean) | null = null;
   onBuyIap: ((packId: string) => Promise<boolean>) | null = null;
   onWatchAdCore: (() => Promise<boolean>) | null = null;
+  onContinueSector: (() => void) | null = null;
+  continueLabel = '';
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -44,6 +46,8 @@ export class ResearchUI {
   }
 
   render(research: ResearchTree, currency: Currency): void {
+    const prev = this.root.querySelector('.research-scroll') as HTMLElement | null;
+    const prevScroll = prev?.scrollTop ?? 0;
     const rows = researchRows();
     this.root.innerHTML = `
       <div class="research-panel interactive tech-panel">
@@ -57,6 +61,7 @@ export class ResearchUI {
           <div class="shop-currency-row">
             <div class="tech-currency core">◆ ${Math.floor(currency.coreEnergy)} CORE</div>
           </div>
+          ${this.continueLabel ? `<button type="button" class="menu-btn primary" id="research-continue">${this.continueLabel}</button>` : ""}
           <button class="icon-btn" id="research-close" type="button" aria-label="Close">✕</button>
         </div>
 
@@ -79,6 +84,12 @@ export class ResearchUI {
       </div>
     `;
     this.bind(research, currency);
+    const sc = this.root.querySelector('.research-scroll') as HTMLElement | null;
+    if (sc) sc.scrollTop = prevScroll;
+    requestAnimationFrame(() => {
+      const again = this.root.querySelector('.research-scroll') as HTMLElement | null;
+      if (again) again.scrollTop = prevScroll;
+    });
   }
 
   private renderLattice(
@@ -192,6 +203,11 @@ export class ResearchUI {
   }
 
   private bind(research: ResearchTree, currency: Currency): void {
+    this.root.querySelector('#research-continue')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.onContinueSector?.();
+    });
     this.root.querySelector('#research-close')?.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();

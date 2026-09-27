@@ -48,11 +48,11 @@ export const GRAPHICS_PRESETS: Record<GraphicsQuality, GraphicsPreset> = {
   medium: {
     id: 'medium',
     label: 'MEDIUM',
-    description: 'Balanced look & performance (recommended)',
+    description: 'Balanced look & performance · bloom off (recommended)',
     dprCap: 1,
     antialias: false,
     exposure: 0.96,
-    bloomEnabled: true,
+    bloomEnabled: false,
     bloomStrength: 0.18,
     bloomThreshold: 0.82,
     bloomRadius: 0.26,

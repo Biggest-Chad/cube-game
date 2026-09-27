@@ -54,39 +54,9 @@ export class AmbientEnvironment {
   }
 
   private buildSky(): void {
-    // Inward-facing gradient dome (dark cyan void)
-    const geo = new THREE.SphereGeometry(280, 32, 24);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x020810,
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-    });
-    this.sky = new THREE.Mesh(geo, mat);
-    this.sky.renderOrder = -10;
-    this.group.add(this.sky);
-
-    // Soft nebula bands (additive shells)
-    for (const [col, scale, op] of [
-      [0x001a28, 0.92, 0.18],
-      [0x1a0022, 0.78, 0.12],
-      [0x001428, 0.65, 0.1],
-    ] as const) {
-      const shell = new THREE.Mesh(
-        new THREE.SphereGeometry(260 * scale, 24, 16),
-        new THREE.MeshBasicMaterial({
-          color: col,
-          transparent: true,
-          opacity: op,
-          side: THREE.BackSide,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          fog: false,
-        })
-      );
-      shell.renderOrder = -9;
-      this.group.add(shell);
-    }
+    // Wave51: CubeStageSky owns stage atmosphere. Keep no local clip-bubble dome.
+    // (Legacy fallback arena still supplies floor/monoliths/dust without a 280r shell.)
+    this.sky = null;
   }
 
   private buildGrid(): void {
@@ -338,7 +308,7 @@ export class AmbientEnvironment {
   }
 
   private buildBeacons(): void {
-    // Orbiting neon beacons in the mid-distance
+    // Orbiting neon beacons — sprites + beams always; PointLights only on high (tier 2).
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2;
       const r = 48;
@@ -358,11 +328,6 @@ export class AmbientEnvironment {
       this.beaconMeshes.push(mesh);
       this.group.add(mesh);
 
-      const light = new THREE.PointLight(col, 2.5, 35, 2);
-      light.position.copy(mesh.position);
-      this.beacons.push(light);
-      this.group.add(light);
-
       // Vertical beam column
       const colm = new THREE.Mesh(
         new THREE.CylinderGeometry(0.06, 0.12, 22, 8, 1, true),
@@ -377,6 +342,26 @@ export class AmbientEnvironment {
       );
       colm.position.set(mesh.position.x, y + 8, mesh.position.z);
       this.group.add(colm);
+    }
+  }
+
+  private clearBeaconLights(): void {
+    for (const light of this.beacons) {
+      this.group.remove(light);
+      light.dispose();
+    }
+    this.beacons.length = 0;
+  }
+
+  private ensureBeaconLights(): void {
+    if (this.beacons.length > 0) return;
+    for (let i = 0; i < this.beaconMeshes.length; i++) {
+      const mesh = this.beaconMeshes[i];
+      const col = i % 2 === 0 ? COLORS.cyan : COLORS.magenta;
+      const light = new THREE.PointLight(col, 4, 35, 2);
+      light.position.copy(mesh.position);
+      this.beacons.push(light);
+      this.group.add(light);
     }
   }
 
@@ -416,9 +401,10 @@ export class AmbientEnvironment {
   applyToScene(scene: THREE.Scene): void {
     this.sceneRef = scene;
     this.prevFog = scene.fog;
-    this.fogApplied = new THREE.FogExp2(0x02060c, 0.0038);
+    // Wave51: fog wash only — CubeStageSky / Game retints; no local bg bubble.
+    this.fogApplied = new THREE.FogExp2(0x02060c, 0.0016);
     scene.fog = this.fogApplied;
-    scene.background = new THREE.Color(0x02060a);
+    scene.background = null;
     if (!this.group.parent) {
       scene.add(this.group);
     }
@@ -450,9 +436,8 @@ export class AmbientEnvironment {
     }
     if (this.fogApplied) this.fogApplied.density = fogD;
 
-    for (const b of this.beacons) {
-      b.intensity = tier === 0 ? 1.2 : tier === 1 ? 2.5 : 4;
-    }
+    if (tier === 2) this.ensureBeaconLights();
+    else this.clearBeaconLights();
     for (const r of this.energyRings) {
       r.visible = tier > 0;
     }

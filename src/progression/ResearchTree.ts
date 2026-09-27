@@ -141,6 +141,13 @@ export class ResearchTree {
     if (e.cosmeticTrail) b.cosmeticTrail = true;
   }
 
+  /** Evolve wipe ? research purchases do not carry. */
+  resetPurchases(): void {
+    this.ranks.clear();
+    this.externalCosmeticTrail = false;
+    this.recompute();
+  }
+
   isOwned(id: string): boolean {
     return (this.ranks.get(id) ?? 0) > 0;
   }

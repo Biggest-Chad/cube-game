@@ -9,7 +9,7 @@ import type { ArenaInstance } from './ArenaInstance';
 import { GridVoidArena } from './arenas/GridVoidArena';
 import { LegacyAmbientArena } from './arenas/LegacyAmbientArena';
 
-const CAMERA_FAR = 420;
+const CAMERA_FAR = 1100; // Wave51: past CubeStageSky dome (980), no clip bubble
 
 export class ArenaDirector {
   private scene: Scene | null = null;

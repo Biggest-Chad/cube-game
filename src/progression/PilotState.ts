@@ -153,6 +153,14 @@ export class PilotState {
     return fresh;
   }
 
+  rollSealed(): string | null {
+    const locked = PILOTS.filter((def) => def.persistCampaign && !this.unlockedIds.has(def.id));
+    if (locked.length === 0) return null;
+    const pick = locked[Math.floor(Math.random() * locked.length)];
+    this.unlockedIds.add(pick.id);
+    return pick.id;
+  }
+
   markNotified(id: string): void {
     this.notifiedIds.add(id);
   }

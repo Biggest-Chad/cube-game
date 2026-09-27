@@ -261,6 +261,14 @@ export class LoadoutState {
     this.resetBranchRanks();
   }
 
+  grantEvolveHardpoints(): number {
+    if (this.hardpointUnlocks >= MAX_HARDPOINTS) return this.hardpointUnlocks;
+    this.hardpointUnlocks = MAX_HARDPOINTS;
+    bus.emit('hardpoint-unlocked', { slot: 2, hardpointUnlocks: this.hardpointUnlocks });
+    bus.emit('loadout-changed', this.toJSON());
+    return this.hardpointUnlocks;
+  }
+
   upgradeBranch(slot: number, branchId: string): boolean {
     const check = this.canUpgradeBranch(slot, branchId, Infinity);
     if (!check.nextRank) return false;

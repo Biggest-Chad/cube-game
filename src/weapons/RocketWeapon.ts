@@ -22,7 +22,7 @@ import { NUCLEUS_HIT_ID, type CubeManager } from '../cube/CubeManager';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
 import type { WeaponBehavior, WeaponFireContext } from './WeaponBehavior';
-import { addMat, makeTrail, orientZForward } from '../vfx/ProjectileVfx';
+import { addMat, makeTrail, orientAft } from '../vfx/ProjectileVfx';
 
 type RocketPhase = 'drop' | 'boost' | 'cruise';
 
@@ -272,7 +272,7 @@ export class RocketWeapon implements WeaponBehavior {
     r.mesh.position.copy(r.pos);
     // Nose points slightly down while dropping
     this.dropDir.copy(r.vel).normalize();
-    orientZForward(r.mesh, this.dropDir);
+    orientAft(r.mesh, this.dropDir);
     for (const h of r.trailHist) h.copy(r.pos);
     // Scale pop on release
     r.mesh.scale.setScalar(0.85);
@@ -319,13 +319,13 @@ export class RocketWeapon implements WeaponBehavior {
       const prev = this.tmp.copy(r.pos);
       r.pos.addScaledVector(r.vel, dt);
       r.mesh.position.copy(r.pos);
-      if (r.vel.lengthSq() > 1e-6) orientZForward(r.mesh, r.vel);
+      if (r.vel.lengthSq() > 1e-6) orientAft(r.mesh, r.vel);
 
       const lit = r.phase !== 'drop';
       if (lit) {
         const d = r.vel.clone().normalize();
         r.exhaust.position.copy(r.pos).addScaledVector(d, -0.42);
-        orientZForward(r.exhaust, d);
+        orientAft(r.exhaust, d);
         r.exhaustGlow.position.copy(r.pos).addScaledVector(d, -0.36);
         const pulse = 0.7 + Math.sin(now * 32 + r.life * 14) * 0.3;
         const boost = r.phase === 'boost' ? 1.45 : 1;

@@ -36,8 +36,23 @@ export const MAIN_GUN_BEAM_RANGE = 120;
 /** Visual lance lifetime (seconds). */
 export const MAIN_GUN_BEAM_DURATION = 0.14;
 
-/** Concurrent bolts at rank 0. */
+/** Bolts in the stream at rank 0. Extras insert between these shots. */
 export const MAIN_GUN_MULTI_SHOT_BASE = 1;
+
+/**
+ * Half-angle of the main-gun fan, in radians, per extra bolt.
+ * Rank 1 is a slight second barrel. Later ranks open into a minigun cone.
+ */
+export const MAIN_GUN_MULTI_CONE_STEP = 0.022;
+
+/** Cap on that fan before spread upgrades. About 9 degrees. */
+export const MAIN_GUN_MULTI_CONE_MAX = 0.16;
+
+/** Hard cap after spread upgrades so the fan stays a cone, not a shotgun. */
+export const MAIN_GUN_MULTI_CONE_ABS_MAX = 0.34;
+
+/** In-flight bolts for the main gun. Hardpoint pulses keep the smaller pool. */
+export const MAIN_GUN_BOLT_POOL = 96;
 
 /** Splash radius at rank 0 (0 = none until Shock Halo). */
 export const MAIN_GUN_SPLASH_RADIUS_BASE = 0;
@@ -46,10 +61,10 @@ export const MAIN_GUN_SPLASH_RADIUS_BASE = 0;
 export const MAIN_GUN_AUTO_FIRE = true;
 
 /** Stick aim cone half-angle (radians) around ship→cube. */
-export const MAIN_GUN_AIM_STICK_CONE_RADIANS = 0.56;
+export const MAIN_GUN_AIM_STICK_CONE_RADIANS = 0.68; // WAVE46 peripheral lean authority
 
 /** Soft-lock angular slack vs enemy drones (1 − dot). Wider so frontal harassers snap easily. */
-export const MAIN_GUN_ENEMY_LOCK_ANGULAR_SLACK = 0.28;
+export const MAIN_GUN_ENEMY_LOCK_ANGULAR_SLACK = 0.34; // WAVE46 drone soft-lock with lean
 
 /** Block raycast half-extent used for main-gun aim assist. */
 export const MAIN_GUN_AIM_BLOCK_HALF_EXTENT = 0.62;
@@ -332,11 +347,13 @@ export const ROCKET_POD_BURST_SIZE = 2;
 export const ROCKET_POD_SHOP_COST_FRAGMENTS = 140;
 export const ROCKET_POD_SHOP_MIN_LEVEL = 3;
 
-export const RAILGUN_BASE_DAMAGE = 95;
+/** Wave48: base slug damage +200% (x3). Was 95. */
+export const RAILGUN_BASE_DAMAGE = 285;
 export const RAILGUN_BASE_FIRE_RATE = 0.55;
 export const RAILGUN_BASE_PROJECTILE_SPEED = 180;
 export const RAILGUN_BASE_RANGE = 140;
-export const RAILGUN_BASE_SPLASH_RADIUS = 0.4;
+/** Wave48 impact punch. Was 0.4. */
+export const RAILGUN_BASE_SPLASH_RADIUS = 1.05;
 export const RAILGUN_BASE_SPLASH_FALLOFF = 0.3;
 export const RAILGUN_BASE_ARMOR_PIERCE = 0.75;
 export const RAILGUN_BASE_CRIT_CHANCE = 0.12;
@@ -477,13 +494,19 @@ export const GROUND_CIWS_LIFE = 1.15;
 
 export const GROUND_WEAPON_UPGRADE_BASE_COST = 140;
 export const GROUND_WEAPON_UPGRADE_COST_GROWTH = 1.52;
-export const GROUND_WEAPON_UPGRADE_MAX_RANK = 30;
+/** WAVE52: ten more base-weapon ranks of headroom per Evolution, through Evo 9. */
+export const GROUND_WEAPON_UPGRADE_MAX_RANK = 100;
 export const GROUND_WEAPON_UPGRADE_DAMAGE_PER_RANK = 0.16;
 export const GROUND_WEAPON_UPGRADE_RATE_PER_RANK = 0.1;
 
 export const ORBIT_DEFAULT_RADIUS = 18;
 export const ORBIT_MINIMUM_RADIUS = 10;
 export const ORBIT_MAXIMUM_RADIUS = 80;
+/**
+ * Chase camera must stay inside this distance from the origin.
+ * Nearest megacity tower faces sit near 31 (centers at 34, about 3 units of footprint).
+ */
+export const ORBIT_CITY_CAMERA_LIMIT = 29;
 export const ORBIT_MINIMUM_PITCH = -Math.PI / 2 + 0.04;
 export const ORBIT_MAXIMUM_PITCH = Math.PI / 2 - 0.04;
 export const ORBIT_YAW_SPEED = 0.55;
@@ -603,21 +626,58 @@ export const NUCLEUS_BLOB_HIT_POINTS = 18;
 export const NUCLEUS_BLOB_OVERLOAD_COUNT = 4;
 export const NUCLEUS_BLOB_OVERLOAD_SPREAD = 0.32;
 /** Arc field radius multiplier vs the blob's own radius. */
-export const NUCLEUS_BLOB_ARC_RADIUS_MULTIPLIER = 1.5;
-/** Minor ship DPS while inside the arc field (fraction of impact damage / sec). */
-export const NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND = 0.28;
+/** Arc field reaches ~ship-length proximity (was 1.5 — nearly contact-only). */
+export const NUCLEUS_BLOB_ARC_RADIUS_MULTIPLIER = 5.5;
+/**
+ * Shield DPS while inside the arc field = blobDamage * fraction / sec.
+ * Wave51: 1.05 → ~12.6 DPS at base blob (12). Strips 40 shield in ~3.2s of
+ * sustained proximity (before regen). Dangerous, not instant delete.
+ */
+export const NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND = 1.05;
 
 export const NUCLEUS_KAMIKAZE_BASE_COUNT = 2;
 /** Remaining fraction after the −75% enemy-drone health/damage pass. */
 export const ENEMY_DRONE_VITALS_SCALE = 0.25;
+/** Wave48: health pool +300% (x4). Does not scale damage. */
+export const ENEMY_DRONE_HEALTH_POOL_SCALE = 4;
 
-export const NUCLEUS_KAMIKAZE_BASE_HIT_POINTS = 18 * ENEMY_DRONE_VITALS_SCALE;
-export const NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE = 1.55 * ENEMY_DRONE_VITALS_SCALE;
+/**
+ * Wave53 stage-1 floor: MAIN_GUN_BASE_DAMAGE * 6 unupgraded main-gun hits.
+ * Spawn uses enemyDroneHpForStage() so stage 1 is exactly the floor.
+ */
+export const ENEMY_DRONE_STAGE1_MAIN_GUN_HITS = 6;
+/** Exact 6 * mainGun so ceil(HP / dmg) === 6 at stage 1 (ceil would push to 7). */
+export const ENEMY_DRONE_STAGE1_HP_FLOOR =
+  MAIN_GUN_BASE_DAMAGE * ENEMY_DRONE_STAGE1_MAIN_GUN_HITS;
+/** +12% HP per stage above 1 (multiplicative on the role's stage-1 HP). */
+export const ENEMY_DRONE_HP_PER_STAGE_FRACTION = 0.12;
+
+/** Role mul vs the shared stage-1 floor (all still >= 6 main-gun hits on stage 1). */
+export const ENEMY_ATTACK_DRONE_HP_ROLE_MUL = 1;
+export const ENEMY_REPAIR_DRONE_HP_ROLE_MUL = 1;
+export const CUBE_FIGHTER_HP_ROLE_MUL = 1;
+export const NUCLEUS_KAMIKAZE_HP_ROLE_MUL = 1;
+
+export function enemyDroneHpForStage(levelId: number, roleMul = 1): number {
+  const stage = Math.max(1, levelId | 0);
+  const stage1 = ENEMY_DRONE_STAGE1_HP_FLOOR * Math.max(0.01, roleMul);
+  const scale = 1 + Math.max(0, stage - 1) * ENEMY_DRONE_HP_PER_STAGE_FRACTION;
+  // Stage 1 keeps exact 6-hit math; later stages round up.
+  return stage === 1 ? stage1 : Math.ceil(stage1 * scale);
+}
+
+/** @deprecated Wave51 — kept for import compatibility; spawn uses enemyDroneHpForStage. */
+export const NUCLEUS_KAMIKAZE_BASE_HIT_POINTS = ENEMY_DRONE_STAGE1_HP_FLOOR;
+/** @deprecated Wave51 — growth now via ENEMY_DRONE_HP_PER_STAGE_FRACTION. */
+export const NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE = Math.round(
+  ENEMY_DRONE_STAGE1_HP_FLOOR * ENEMY_DRONE_HP_PER_STAGE_FRACTION
+);
 /**
  * Single-ram ship damage vs 100 hull / 40 shield.
  * Was 14 * ENEMY_DRONE_VITALS_SCALE = 3.5 (too small to read as a threat).
  */
-export const NUCLEUS_KAMIKAZE_DAMAGE = 18;
+/** Wave48: contact/explosion damage +200% (x3). Was 18. */
+export const NUCLEUS_KAMIKAZE_DAMAGE = 54;
 /** Slow cruise (was 7.2 — lerp homing closed the gap in ~0.25s). */
 export const NUCLEUS_KAMIKAZE_SPEED = 4.1;
 export const NUCLEUS_KAMIKAZE_PROXIMITY = 1.45;
@@ -629,11 +689,14 @@ export const NUCLEUS_KAMIKAZE_INTERCEPT_RANGE = 10;
 /** Peel onto an ally only if already this close (in the inbound path). */
 export const NUCLEUS_KAMIKAZE_ALLY_PEEL_RANGE = 6;
 /** Kit idle seeker cadence (overload still bursts). */
-export const NUCLEUS_KAMIKAZE_COOLDOWN_SECONDS = 13;
+/** Kit idle seeker cadence. Wave48 spawn timer x4 (was 13). */
+export const NUCLEUS_KAMIKAZE_COOLDOWN_SECONDS = 52;
 /** Opening spawn gap for regular CubeDefense waves (seconds). */
-export const NUCLEUS_KAMIKAZE_SPAWN_INTERVAL_START = 10.5;
+/** Opening spawn gap. Wave48 x4 (was 10.5). */
+export const NUCLEUS_KAMIKAZE_SPAWN_INTERVAL_START = 42;
 /** Fastest regular-wave gap once the stage runs long. */
-export const NUCLEUS_KAMIKAZE_SPAWN_INTERVAL_MIN = 5.5;
+/** Fastest regular-wave gap. Wave48 x4 (was 5.5). */
+export const NUCLEUS_KAMIKAZE_SPAWN_INTERVAL_MIN = 22;
 /** Early-stage regular wave size (1–2 at a time). */
 export const NUCLEUS_KAMIKAZE_WAVE_SIZE_EARLY = 1;
 /** Live-seeker cap before extra stage pressure. */
@@ -713,7 +776,8 @@ export const NUCLEUS_REGEN_RESURRECT_FRACTION_MAX = 0.1;
 export const NUCLEUS_REGEN_REVIVE_PER_SECOND_OF_DEAD = 0.012;
 export const NUCLEUS_REGEN_OVERLOAD_TIMER_SECONDS = 2.5;
 
-export const NUCLEUS_SWARM_SPAWN_INTERVAL_SECONDS = 5.5;
+/** Enemy drone factory cadence. Wave48 x4 (was 5.5). */
+export const NUCLEUS_SWARM_SPAWN_INTERVAL_SECONDS = 22;
 export const NUCLEUS_SWARM_EXPOSED_BURST_COUNT = 6;
 export const NUCLEUS_SWARM_ENRAGE_DURATION_SECONDS = 5;
 export const NUCLEUS_SWARM_ENRAGE_SPEED_MULTIPLIER = 1.55;
@@ -754,10 +818,15 @@ export function nucleusHitRadiusWorld(
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const ENEMY_DRONE_SOFT_CAP = 32;
-export const ENEMY_ATTACK_DRONE_BASE_HIT_POINTS = 40 * ENEMY_DRONE_VITALS_SCALE;
-export const ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL = 5 * ENEMY_DRONE_VITALS_SCALE;
-export const ENEMY_REPAIR_DRONE_BASE_HIT_POINTS = 28 * ENEMY_DRONE_VITALS_SCALE;
-export const ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL = 3 * ENEMY_DRONE_VITALS_SCALE;
+/** Wave51: aliases — real HP from enemyDroneHpForStage(levelId, roleMul). */
+export const ENEMY_ATTACK_DRONE_BASE_HIT_POINTS = ENEMY_DRONE_STAGE1_HP_FLOOR;
+export const ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL = Math.round(
+  ENEMY_DRONE_STAGE1_HP_FLOOR * ENEMY_DRONE_HP_PER_STAGE_FRACTION
+);
+export const ENEMY_REPAIR_DRONE_BASE_HIT_POINTS = ENEMY_DRONE_STAGE1_HP_FLOOR;
+export const ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL = Math.round(
+  ENEMY_DRONE_STAGE1_HP_FLOOR * ENEMY_DRONE_HP_PER_STAGE_FRACTION
+);
 export const ENEMY_DRONE_BASE_DAMAGE = 6 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_DAMAGE_PER_LEVEL = 0.55 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER = 1.35;
@@ -773,22 +842,39 @@ export const ENEMY_DRONE_BOLT_SPEED = 16;
 /** Per-bolt ship damage if ignored (easy to one-shot; painful if left alone). */
 export const ENEMY_HARASS_DRONE_DAMAGE = 4.5;
 /** Opening spawn gap (seconds) at stage start — ramps down as the fight goes long. Was 13. */
-export const ENEMY_HARASS_SPAWN_INTERVAL_START = 6.2;
-/** Fastest spawn gap once the stage is past expected clear time. Was 3.6. */
-export const ENEMY_HARASS_SPAWN_INTERVAL_MIN = 2.2;
-/** Drones per harass wave (early stages already spawn a group). */
+/** Opening harass gap. Wave48 x4 (was 6.2). */
+export const ENEMY_HARASS_SPAWN_INTERVAL_START = 24.8;
+/** Fastest spawn gap once the stage is past expected clear time. Never below swarm batch cooldown. */
+/** Fastest harass gap. Wave48 x4 (was 2.2). */
+export const ENEMY_HARASS_SPAWN_INTERVAL_MIN = 8.8;
+/** Drones per harass wave (later stages). */
 export const ENEMY_HARASS_WAVE_SIZE = 3;
+/** First-wave / early-stage harass count (Level 1–3). */
+export const ENEMY_HARASS_WAVE_SIZE_EARLY = 2;
+/** New enemy drones: inactive, untargetable, no seek/ram/fire. */
+export const ENEMY_DRONE_SPAWN_ARM_SECONDS = 1.5;
+/** Outward drift distance during spawn arm (world units). */
+export const ENEMY_DRONE_SPAWN_SPREAD_DISTANCE = 3.4;
+/** Hard minimum seconds between any enemy drone wave emit (harass, core swarm, enrage). */
+export const ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS = 2;
+
+/** Main-gun soft-lock cycle: nucleus → blocks → drones. */
+export type MainGunLockPriority = 'nucleus' | 'blocks' | 'drones';
+export const MAIN_GUN_LOCK_PRIORITIES: readonly MainGunLockPriority[] = [
+  'nucleus',
+  'blocks',
+];
 export const ENEMY_REPAIR_DRONE_SPEED = 4.5;
 export const ENEMY_DRONE_REPAIR_FRACTION = 0.07;
-export const ENEMY_DRONE_DEFAULT_HIT_POINTS = 45 * ENEMY_DRONE_VITALS_SCALE;
+export const ENEMY_DRONE_DEFAULT_HIT_POINTS = ENEMY_DRONE_STAGE1_HP_FLOOR;
 export const ENEMY_DRONE_DEFAULT_DAMAGE = 8 * ENEMY_DRONE_VITALS_SCALE;
 export const ENEMY_DRONE_DEFAULT_FIRE_RATE = 1.1;
 export const ENEMY_DRONE_DEFAULT_SPEED = 6;
 export const ENEMY_DRONE_DEFAULT_RANGE = 28;
 export const ENEMY_DRONE_DEFAULT_REPAIR_FRACTION = 0.06;
 
-export const LATTICE_TURRET_BASE_HIT_POINTS = 55;
-export const LATTICE_TURRET_HIT_POINTS_PER_LEVEL = 14;
+export const LATTICE_TURRET_BASE_HIT_POINTS = 165; // WAVE49: 55 * 3
+export const LATTICE_TURRET_HIT_POINTS_PER_LEVEL = 42; // WAVE49: 14 * 3
 export const LATTICE_TURRET_BASE_DAMAGE = 9;
 export const LATTICE_TURRET_DAMAGE_PER_LEVEL = 0.85;
 export const LATTICE_TURRET_FIRE_RATE = 0.45;
@@ -816,8 +902,10 @@ export const TURRET_TRACK_RATE = 7.2;
 /** Max seconds of player-motion lead when computing the fire point. */
 export const TURRET_LEAD_TIME_CAP_SECONDS = 1.15;
 
-export const CUBE_FIGHTER_BASE_HIT_POINTS = 24 * ENEMY_DRONE_VITALS_SCALE;
-export const CUBE_FIGHTER_HIT_POINTS_PER_LEVEL = 2.4 * ENEMY_DRONE_VITALS_SCALE;
+export const CUBE_FIGHTER_BASE_HIT_POINTS = ENEMY_DRONE_STAGE1_HP_FLOOR;
+export const CUBE_FIGHTER_HIT_POINTS_PER_LEVEL = Math.round(
+  ENEMY_DRONE_STAGE1_HP_FLOOR * ENEMY_DRONE_HP_PER_STAGE_FRACTION
+);
 export const CUBE_FIGHTER_BASE_DAMAGE = 5 * ENEMY_DRONE_VITALS_SCALE;
 export const CUBE_FIGHTER_DAMAGE_PER_LEVEL = 0.42 * ENEMY_DRONE_VITALS_SCALE;
 export const CUBE_FIGHTER_FIRE_RATE = 1.35;
@@ -868,7 +956,7 @@ export const BLOCK_REGENERATING_HP_MULTIPLIER = 1.3;
 export const BLOCK_EXPLOSIVE_HP_MULTIPLIER = 0.9;
 export const BLOCK_DATA_NODE_HP_MULTIPLIER = 1.1;
 export const BLOCK_SIEGE_HP_MULTIPLIER = 3.5;
-export const BLOCK_TURRET_HP_MULTIPLIER = 2.4;
+export const BLOCK_TURRET_HP_MULTIPLIER = 7.2; // WAVE49: 2.4 * 3
 export const BLOCK_REINFORCED_FRAGMENT_MULTIPLIER = 1.4;
 export const BLOCK_REGENERATING_FRAGMENT_MULTIPLIER = 1.2;
 export const BLOCK_EXPLOSIVE_FRAGMENT_MULTIPLIER = 1.1;

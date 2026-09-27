@@ -40,6 +40,12 @@ export class Ship {
   private readonly _thrusterWorld = new THREE.Vector3();
   private readonly _aft = new THREE.Vector3();
   private manualFlight = false;
+  /** WAVE46 cube aim lean (rad) toward reticle; returns to 0 when centered. */
+  private aimLeanYaw = 0;
+  private aimLeanPitch = 0;
+  private aimLeanRoll = 0;
+  private aimStickX = 0;
+  private aimStickY = 0;
 
   constructor() {
     this.body = new THREE.Group();
@@ -684,9 +690,14 @@ export class Ship {
 
   /** Forward direction in world space (toward cube / -local Z). */
   getForward(out = new THREE.Vector3()): THREE.Vector3 {
-    // After lookAt(0,0,0), local -Z faces the cube
+    // After lookAt(0,0,0), local -Z faces the cube (includes WAVE46 aim lean)
     out.set(0, 0, -1).applyQuaternion(this.group.quaternion).normalize();
     return out;
+  }
+
+  /** WAVE46: how hard the ship is leaned toward the reticle (0..1). */
+  getAimLeanAmount(): number {
+    return Math.min(1, Math.hypot(this.aimLeanYaw, this.aimLeanPitch) / 0.58);
   }
 
   private setupThrusterLights(): void {
@@ -755,8 +766,12 @@ export class Ship {
         count: number,
         speed?: number
       ) => void;
-    } | null
+    } | null,
+    aimX = 0,
+    aimY = 0
   ): void {
+    this.aimStickX = THREE.MathUtils.clamp(aimX, -1, 1);
+    this.aimStickY = THREE.MathUtils.clamp(aimY, -1, 1);
     if (!this.manualFlight) {
     camera.getShipPosition(this._desired);
     const posLag =
@@ -774,8 +789,19 @@ export class Ship {
       typeof camera.yawVelocity === 'number' ? camera.yawVelocity : 0;
     const bank = THREE.MathUtils.clamp(-yawV * 0.55, -0.45, 0.45);
     const pitchBob = Math.sin(this.thrusterPulse * 0.7) * 0.02 * (0.4 + this.motionIntensity);
+    // WAVE46: temporary lean/yaw/pitch toward aim reticle (not full free-look)
+    const AIM_YAW = 0.58; // ~33deg at full stick — peripheral drones
+    const AIM_PITCH = 0.42;
+    const AIM_ROLL = 0.30;
+    const leanK = 1 - Math.exp(-14 * Math.max(1e-4, dt));
+    const targetYaw = -this.aimStickX * AIM_YAW;
+    const targetPitch = -this.aimStickY * AIM_PITCH;
+    const targetRoll = -this.aimStickX * AIM_ROLL;
+    this.aimLeanYaw += (targetYaw - this.aimLeanYaw) * leanK;
+    this.aimLeanPitch += (targetPitch - this.aimLeanPitch) * leanK;
+    this.aimLeanRoll += (targetRoll - this.aimLeanRoll) * leanK;
     const bankQ = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(pitchBob, 0, bank, 'YXZ')
+      new THREE.Euler(pitchBob + this.aimLeanPitch, this.aimLeanYaw, bank + this.aimLeanRoll, 'YXZ')
     );
     this._targetQuat.multiply(bankQ);
     const rotK = 1 - Math.exp(-ORBIT.shipRotLag * dt);

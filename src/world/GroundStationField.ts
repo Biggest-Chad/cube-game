@@ -153,6 +153,10 @@ export class GroundStationField {
 
   private pulseLivingLights(): void {
     const t = this.elapsed;
+    for (let i = 0; i < this.stations.length; i++) {
+      // Dish scans the pad sky. The turret still aims when it fires.
+      this.stations[i].housing.rotation.y = Math.sin(t * 0.32 + i * 1.7) * 0.85;
+    }
     for (const L of this.livingLights) {
       const pulse = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(t * L.speed + L.phase));
       const mat = L.mesh.material;
@@ -243,13 +247,22 @@ export class GroundStationField {
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 3.05, 8), steel);
       mast.position.set(-1.45, 2.2, -0.72);
       root.add(mast);
-      const dish = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8, 0, Math.PI * 2, 0, 1.2), dark);
-      dish.position.set(-1.45, 3.72, -0.55);
+      const housing = new THREE.Group();
+      housing.position.set(-1.45, 3.55, -0.72);
+      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.48, 0.2), steel);
+      housing.add(yoke);
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.62, 10), steel);
+      drum.rotation.x = Math.PI / 2;
+      drum.position.z = -0.2;
+      housing.add(drum);
+      const dish = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 8, 0, Math.PI * 2, 0, 1.2), dark);
+      dish.position.set(0, 0.2, 0.22);
       dish.rotation.x = 0.7;
-      root.add(dish);
-      const dishCore = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), glow(0x66eeff, 0.85));
-      dishCore.position.set(-1.45, 3.78, -0.42);
-      this.addLivingLight(root, dishCore, 5.2, i * 1.3, 0.85);
+      housing.add(dish);
+      const dishCore = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), glow(0x66eeff, 0.9));
+      dishCore.position.set(0, 0.28, 0.55);
+      this.addLivingLight(housing, dishCore, 5.2, i * 1.3, 0.9);
+      root.add(housing);
 
       const vent = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.42, 0.55), dark);
       vent.position.set(1.35, 1.65, 0.85);
@@ -279,16 +292,6 @@ export class GroundStationField {
       led.position.set(0.28, 0.22, 0.35);
       this.addLivingLight(turret, led, 7.5, i * 2.1, 0.9);
       root.add(turret);
-
-      const housing = new THREE.Group();
-      housing.position.set(-1.45, 3.55, -0.72);
-      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.48, 0.2), steel);
-      housing.add(yoke);
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.62, 10), steel);
-      drum.rotation.x = Math.PI / 2;
-      drum.position.z = -0.2;
-      housing.add(drum);
-      root.add(housing);
 
       // Perimeter beads — cheap "alive" running lights, not SpotLights
       for (let b = 0; b < 8; b++) {

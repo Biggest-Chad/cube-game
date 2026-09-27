@@ -13,6 +13,7 @@ import { BLOCK_DEFS, BlockType, colorForType } from './BlockTypes';
 import { Chunk } from './Chunk';
 import { CoreNucleus } from './CoreNucleus';
 import { chunkWorldPosition, generateCube, type GeneratedCube } from './LevelGenerator';
+import { CubeLife } from './CubeLife';
 
 const _matrix = new THREE.Matrix4();
 const _color = new THREE.Color();
@@ -102,6 +103,8 @@ export class CubeManager {
   private flashMap = new Map<number, BlockFlash>();
   private glowPulse = 0;
   private readonly glowTint = new THREE.Color(0x082028);
+  private readonly life = new CubeLife();
+  private lifeT = 0;
   /** When true, core block hits route through shared nucleus (prevent re-entry). */
   private coreRouting = true;
   private deadShells: DeadShell[] = [];
@@ -181,6 +184,7 @@ export class CubeManager {
       opacity: 0.06,
     });
     this.group.add(new THREE.Mesh(shellGeo, shellMat));
+    this.life.mount(this.group, this.halfExtent);
 
     this.rebuildAllInstances();
     this.nucleus.bind(this);
@@ -229,6 +233,7 @@ export class CubeManager {
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     this.aliveBlocks = id;
     this.rebuildRaycastHash();
+    this.instanceRevision++;
   }
 
   private updateInstanceVisual(instanceId: number): void {
@@ -257,6 +262,9 @@ export class CubeManager {
     }
     this.mesh.setColorAt(instanceId, _color);
   }
+
+  /** Bumps when a block id is removed or swapped. Turret sync reads this. */
+  instanceRevision = 0;
 
   private removeInstance(instanceId: number, opts?: { deferGpu?: boolean }): void {
     if (!this.mesh) return;
@@ -294,6 +302,7 @@ export class CubeManager {
       this.mesh.instanceMatrix.needsUpdate = true;
       if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
+    this.instanceRevision++;
   }
 
   /** Wipe remaining instances without N GPU uploads (one flush at the end). */
@@ -1397,11 +1406,18 @@ export class CubeManager {
   update(dt: number, now: number): void {
     if (!this.mesh || !this.level) return;
 
+    this.lifeT += dt;
+    const aliveRatio = this.totalBlocks > 0 ? this.aliveBlocks / this.totalBlocks : 1;
+    this.life.update(dt, this.halfExtent, aliveRatio, this.glowPulse);
+
     if (this.glowPulse > 0 || this.glowTint.r !== _glowLatent.r) {
       this.glowPulse = Math.max(0, this.glowPulse - dt * 2.4);
       this.glowTint.lerp(_glowLatent, 1 - Math.exp(-2.6 * dt));
       this.material.emissive.copy(this.glowTint);
       this.material.emissiveIntensity = CUBE_LATENT_EMISSIVE_INTENSITY + this.glowPulse * 0.4;
+    } else {
+      const beat = 0.5 + 0.5 * Math.sin(this.lifeT * 1.6);
+      this.material.emissiveIntensity = CUBE_LATENT_EMISSIVE_INTENSITY + beat * 0.22;
     }
 
     // Flash decay
@@ -1657,6 +1673,7 @@ export class CubeManager {
   }
 
   private disposeMesh(): void {
+    this.life.clear();
     this.raycastHash.clear();
     this.raycastHashCount = 0;
     this.raycastHashDirty = true;

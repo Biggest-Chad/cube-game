@@ -480,17 +480,53 @@ export async function addMegacitySkyline(root: THREE.Group): Promise<void> {
   });
 
   let acc = 0;
+  let colorAcc = 0;
+  const facade = new THREE.Color();
+  const bodyCount = bodyMesh.count;
+  const bodySeed = new Float32Array(bodyCount);
+  for (let i = 0; i < bodyCount; i++) bodySeed[i] = hash(i, 17);
+  const mastCount = mastMesh.count;
+  const mastSeed = new Float32Array(mastCount);
+  for (let i = 0; i < mastCount; i++) mastSeed[i] = hash(i, 19);
   const prev = root.userData.tick as ((t: number, dt: number) => void) | undefined;
   root.userData.tick = (t: number, dt: number) => {
     prev?.(t, dt);
-    acc += dt;
-    if (acc < 0.09) return;
-    acc = 0;
-    for (const tr of trains) {
-      const a = t * tr.speed + tr.phase;
-      tr.obj.position.set(Math.cos(a) * tr.r, tr.y, Math.sin(a) * tr.r);
-      tr.obj.rotation.y = -a + Math.PI / 2;
+    cyanMat.opacity = 0.62 + 0.28 * Math.sin(t * 1.35);
+    magMat.opacity = 0.58 + 0.3 * Math.sin(t * 1.7 + 1.2);
+    for (let i = 0; i < screenMeshes.length; i++) {
+      const mat = screenMeshes[i].material as THREE.MeshBasicMaterial;
+      if (typeof mat.userData.baseOpacity !== 'number') mat.userData.baseOpacity = mat.opacity;
+      const base = mat.userData.baseOpacity as number;
+      mat.opacity = base * (0.78 + 0.22 * Math.sin(t * 1.15 + i * 0.9));
     }
+    acc += dt;
+    colorAcc += dt;
+    if (acc >= 0.09) {
+      acc = 0;
+      for (const tr of trains) {
+        const a = t * tr.speed + tr.phase;
+        tr.obj.position.set(Math.cos(a) * tr.r, tr.y, Math.sin(a) * tr.r);
+        // Train long axis is local +X. yaw = -a + PI/2 lays +X along the CCW tangent.
+        tr.obj.rotation.y = -a + Math.PI / 2;
+      }
+    }
+    if (colorAcc < 0.16) return;
+    colorAcc = 0;
+    for (let i = 0; i < bodyCount; i++) {
+      const n = bodySeed[i];
+      const blink = n > 0.86 ? (Math.sin(t * (1.8 + n) + i) > 0.2 ? 1 : 0.45) : 1;
+      const v = (0.78 + 0.22 * Math.sin(t * (0.45 + n) + n * 6)) * blink;
+      facade.setRGB(v, v * 0.98, v * 1.02);
+      bodyMesh.setColorAt(i, facade);
+    }
+    if (bodyMesh.instanceColor) bodyMesh.instanceColor.needsUpdate = true;
+    for (let i = 0; i < mastCount; i++) {
+      const n = mastSeed[i];
+      const v = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * (1.4 + n * 2) + i));
+      facade.setRGB(v * 0.7, v, v);
+      mastMesh.setColorAt(i, facade);
+    }
+    if (mastMesh.instanceColor) mastMesh.instanceColor.needsUpdate = true;
   };
 
   root.add(life);

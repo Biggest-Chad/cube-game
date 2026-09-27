@@ -28,6 +28,8 @@ import {
   NUCLEUS_JAVELIN_TELEGRAPH_SECONDS,
   NUCLEUS_KAMIKAZE_BASE_COUNT,
   NUCLEUS_KAMIKAZE_BASE_HIT_POINTS,
+  enemyDroneHpForStage,
+  NUCLEUS_KAMIKAZE_HP_ROLE_MUL,
   NUCLEUS_KAMIKAZE_COOLDOWN_SECONDS,
   NUCLEUS_KAMIKAZE_DAMAGE,
   NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE,
@@ -120,6 +122,11 @@ export class NucleusOffensiveKit {
   private powerMul = 1;
   private readonly lastOrigin = new THREE.Vector3();
   private readonly lastPlayer = new THREE.Vector3();
+  private readonly arcLocal = new THREE.Vector3();
+  private readonly jagTarget = new THREE.Vector3();
+  private allyPositions: THREE.Vector3[] = [];
+  private onAllyHit: ((pos: THREE.Vector3, dmg: number) => void) | null = null;
+  private onPlayerArc: ((dmg: number) => void) | null = null;
   private readonly sph = new THREE.SphereGeometry(1, 12, 10);
   private readonly cyl = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
   private readonly torus = new THREE.TorusGeometry(1, 0.07, 6, 20);
@@ -159,11 +166,19 @@ export class NucleusOffensiveKit {
     player: THREE.Vector3,
     allowFire: boolean,
     onDamage: (n: number) => void,
-    powerMul = 1
+    powerMul = 1,
+    allies?: {
+      positions?: THREE.Vector3[];
+      onHit?: (pos: THREE.Vector3, dmg: number) => void;
+      onPlayerArc?: (dmg: number) => void;
+    }
   ): void {
     this.powerMul = powerMul;
     this.lastOrigin.copy(origin);
     this.lastPlayer.copy(player);
+    this.allyPositions = allies?.positions ?? [];
+    this.onAllyHit = allies?.onHit ?? null;
+    this.onPlayerArc = allies?.onPlayerArc ?? null;
     this.overloadPulse = Math.max(0, this.overloadPulse - dt);
     for (const k of Object.keys(this.cd)) this.cd[k] = Math.max(0, this.cd[k] - dt);
 
@@ -440,9 +455,7 @@ export class NucleusOffensiveKit {
   private spawnKamikaze(light = false): void {
     const extra = Math.min(3, Math.floor((this.levelId - NUCLEUS_KAMIKAZE_UNLOCK_STAGE) / 15));
     const count = light ? 1 : NUCLEUS_KAMIKAZE_BASE_COUNT + extra;
-    const hp =
-      NUCLEUS_KAMIKAZE_BASE_HIT_POINTS +
-      Math.max(0, this.levelId - NUCLEUS_KAMIKAZE_UNLOCK_STAGE) * NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE;
+    const hp = enemyDroneHpForStage(this.levelId, NUCLEUS_KAMIKAZE_HP_ROLE_MUL);
     bus.emit('core-spawn-kamikaze', {
       count,
       hp,
@@ -530,12 +543,31 @@ export class NucleusOffensiveKit {
     });
   }
 
-  private tickBlobs(dt: number, player: THREE.Vector3, onDamage: (n: number) => void): void {
+    private teslaDetonate(pos: THREE.Vector3, kind: "contact" | "expire"): void {
+    bus.emit("explosion", {
+      x: pos.x,
+      y: pos.y,
+      z: pos.z,
+      radius: kind === "contact" ? 6.4 : 5.2,
+      family: "tesla",
+    });
+    bus.emit("camera-shake-request", { amount: kind === "contact" ? 0.28 : 0.16 });
+  }
+
+private tickBlobs(dt: number, player: THREE.Vector3, onDamage: (n: number) => void): void {
     const shipR = 0.55;
+    const shipLen = 6.8;
     for (let i = this.blobs.length - 1; i >= 0; i--) {
       const b = this.blobs[i];
       b.life -= dt;
       b.pulse = (b.pulse ?? 0) + dt * 9;
+      const home = player.clone().sub(b.pos);
+      const homeDist = home.length();
+      if (homeDist > 0.35) {
+        home.multiplyScalar(1 / homeDist);
+        const desired = home.multiplyScalar(b.vel.length() || 8);
+        b.vel.lerp(desired, 1 - Math.exp(-0.38 * dt));
+      }
       b.pos.addScaledVector(b.vel, dt);
       b.mesh.position.copy(b.pos);
       b.mesh.rotation.x += dt * 1.35;
@@ -571,7 +603,7 @@ export class NucleusOffensiveKit {
         b.lightning.visible = true;
         this.jagLightning(
           b.lightning,
-          new THREE.Vector3(Math.sin(pu * 2.1) * 1.4, Math.cos(pu * 1.6) * 1.4, Math.cos(pu * 2.4) * 1.4)
+          this.jagTarget.set(Math.sin(pu * 2.1) * 1.4, Math.cos(pu * 1.6) * 1.4, Math.cos(pu * 2.4) * 1.4)
         );
         (b.lightning.material as THREE.LineBasicMaterial).opacity = 0.4 + Math.sin(pu * 5.1) * 0.35;
       }
@@ -579,28 +611,50 @@ export class NucleusOffensiveKit {
         b.lightning3.visible = true;
         this.jagLightning(
           b.lightning3,
-          new THREE.Vector3(Math.cos(pu * 1.7) * 1.5, Math.sin(pu * 2.8) * 1.5, Math.sin(pu * 1.3) * 1.5)
+          this.jagTarget.set(Math.cos(pu * 1.7) * 1.5, Math.sin(pu * 2.8) * 1.5, Math.sin(pu * 1.3) * 1.5)
         );
         (b.lightning3.material as THREE.LineBasicMaterial).opacity = 0.28 + Math.sin(pu * 4.2 + 0.8) * 0.28;
       }
       if (b.lightning2) {
         b.lightning2.visible = arcing;
         if (arcing) {
-          this.jagLightning(b.lightning2, b.mesh.worldToLocal(player.clone()));
+          this.jagLightning(b.lightning2, b.mesh.worldToLocal(this.arcLocal.copy(player)));
           (b.lightning2.material as THREE.LineBasicMaterial).opacity =
             0.35 + Math.sin(pu * 4.4 + 1.2) * 0.4;
         }
       }
+      const violentR = shipLen;
+      if (dist <= violentR) {
+        if (b.lightning2) {
+          b.lightning2.visible = true;
+          this.jagLightning(b.lightning2, b.mesh.worldToLocal(this.arcLocal.copy(player)));
+          (b.lightning2.material as THREE.LineBasicMaterial).opacity = 0.9;
+        }
+        for (const ally of this.allyPositions) {
+          if (!ally || b.pos.distanceTo(ally) > violentR) continue;
+          this.onAllyHit?.(ally, b.damage * NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND * dt);
+          if ((b.pulse ?? 0) % 0.22 < dt * 1.4) {
+            bus.emit("explosion", { x: ally.x, y: ally.y, z: ally.z, radius: 2.2, family: "tesla" });
+          }
+        }
+      }
       if (dist <= hitR) {
         onDamage(b.damage);
+        this.teslaDetonate(b.pos, "contact");
         this.disposeProj(b);
         this.blobs.splice(i, 1);
         continue;
       }
-      if (dist <= arcR) {
-        onDamage(b.damage * NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND * dt);
+      // Wave51: electrical arcs deal real shield damage in arc range (not cosmetic).
+      // onDamage → Game.onPlayerDamaged → vitals.takeDamage (shield first).
+      if (dist <= Math.max(arcR, violentR)) {
+        const arcDamage = b.damage * NUCLEUS_BLOB_ARC_DAMAGE_FRACTION_PER_SECOND * dt;
+        // Dedicated callback drains shield only; fallback preserves standalone behavior.
+        if (this.onPlayerArc) this.onPlayerArc(arcDamage);
+        else onDamage(arcDamage);
       }
       if (b.life <= 0 || b.pos.length() > 90) {
+        this.teslaDetonate(b.pos, "expire");
         this.disposeProj(b);
         this.blobs.splice(i, 1);
       }
@@ -941,7 +995,6 @@ export class NucleusOffensiveKit {
       attr.setXYZ(i, tx * u + sx * jag + ux * jag2, ty * u + sy * jag + uy * jag2, tz * u + sz * jag + uz * jag2);
     }
     attr.needsUpdate = true;
-    line.geometry.computeBoundingSphere();
   }
 
   private glowSphere(color: number, opacity: number): THREE.Mesh {

@@ -1,6 +1,7 @@
 import { BLOCK_SIZE, CHUNK_SIZE } from '../data/constants';
 import type { LevelDefinition } from '../data/levels';
 import { BlockType } from './BlockTypes';
+import { BLOCK_TURRET_HP_MULTIPLIER } from '../data/constraints';
 import { Chunk } from './Chunk';
 
 function mulberry32(seed: number): () => number {
@@ -103,7 +104,7 @@ export function generateCube(level: LevelDefinition): GeneratedCube {
           type === BlockType.Siege
             ? 3.5
             : type === BlockType.Turret
-              ? 2.4
+              ? BLOCK_TURRET_HP_MULTIPLIER
               : type === BlockType.Reinforced
                 ? 2.2
                 : type === BlockType.Regenerating

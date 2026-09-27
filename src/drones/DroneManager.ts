@@ -276,6 +276,7 @@ export class DroneManager {
 
   reset(): void {
     for (const d of this.drones) {
+      d.clearTransient();
       if (!d.alive && this.stats) {
         d.syncVitals(this.stats);
       }

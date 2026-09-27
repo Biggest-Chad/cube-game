@@ -12,6 +12,11 @@ import { COLORS } from '../data/constants';
 import {
   ENEMY_ARC_DEFAULT_HIT_POINTS,
   ENEMY_ATTACK_DRONE_BASE_HIT_POINTS,
+  NUCLEUS_KAMIKAZE_HP_ROLE_MUL,
+  CUBE_FIGHTER_HP_ROLE_MUL,
+  ENEMY_REPAIR_DRONE_HP_ROLE_MUL,
+  ENEMY_ATTACK_DRONE_HP_ROLE_MUL,
+  enemyDroneHpForStage,
   ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL,
   ENEMY_ATTACK_DRONE_FIRE_RATE,
   ENEMY_ATTACK_DRONE_RANGE,
@@ -21,6 +26,8 @@ import {
   ENEMY_HARASS_SPAWN_INTERVAL_MIN,
   ENEMY_HARASS_SPAWN_INTERVAL_START,
   ENEMY_HARASS_WAVE_SIZE,
+  ENEMY_HARASS_WAVE_SIZE_EARLY,
+  ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS,
   ENEMY_DRONE_DAMAGE_PER_LEVEL,
   ENEMY_DRONE_ELITE_FIRE_RATE_MULTIPLIER,
   ENEMY_DRONE_REPAIR_FRACTION,
@@ -181,6 +188,8 @@ export interface ShieldPool {
 
 export interface CubeDefenseHooks {
   onPlayerDamage: (amount: number, source: string) => void;
+  /** Tesla proximity arc: shield-only drain, separate from contact damage. */
+  onPlayerShieldDamage?: (amount: number, source: string) => void;
   getPlayerPosition: () => THREE.Vector3;
   getPlayerDronePositions?: () => THREE.Vector3[];
   onPlayerDroneDamage?: (aim: THREE.Vector3, damage: number) => void;
@@ -213,6 +222,8 @@ export class CubeDefense {
   private hooks: CubeDefenseHooks | null = null;
   private _idSeq = 0;
   private _pos = new THREE.Vector3();
+  private _turretAt = new THREE.Vector3();
+  private latticeRev = -1;
   private fireRateMul = 1;
   private unsubs: Array<() => void> = [];
   /** Rage arc beams — player must dodge. */
@@ -235,6 +246,13 @@ export class CubeDefense {
   private kamiWarned = false;
   private stageElapsed = 0;
   private expectedClear = 90;
+  /** Seconds remaining before another drone wave may emit. */
+  private swarmBatchCooldown = 0;
+  private pendingCoreSpawn: {
+    count: number;
+    role: 'attack' | 'repair' | 'mixed';
+    enraged?: boolean;
+  } | null = null;
 
   constructor() {
     this.group.add(this.projectileRoot);
@@ -366,10 +384,17 @@ export class CubeDefense {
     const dps = 42 + levelId * 5.5;
     this.expectedClear = Math.min(420, Math.max(48, work / dps));
     this.stageElapsed = 0;
-    this.harassAcc = 1.1;
     this.kamiAcc = 0;
     this.kamiWarned = false;
-    if (this.schedule.enemyDroneCount > 0) this.spawnHarassWave();
+    this.swarmBatchCooldown = 0;
+    this.pendingCoreSpawn = null;
+    // Level 1: delay first harass until combat is live (warmup + spawn arm).
+    if (this.levelId <= 1) {
+      this.harassAcc = ENEMY_HARASS_SPAWN_INTERVAL_START;
+    } else {
+      this.harassAcc = 1.1;
+      if (this.schedule.enemyDroneCount > 0) this.spawnHarassWave();
+    }
     for (let i = 0; i < this.schedule.cubeFighterCount; i++) {
       this.spawnEnemyDrone('cube-fighter', false);
     }
@@ -388,12 +413,7 @@ export class CubeDefense {
       bus.on(
         'core-spawn-drones',
         (p: { count: number; role: 'attack' | 'repair' | 'mixed'; enraged?: boolean }) => {
-          for (let i = 0; i < p.count; i++) {
-            let role: EnemyDroneRole = 'attack';
-            if (p.role === 'repair') role = 'repair';
-            else if (p.role === 'mixed') role = Math.random() > 0.45 ? 'attack' : 'repair';
-            this.spawnEnemyDrone(role, !!p.enraged);
-          }
+          this.queueCoreSpawn(p);
         }
       ),
       bus.on('core-resurrect', (p: { fraction: number }) => {
@@ -454,14 +474,13 @@ export class CubeDefense {
     const d = new EnemyDrone(`ed_${this._idSeq++}`, idx, he, {
       hp: isKami
         ? kami?.hp ??
-          NUCLEUS_KAMIKAZE_BASE_HIT_POINTS +
-            Math.max(0, this.levelId - NUCLEUS_KAMIKAZE_UNLOCK_STAGE) *
-              NUCLEUS_KAMIKAZE_HIT_POINTS_PER_STAGE
+          enemyDroneHpForStage(this.levelId, NUCLEUS_KAMIKAZE_HP_ROLE_MUL)
         : isCubeFighter
-          ? CUBE_FIGHTER_BASE_HIT_POINTS + this.levelId * CUBE_FIGHTER_HIT_POINTS_PER_LEVEL
-          : (isRepair ? ENEMY_REPAIR_DRONE_BASE_HIT_POINTS : ENEMY_ATTACK_DRONE_BASE_HIT_POINTS) +
-            this.levelId *
-              (isRepair ? ENEMY_REPAIR_DRONE_HIT_POINTS_PER_LEVEL : ENEMY_ATTACK_DRONE_HIT_POINTS_PER_LEVEL),
+          ? enemyDroneHpForStage(this.levelId, CUBE_FIGHTER_HP_ROLE_MUL)
+          : enemyDroneHpForStage(
+              this.levelId,
+              isRepair ? ENEMY_REPAIR_DRONE_HP_ROLE_MUL : ENEMY_ATTACK_DRONE_HP_ROLE_MUL
+            ),
       damage: isKami
         ? kami?.damage ?? NUCLEUS_KAMIKAZE_DAMAGE * nucleusKitDamageScale(this.levelId)
         : isCubeFighter
@@ -516,12 +535,63 @@ export class CubeDefense {
     this.enemyDrones.push(d);
     this.group.add(d.group);
     for (const m of d.getProjectileMeshes()) this.projectileRoot.add(m);
+    d.beginSpawnArm();
     return d;
   }
 
-  private spawnHarassWave(): void {
+  private harassWaveSize(): number {
     const extra = this.levelId >= 8 ? 1 : 0;
-    const n = ENEMY_HARASS_WAVE_SIZE + extra;
+    const base = this.levelId <= 3 ? ENEMY_HARASS_WAVE_SIZE_EARLY : ENEMY_HARASS_WAVE_SIZE;
+    return base + extra;
+  }
+
+  private tryBeginSwarmBatch(): boolean {
+    if (this.swarmBatchCooldown > 0) return false;
+    this.swarmBatchCooldown = ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS;
+    return true;
+  }
+
+  private emitCoreSpawn(p: {
+    count: number;
+    role: 'attack' | 'repair' | 'mixed';
+    enraged?: boolean;
+  }): void {
+    for (let i = 0; i < p.count; i++) {
+      let role: EnemyDroneRole = 'attack';
+      if (p.role === 'repair') role = 'repair';
+      else if (p.role === 'mixed') role = Math.random() > 0.45 ? 'attack' : 'repair';
+      this.spawnEnemyDrone(role, !!p.enraged);
+    }
+  }
+
+  private queueCoreSpawn(p: {
+    count: number;
+    role: 'attack' | 'repair' | 'mixed';
+    enraged?: boolean;
+  }): void {
+    if (this.tryBeginSwarmBatch()) {
+      this.emitCoreSpawn(p);
+      return;
+    }
+    if (!this.pendingCoreSpawn) {
+      this.pendingCoreSpawn = { ...p };
+      return;
+    }
+    this.pendingCoreSpawn.count = Math.min(8, this.pendingCoreSpawn.count + p.count);
+    this.pendingCoreSpawn.enraged = this.pendingCoreSpawn.enraged || p.enraged;
+    if (this.pendingCoreSpawn.role !== p.role) this.pendingCoreSpawn.role = 'mixed';
+  }
+
+  private flushPendingCoreSpawn(): void {
+    if (!this.pendingCoreSpawn || this.swarmBatchCooldown > 0) return;
+    if (!this.tryBeginSwarmBatch()) return;
+    const next = this.pendingCoreSpawn;
+    this.pendingCoreSpawn = null;
+    this.emitCoreSpawn(next);
+  }
+
+  private spawnHarassWave(): void {
+    const n = this.harassWaveSize();
     for (let i = 0; i < n; i++) this.spawnEnemyDrone('attack', false);
   }
 
@@ -570,6 +640,7 @@ export class CubeDefense {
           Math.sin(yaw) * Math.cos(pitch)
         ).multiplyScalar(1.6)
       );
+      d.beginSpawnArm();
       spawned++;
     }
     if (spawned > 0) {
@@ -680,7 +751,7 @@ export class CubeDefense {
       kind?: string;
     }> = [];
     for (const d of this.enemyDrones) {
-      if (d.alive && d.role !== 'kamikaze') out.push(d.toUnitRef());
+      if (d.alive && d.role !== 'kamikaze' && !d.isArming) out.push(d.toUnitRef());
     }
     for (const link of this.links) {
       if (!link.turret.alive) continue;
@@ -702,7 +773,7 @@ export class CubeDefense {
   getEnemyTargetsForWeapons(): Array<{ position: THREE.Vector3; radius: number; id: string }> {
     const out: Array<{ position: THREE.Vector3; radius: number; id: string }> = [];
     for (const d of this.enemyDrones) {
-      if (d.alive && d.role !== 'kamikaze') {
+      if (d.alive && d.role !== 'kamikaze' && !d.isArming) {
         out.push({
           position: d.position.clone(),
           radius: ENEMY_WEAPON_TARGET_RADIUS_DRONE,
@@ -730,6 +801,7 @@ export class CubeDefense {
   damageEnemy(id: string, amount: number): boolean {
     for (const d of this.enemyDrones) {
       if (d.id === id && d.alive) {
+        if (d.isArming) return false;
         // Player guns / fighters / bombers never pop seekers.
         if (d.role === 'kamikaze') return false;
         const killed = d.applyDamage(amount);
@@ -795,7 +867,7 @@ export class CubeDefense {
     for (const s of this.spikes.getInterceptTargets()) out.push(s);
     for (const k of this.kit.getInterceptTargets()) out.push(k);
     for (const d of this.enemyDrones) {
-      if (!d.alive || d.role !== 'kamikaze') continue;
+      if (!d.alive || d.role !== 'kamikaze' || d.isArming) continue;
       const p = d.position;
       out.push({
         id: d.id,
@@ -820,6 +892,7 @@ export class CubeDefense {
   damageIntercept(id: string, amount: number): boolean {
     for (const d of this.enemyDrones) {
       if (d.id === id && d.alive && d.role === 'kamikaze') {
+        if (d.isArming) return false;
         return d.applyDamage(amount);
       }
     }
@@ -854,8 +927,14 @@ export class CubeDefense {
 
   /**
    * @param allowFire When false (stage start countdown), defenses aim/move but do not shoot.
+   * @param frozen When true (warmup / tutorial hold / briefing card), skip all combat ticks.
    */
-  update(dt: number, allowFire = true): void {
+  update(dt: number, allowFire = true, frozen = false): void {
+    if (frozen) return;
+
+    this.swarmBatchCooldown = Math.max(0, this.swarmBatchCooldown - dt);
+    this.flushPendingCoreSpawn();
+
     this.tickShield(this.coreShield, this.coreShieldMesh, dt);
     for (let i = 0; i < this.faceShields.length; i++) {
       this.tickShield(this.faceShields[i], this.faceShieldMeshes[i] ?? null, dt);
@@ -918,6 +997,7 @@ export class CubeDefense {
         }
       );
     }
+    this.retireDeadDrones();
 
     this.stageElapsed += dt;
     const destablized = this.cube.nucleus.snapshot().decaying;
@@ -925,9 +1005,11 @@ export class CubeDefense {
       this.harassAcc += dt;
       const progress = Math.min(1.25, this.stageElapsed / Math.max(30, this.expectedClear));
       const ease = progress * progress;
-      const interval =
+      const interval = Math.max(
+        ENEMY_SWARM_BATCH_MIN_COOLDOWN_SECONDS,
         ENEMY_HARASS_SPAWN_INTERVAL_START +
-        (ENEMY_HARASS_SPAWN_INTERVAL_MIN - ENEMY_HARASS_SPAWN_INTERVAL_START) * ease;
+          (ENEMY_HARASS_SPAWN_INTERVAL_MIN - ENEMY_HARASS_SPAWN_INTERVAL_START) * ease
+      );
       const extra = 1 + Math.floor(this.levelId / 8);
       const cap = Math.min(
         ENEMY_DRONE_SOFT_CAP - 4,
@@ -938,8 +1020,10 @@ export class CubeDefense {
       );
       const aliveAtk = this.enemyDrones.filter((d) => d.alive && d.role === 'attack').length;
       if (aliveAtk < Math.max(ENEMY_HARASS_WAVE_SIZE, cap) && this.harassAcc >= interval) {
-        this.harassAcc = 0;
-        this.spawnHarassWave();
+        if (this.tryBeginSwarmBatch()) {
+          this.harassAcc = 0;
+          this.spawnHarassWave();
+        }
       }
     }
 
@@ -1001,7 +1085,14 @@ export class CubeDefense {
         playerPos,
         allowFire,
         (dmg) => this.hooks?.onPlayerDamage(dmg, 'core-kit'),
-        nuc.overloadDamageMul
+        nuc.overloadDamageMul,
+        {
+          positions: this.hooks?.getPlayerDronePositions?.() ?? [],
+          onHit: (aim, dmg) => this.hooks?.onPlayerDroneDamage?.(aim, dmg),
+          onPlayerArc: (dmg) =>
+            this.hooks?.onPlayerShieldDamage?.(dmg, 'core-tesla-arc') ??
+            this.hooks?.onPlayerDamage(dmg, 'core-tesla-arc'),
+        }
       );
     }
 
@@ -1069,8 +1160,30 @@ export class CubeDefense {
    * Match non-floating turret models to current Turret block instances.
    * Destroys models whose lattice block was destroyed.
    */
+  private retireDeadDrones(): void {
+    for (let i = this.enemyDrones.length - 1; i >= 0; i--) {
+      const d = this.enemyDrones[i];
+      if (d.alive || d.hasLiveBolts()) continue;
+      for (const mesh of d.getProjectileMeshes()) {
+        this.projectileRoot.remove(mesh);
+        mesh.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+          m.geometry?.dispose();
+          if (Array.isArray(m.material)) m.material.forEach((mat) => mat.dispose());
+          else m.material?.dispose();
+        });
+      }
+      this.group.remove(d.group);
+      d.dispose();
+      this.enemyDrones.splice(i, 1);
+    }
+  }
+
   private syncLatticeTurrets(): void {
     if (!this.cube) return;
+    if (this.cube.instanceRevision === this.latticeRev) return;
+    this.latticeRev = this.cube.instanceRevision;
     const ids = this.cube.collectIdsOfType(BlockType.Turret);
     const used = new Set<number>();
 
@@ -1082,9 +1195,8 @@ export class CubeDefense {
       for (const id of ids) {
         if (used.has(id)) continue;
         this.cube.getInstanceWorldPos(id, this._pos);
-        const d = link.turret.group.position.distanceTo(
-          this._pos.clone().multiplyScalar(1.12)
-        );
+        this._turretAt.copy(this._pos).multiplyScalar(1.12);
+        const d = link.turret.group.position.distanceTo(this._turretAt);
         if (d < bestD) {
           bestD = d;
           bestId = id;
@@ -1127,6 +1239,8 @@ export class CubeDefense {
     this.kamiAcc = 0;
     this.kamiWarned = false;
     this.stageElapsed = 0;
+    this.swarmBatchCooldown = 0;
+    this.pendingCoreSpawn = null;
     for (const a of this.arcs) {
       this.projectileRoot.remove(a.mesh);
       a.mesh.geometry.dispose();

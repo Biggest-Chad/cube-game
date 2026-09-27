@@ -6,6 +6,7 @@ import type { CubeManager } from '../cube/CubeManager';
 import type { WeaponStats } from '../data/weapons';
 import type { PlayerStats } from '../progression/TechTree';
 import type { MainGunAmmoId } from '../data/ammo';
+import type { MainGunLockPriority } from '../data/constraints';
 
 export interface WeaponFireContext {
   dt: number;
@@ -26,6 +27,8 @@ export interface WeaponFireContext {
   aimLocked?: boolean;
   /** Main-gun magazine. Hardpoints ignore this. */
   ammo?: MainGunAmmoId;
+  /** Soft-lock / bolt-sweep class preference. */
+  lockPriority?: MainGunLockPriority;
 }
 
 export interface WeaponBehavior {

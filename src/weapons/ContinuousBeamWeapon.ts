@@ -61,6 +61,17 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
   private readonly _q = new THREE.Quaternion();
   private readonly _fwd = new THREE.Vector3(0, 1, 0);
   private readonly _scale = new THREE.Vector3();
+  private readonly _upAxis = new THREE.Vector3(0, 1, 0);
+  private readonly _rightAxis = new THREE.Vector3(1, 0, 0);
+  private readonly _traceOrigin = Array.from({ length: 12 }, () => new THREE.Vector3());
+  private readonly _traceDir = Array.from({ length: 12 }, () => new THREE.Vector3());
+  private readonly _traceReflect = Array.from({ length: 12 }, () => new THREE.Vector3());
+  private readonly _traceN = Array.from({ length: 12 }, () => new THREE.Vector3());
+  private readonly _traceEnd = new THREE.Vector3();
+  private readonly _past = new THREE.Vector3();
+  private readonly _bounceOrigin = new THREE.Vector3();
+  private readonly _refractOrigin = new THREE.Vector3();
+  private readonly _splashAt = new THREE.Vector3();
   private readonly sweepDir = new THREE.Vector3(0, 0, -1);
   private readonly sweepWant = new THREE.Vector3();
   private readonly peelAt = new THREE.Vector3();
@@ -238,7 +249,7 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
       const spread = (b - (beams - 1) / 2) * 0.018;
       this._axis
         .copy(this.sweepDir)
-        .cross(Math.abs(this.sweepDir.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0))
+        .cross(Math.abs(this.sweepDir.y) < 0.9 ? this._upAxis : this._rightAxis)
         .normalize();
       if (this._axis.lengthSq() < 1e-6) this._axis.set(1, 0, 0);
       this._dir.copy(this.sweepDir).applyAxisAngle(this._axis, spread).normalize();
@@ -246,8 +257,8 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
 
       this.traceChain(
         ctx,
-        this._origin.clone(),
-        this._dir.clone(),
+        this._origin,
+        this._dir,
         bounceBase,
         penBase,
         canRefract,
@@ -332,14 +343,16 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     depth: number
   ): void {
     if (depth > 10) return;
+    const o = this._traceOrigin[depth].copy(origin);
+    const d = this._traceDir[depth].copy(dir);
     const range = this.stats.range * (1 - depth * 0.08);
-    const hit = ctx.cube.raycast(origin, dir, range, -1, 0.58);
+    const hit = ctx.cube.raycast(o, d, range, -1, 0.58);
     const end = hit
       ? hit.point
-      : origin.clone().addScaledVector(dir, Math.min(range, 40));
+      : this._traceEnd.copy(o).addScaledVector(d, Math.min(range, 40));
 
-    this.drawRibbon(origin, end, depth);
-    this.spawnBeamParticles(origin, end, depth);
+    this.drawRibbon(o, end, depth);
+    this.spawnBeamParticles(o, end, depth);
 
     if (!hit) return;
 
@@ -349,11 +362,11 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     }
 
     if (penLeft > 0) {
-      const past = hit.point.clone().addScaledVector(dir, 0.55);
+      this._past.copy(hit.point).addScaledVector(d, 0.55);
       this.traceChain(
         ctx,
-        past,
-        dir.clone(),
+        this._past,
+        d,
         bouncesLeft,
         penLeft - 1,
         canRefract,
@@ -366,16 +379,16 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
 
     if (bouncesLeft <= 0) return;
 
-    const n = hit.normal;
-    const idot = dir.dot(n);
-    this._reflect.copy(dir).addScaledVector(n, -2 * idot).normalize();
-    const bounceOrigin = hit.point.clone().addScaledVector(n, 0.1);
+    const n = this._traceN[depth].copy(hit.normal);
+    const idot = d.dot(n);
+    const bounceDir = this._traceReflect[depth].copy(d).addScaledVector(n, -2 * idot).normalize();
+    this._bounceOrigin.copy(hit.point).addScaledVector(n, 0.1);
     const bounceDmg = damage * (this.stats.flags.has('bounce_strong') ? 0.88 : 0.72);
 
     this.traceChain(
       ctx,
-      bounceOrigin,
-      this._reflect.clone(),
+      this._bounceOrigin,
+      bounceDir,
       bouncesLeft - 1,
       0,
       canRefract,
@@ -386,17 +399,17 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
 
     if (canRefract && depth < 4) {
       this._refract
-        .copy(this._reflect)
+        .copy(bounceDir)
         .addScaledVector(n, 0.35)
         .add(this._tmp.set(n.z, n.x, n.y).multiplyScalar((Math.random() - 0.5) * 0.5))
         .normalize();
       this._tmp.copy(hit.point).multiplyScalar(-1).normalize();
       this._refract.lerp(this._tmp, 0.25).normalize();
-      const refractOrigin = hit.point.clone().addScaledVector(this._refract, 0.14);
+      this._refractOrigin.copy(hit.point).addScaledVector(this._refract, 0.14);
       this.traceChain(
         ctx,
-        refractOrigin,
-        this._refract.clone(),
+        this._refractOrigin,
+        this._refract,
         Math.max(0, bouncesLeft - 1),
         0,
         this.stats.flags.has('refract_max'),
@@ -579,7 +592,7 @@ export class ContinuousBeamWeapon implements WeaponBehavior {
     }
     if (this.stats.splashRadius > 0 && result.destroyed) {
       const splash = cube.applySplash(
-        new THREE.Vector3(result.x, result.y, result.z),
+        this._splashAt.set(result.x, result.y, result.z),
         this.stats.splashRadius,
         rolled.damage * 0.3,
         now,

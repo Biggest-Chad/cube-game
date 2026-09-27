@@ -25,6 +25,8 @@ import {
   GROUND_WEAPON_UPGRADE_BASE_COST,
   GROUND_WEAPON_UPGRADE_COST_GROWTH,
   GROUND_WEAPON_UPGRADE_MAX_RANK,
+  GROUND_WEAPON_UPGRADE_DAMAGE_PER_RANK,
+  GROUND_WEAPON_UPGRADE_RATE_PER_RANK,
 } from './constraints';
 
 export type GroundWeaponId = 'sam' | 'artillery' | 'ciws';
@@ -160,11 +162,24 @@ export function groundWeaponStats(
 ): { damage: number; fireRate: number; splash: number; swarm: number; spread: number } {
   const def = GROUND_WEAPONS[id];
   const r = Math.max(0, rank);
+  // WAVE52: scale with evo headroom (not flat evo1 cap). Soft-step past rank 20.
   let dmgMul = 1;
   let rateMul = 1;
   for (let i = 1; i <= r; i++) {
-    dmgMul += i <= 10 ? 0.1 : i <= 20 ? 0.05 : 0.025;
-    rateMul += i <= 10 ? 0.07 : i <= 20 ? 0.035 : 0.015;
+    const dStep =
+      i <= 10
+        ? GROUND_WEAPON_UPGRADE_DAMAGE_PER_RANK
+        : i <= 20
+          ? GROUND_WEAPON_UPGRADE_DAMAGE_PER_RANK * 0.45
+          : GROUND_WEAPON_UPGRADE_DAMAGE_PER_RANK * 0.22;
+    const rStep =
+      i <= 10
+        ? GROUND_WEAPON_UPGRADE_RATE_PER_RANK
+        : i <= 20
+          ? GROUND_WEAPON_UPGRADE_RATE_PER_RANK * 0.45
+          : GROUND_WEAPON_UPGRADE_RATE_PER_RANK * 0.2;
+    dmgMul += dStep;
+    rateMul += rStep;
   }
   const dmg = def.damage * dmgMul;
   const rate = def.fireRate * rateMul;

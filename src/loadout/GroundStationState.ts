@@ -15,7 +15,7 @@ import { bus } from '../core/EventBus';
 
 export class GroundStationController {
   state: GroundStationState = normalizeGroundStationState(null);
-  private rankCap = GROUND_WEAPON_UPGRADE_MAX_RANK;
+  private rankCap = repeatableUpgradeCap(0);
 
   load(raw: Partial<GroundStationState> | null | undefined): void {
     this.state = normalizeGroundStationState(raw);
@@ -94,8 +94,9 @@ export class GroundStationController {
     bus.emit('ground-ranks-reset', {});
   }
 
+  /** Evolve: unlocks, units, slots, and ranks all wipe. */
   resetToDefault(): void {
-    this.resetRanks();
+    this.load(null);
   }
 
   canUpgrade(id: GroundWeaponId): boolean {

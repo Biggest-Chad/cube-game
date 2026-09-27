@@ -17,6 +17,8 @@ export class PostProcessing {
   private presentationBoost = false;
   /** Session heat cut — applyPreset must not turn bloom back on. */
   private thermalBloomCut = false;
+  /** Flight mode never runs UnrealBloom — it is a full-screen extra pass on phones. */
+  private flightMode = false;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.Camera;
@@ -79,9 +81,16 @@ export class PostProcessing {
     this.applyPreset();
   }
 
+  /** Force the direct renderer path while a transfer flight is on screen. */
+  setFlightMode(on: boolean): void {
+    if (this.flightMode === on) return;
+    this.flightMode = on;
+    this.applyPreset();
+  }
+
   private applyPreset(): void {
     const p = getGraphicsPreset(this.quality);
-    this.bloom.enabled = p.bloomEnabled && !this.thermalBloomCut;
+    this.bloom.enabled = p.bloomEnabled && !this.thermalBloomCut && !this.flightMode;
     if (!this.bloom.enabled) return;
     let strength = p.bloomStrength;
     let threshold = p.bloomThreshold;

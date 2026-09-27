@@ -90,6 +90,7 @@ export function buildStatsSnapshot(
   const rof = COMBAT.baseFireRate * stats.fireRateMul;
   const shotDmg = COMBAT.baseDamage * stats.damageMul;
   const multi = Math.max(1, COMBAT.multiShotBase + stats.multiShotAdd);
+  const streamRate = rof * multi;
   const crit = Math.min(STAT_CAPS.critChance, stats.critChance);
   const critMult = STAT_CAPS.critMult;
   const avgCrit = 1 + crit * (critMult - 1);
@@ -101,7 +102,7 @@ export function buildStatsSnapshot(
   return {
     dpsMain: Math.round(dpsMain * 10) / 10,
     dpsLoadout: Math.round(loadoutDps * 10) / 10,
-    rofMain: Math.round(rof * 100) / 100,
+    rofMain: Math.round(streamRate * 100) / 100,
     critChance: crit,
     critMult,
     droneCount,
@@ -196,6 +197,15 @@ export class ShopUI {
     null;
   private dragEndBound = false;
 
+  private recoHoldTree: TechTree | null = null;
+  private recoHoldCurrency: Currency | null = null;
+  private recoHoldArmed = false;
+  private recoRepeating = false;
+  private recoIgnoreClick = false;
+  private recoDelay: number | null = null;
+  private recoPulse: number | null = null;
+  private recoWinBound = false;
+
   onClose: (() => void) | null = null;
   onPurchase: ((node: UpgradeNodeDef) => void) | null = null;
   onBuyWeapon: ((defId: string) => boolean) | null = null;
@@ -217,6 +227,7 @@ export class ShopUI {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    this.bindRecoHoldWindow();
   }
 
   setVitals(v: {
@@ -265,6 +276,7 @@ export class ShopUI {
   }
 
   hide(): void {
+    this.stopRecoHold();
     this.root.classList.add('panel-hidden');
     this.root.innerHTML = '';
   }
@@ -380,10 +392,10 @@ export class ShopUI {
             </div>`
           : recommended
             ? `<div class="shop-reco compact">
-                <span class="shop-reco-tag">REC</span>
+                <span class="shop-reco-tag">RECOMMENDED</span>
                 <span class="shop-reco-name">${recommended.name}</span>
-                <button class="shop-reco-buy" data-id="${recommended.id}" type="button">
-                  BUY · ${recommended.cost} ${isCore(recommended) ? 'CORE' : 'FRAG'}
+                <button class="shop-reco-buy" data-id="${recommended.id}" type="button" title="Hold to buy recommended">
+                  BUY · ${recommended.cost} ${isCore(recommended) ? 'CORE' : 'FRAG'}<span class="shop-reco-hold">HOLD</span>
                 </button>
               </div>`
             : '';
@@ -448,6 +460,73 @@ export class ShopUI {
     });
   }
 
+  private bindRecoHoldWindow(): void {
+    if (this.recoWinBound) return;
+    this.recoWinBound = true;
+    const stop = () => {
+      if (this.recoRepeating) this.recoIgnoreClick = true;
+      this.stopRecoHold();
+    };
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  }
+
+  private stopRecoHold(): void {
+    this.recoHoldArmed = false;
+    this.recoRepeating = false;
+    if (this.recoDelay != null) {
+      window.clearTimeout(this.recoDelay);
+      this.recoDelay = null;
+    }
+    if (this.recoPulse != null) {
+      window.clearInterval(this.recoPulse);
+      this.recoPulse = null;
+    }
+  }
+
+  private armRecoHold(tree: TechTree, currency: Currency): void {
+    this.stopRecoHold();
+    this.recoHoldTree = tree;
+    this.recoHoldCurrency = currency;
+    this.recoHoldArmed = true;
+    this.recoDelay = window.setTimeout(() => {
+      if (!this.recoHoldArmed) return;
+      this.recoRepeating = true;
+      const tick = () => {
+        if (!this.recoHoldArmed || !this.pulseRecommended()) this.stopRecoHold();
+      };
+      tick();
+      this.recoPulse = window.setInterval(tick, 80);
+    }, 280);
+  }
+
+  private pulseRecommended(): boolean {
+    const tree = this.recoHoldTree;
+    const currency = this.recoHoldCurrency;
+    if (!tree || !currency) return false;
+    const btn = this.root.querySelector('.shop-reco-buy') as HTMLElement | null;
+    if (!btn) return false;
+    const weaponId = btn.dataset.buyWeapon;
+    if (weaponId) {
+      const ok = this.onBuyWeapon?.(weaponId) ?? false;
+      if (ok) this.render(tree, currency);
+      return ok;
+    }
+    const branch = btn.dataset.recoBranch;
+    if (branch) {
+      const slot = Number(btn.dataset.recoSlot ?? 0);
+      const ok = this.onUpgradeBranch?.(slot, branch) ?? false;
+      if (ok) this.render(tree, currency);
+      return ok;
+    }
+    const id = btn.dataset.id;
+    if (!id) return false;
+    const node = UPGRADES.find((u) => u.id === id);
+    if (!node || !tree.canPurchase(node) || !tree.canAfford(node, currency)) return false;
+    this.onPurchase?.(node);
+    return true;
+  }
+
   private bindEvents(tree: TechTree, currency: Currency): void {
     this.root.querySelector('#shop-close')?.addEventListener('click', (ev) => {
       ev.preventDefault();
@@ -466,7 +545,17 @@ export class ShopUI {
     });
 
     this.root.querySelectorAll('.shop-card-buy, .shop-reco-buy').forEach((btn) => {
+      if (btn.classList.contains('shop-reco-buy')) {
+        btn.addEventListener('pointerdown', (ev) => {
+          if ((ev as PointerEvent).button !== 0) return;
+          this.armRecoHold(tree, currency);
+        });
+      }
       btn.addEventListener('click', () => {
+        if (btn.classList.contains('shop-reco-buy') && this.recoIgnoreClick) {
+          this.recoIgnoreClick = false;
+          return;
+        }
         const el = btn as HTMLElement;
         const weaponId = el.dataset.buyWeapon;
         if (weaponId) {
@@ -566,8 +655,10 @@ export class ShopUI {
     });
 
     this.root.querySelector('#evolve-toggle')?.addEventListener('click', () => {
-      this.evolveExpanded = !this.evolveExpanded;
+      const opening = !this.evolveExpanded;
+      this.evolveExpanded = opening ? true : false;
       this.confirmEvolve = false;
+      if (opening) this.onRequestEvolveModal?.();
       this.render(tree, currency);
     });
     this.root.querySelector('#evolve-open')?.addEventListener('click', () => {
@@ -1458,7 +1549,7 @@ export class ShopUI {
     if (e.damageMul) lines.push(`Damage ×${e.damageMul}`);
     if (e.fireRateAdd) lines.push(`Fire rate ${pct(e.fireRateAdd)}`);
     if (e.fireRateMul) lines.push(`Fire rate ×${e.fireRateMul}`);
-    if (e.multiShotAdd) lines.push(`+${e.multiShotAdd} concurrent bolt`);
+    if (e.multiShotAdd) lines.push(`+${e.multiShotAdd} bolt between shots`);
     if (e.splashAdd) lines.push(`Splash +${e.splashAdd}`);
     if (e.orbitSpeedAdd) lines.push(`Orbit speed ${pct(e.orbitSpeedAdd)}`);
     if (e.accelAdd) lines.push(`Accel ${pct(e.accelAdd)}`);
@@ -1470,7 +1561,7 @@ export class ShopUI {
     if (e.penetrationAdd) lines.push(`Pierce +${e.penetrationAdd} block`);
     if (e.armorPierceAdd) lines.push(`Armor pierce ${pct(e.armorPierceAdd)}`);
     if (e.critChance) lines.push(`Crit chance ${pct(e.critChance)}`);
-    if (e.spreadAdd) lines.push(`Spread +${e.spreadAdd}`);
+    if (e.spreadAdd) lines.push('Wider bolt fan');
     if (e.beamWidth) lines.push(`Beam width ×${e.beamWidth}`);
     if (e.heatCoolAdd) lines.push(`Heat bleed ${pct(e.heatCoolAdd)}`);
     if (e.chainJumpsAdd) lines.push(`Chain jumps +${e.chainJumpsAdd}`);

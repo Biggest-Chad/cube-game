@@ -1,4 +1,4 @@
-import { getLevel, LEVELS } from '../data/levels';
+﻿import { getLevel, LEVELS } from '../data/levels';
 import { isChronobeacon } from '../data/evolve';
 import {
   FLYER_SCENES,
@@ -32,7 +32,7 @@ export class LevelSelectUI {
         <div class="panel-chrome">
           <div class="panel-chrome-left">
             <h2 class="panel-title">SECTORS</h2>
-            <p class="panel-sub">Chronobeacons every 5 · Transfers after 2 / 7 / 12…</p>
+            <p class="panel-sub">Chronobeacons every 5 Â· Transfers after 2 / 7 / 12â€¦</p>
           </div>
           <div class="panel-chrome-right">
             ${
@@ -42,7 +42,7 @@ export class LevelSelectUI {
                    </button>`
                 : ''
             }
-            <button class="icon-btn ui-btn" id="lv-close" type="button" aria-label="Close">✕</button>
+            <button class="icon-btn ui-btn" id="lv-close" type="button" aria-label="Close">âœ•</button>
           </div>
         </div>
         <div class="fly-test-row">
@@ -50,7 +50,7 @@ export class LevelSelectUI {
           ${FLYER_SCENES.map(
             (id) => `
             <button class="level-card ui-btn fly-test" data-fly-scene="${id}" type="button">
-              <div class="lv">✈</div>
+              <div class="lv">âœˆ</div>
               <div class="meta">TEST</div>
               <div class="meta name">${flyerSceneTitle(id)}</div>
             </button>`
@@ -75,8 +75,8 @@ export class LevelSelectUI {
         .join(' ');
       html += `
         <button class="${cls}" data-id="${l.id}" type="button" ${!unlocked ? 'disabled' : ''}>
-          <div class="lv">${String(l.id).padStart(2, '0')}${beacon ? ' ◆' : ''}</div>
-          <div class="meta">${l.size}³</div>
+          <div class="lv">${String(l.id).padStart(2, '0')}${beacon ? ' â—†' : ''}</div>
+          <div class="meta">${l.size}Â³</div>
           <div class="meta name">${l.name}</div>
         </button>`;
       if (shouldRunTransit(l.id)) {
@@ -94,7 +94,7 @@ export class LevelSelectUI {
           .join(' ');
         html += `
           <button class="${flyCls}" data-fly-after="${l.id}" type="button" ${!flyUnlocked ? 'disabled' : ''}>
-            <div class="lv">✈ T${String(l.id).padStart(2, '0')}</div>
+            <div class="lv">âœˆ T${String(l.id).padStart(2, '0')}</div>
             <div class="meta">TRANSFER</div>
             <div class="meta name">${flyerSceneTitle(scene)}</div>
           </button>`;
@@ -102,6 +102,7 @@ export class LevelSelectUI {
     }
     html += `</div></div>`;
     this.root.innerHTML = html;
+    this.paintBeaconFlow(highest);
 
     this.root.querySelector('#lv-close')?.addEventListener('click', (ev) => {
       ev.preventDefault();
@@ -126,6 +127,31 @@ export class LevelSelectUI {
         this.onSelect?.(id);
       });
     });
+  }
+
+  private paintBeaconFlow(highest: number): void {
+    const grid = this.root.querySelector(".level-grid") as HTMLElement | null;
+    if (!grid) return;
+    const cards = [...grid.querySelectorAll(".level-card.beacon:not(.locked)")] as HTMLElement[];
+    if (cards.length < 2) return;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "beacon-flow");
+    svg.setAttribute("aria-hidden", "true");
+    const gbox = grid.getBoundingClientRect();
+    const pts = cards.map((c) => {
+      const r = c.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - gbox.left + grid.scrollLeft, y: r.top + r.height / 2 - gbox.top };
+    });
+    let d = "";
+    for (let i = 0; i < pts.length; i++) {
+      d += (i === 0 ? "M" : "L") + pts[i].x.toFixed(1) + " " + pts[i].y.toFixed(1) + " ";
+    }
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d.trim());
+    path.setAttribute("class", "beacon-flow-path");
+    svg.appendChild(path);
+    grid.appendChild(svg);
+    void highest;
   }
 
   hide(): void {

@@ -18,6 +18,12 @@ interface Particle {
   cb: number;
 }
 
+const _sprayN = new THREE.Vector3();
+const _sprayTmp = new THREE.Vector3();
+const _sprayUp = new THREE.Vector3();
+const _sprayT1 = new THREE.Vector3();
+const _sprayT2 = new THREE.Vector3();
+
 export class ParticlePool {
   readonly points: THREE.Points;
   private particles: Particle[] = [];
@@ -144,11 +150,14 @@ export class ParticlePool {
     speed = 8
   ): void {
     this.scratchColor.setHex(color);
-    const n = new THREE.Vector3(nx, ny, nz).normalize();
-    const tmp = new THREE.Vector3();
-    const up = Math.abs(n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-    const t1 = new THREE.Vector3().crossVectors(n, up).normalize();
-    const t2 = new THREE.Vector3().crossVectors(n, t1).normalize();
+    const n = _sprayN.set(nx, ny, nz);
+    if (n.lengthSq() < 1e-12) n.set(0, 1, 0);
+    else n.normalize();
+    const tmp = _sprayTmp;
+    if (Math.abs(n.y) < 0.9) _sprayUp.set(0, 1, 0);
+    else _sprayUp.set(1, 0, 0);
+    const t1 = _sprayT1.crossVectors(n, _sprayUp).normalize();
+    const t2 = _sprayT2.crossVectors(n, t1).normalize();
 
     let spawned = 0;
     for (let i = 0; i < this.particles.length && spawned < count; i++) {

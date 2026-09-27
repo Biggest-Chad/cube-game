@@ -43,7 +43,7 @@ import { BlockType } from '../cube/BlockTypes';
 import { applyToBlock, rollOutgoing } from '../combat/DamageModel';
 import { bus } from '../core/EventBus';
 import type { WeaponBehavior, WeaponFireContext } from './WeaponBehavior';
-import { addMat, makeMissileBody, makeTrail, orientZForward } from '../vfx/ProjectileVfx';
+import { addMat, makeMissileBody, makeTrail, orientAft } from '../vfx/ProjectileVfx';
 
 interface Missile {
   active: boolean;
@@ -320,10 +320,10 @@ export class MissileWeapon implements WeaponBehavior {
     m.trail.visible = true;
     m.mesh.position.copy(m.pos);
     this.launchDir.copy(m.vel).normalize();
-    orientZForward(m.mesh, this.launchDir);
+    orientAft(m.mesh, this.launchDir);
     // Parent exhaust to mesh orientation via world copy each frame
     m.exhaust.position.copy(m.pos).addScaledVector(this.launchDir, -0.38);
-    orientZForward(m.exhaust, this.launchDir);
+    orientAft(m.exhaust, this.launchDir);
     m.exhaustGlow.position.copy(m.pos).addScaledVector(this.launchDir, -0.32);
 
     for (const h of m.trailHist) h.copy(m.pos);
@@ -367,14 +367,14 @@ export class MissileWeapon implements WeaponBehavior {
       const prev = this.tmp.copy(m.pos);
       m.pos.addScaledVector(m.vel, dt);
       m.mesh.position.copy(m.pos);
-      orientZForward(m.mesh, m.vel);
+      orientAft(m.mesh, m.vel);
 
       // Exhaust flame behind the missile + pulse
       const dirLen = m.vel.length();
       if (dirLen > 1e-5) {
         this.launchDir.copy(m.vel).multiplyScalar(1 / dirLen);
         m.exhaust.position.copy(m.pos).addScaledVector(this.launchDir, -0.4);
-        orientZForward(m.exhaust, this.launchDir);
+        orientAft(m.exhaust, this.launchDir);
         m.exhaustGlow.position.copy(m.pos).addScaledVector(this.launchDir, -0.34);
         const pulse = 0.75 + Math.sin(now * 28 + m.life * 12) * 0.25;
         m.exhaust.scale.set(pulse * 1.1, pulse * 1.1, 0.9 + pulse * 0.5);

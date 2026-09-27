@@ -23,6 +23,16 @@ export class DroneBayController {
     this.load(null);
   }
 
+  /** Evolve: one stock fighter. Extra bays, types, and units wipe. */
+  resetToStockFighter(): void {
+    this.state = {
+      bays: 1,
+      owned: { fighter: 1, bomber: 0, defender: 0 },
+      slots: ['fighter'],
+      unlockedTypes: ['fighter'],
+    };
+  }
+
   toJSON(): DroneBayState {
     return normalizeDroneBayState(this.state);
   }

@@ -7,15 +7,46 @@ export type FlyerSceneId = 'canyon' | 'wormhole' | 'yard' | 'rift';
 
 export const FLYER_SCENES: FlyerSceneId[] = ['canyon', 'wormhole', 'yard', 'rift'];
 
-export const FLYER_BASE_SPEED = 26;
-export const FLYER_DURATION_SECONDS = 38;
+/** WAVE52: owner baseline cruise -25% (28 -> 21); pads still boost above baseline. */
+export const FLYER_BASE_SPEED = 28;
+/** Fallback par. Live runs use the course length (see FLYER_PAR_CRUISE_FRACTION). */
+export const FLYER_DURATION_SECONDS = 62;
+/**
+ * Star par as a fraction of a no-pickup cruise (course length / base speed).
+ * A straight cruise that skips the slalom lands on two stars. Weaving the
+ * boosts and rings, with a healthy hull, is what earns the third.
+ */
+export const FLYER_PAR_CRUISE_FRACTION = 0.78;
 export const FLYER_LANE_HALF = 6.2;
-export const FLYER_STRAFE = 14;
+export const FLYER_STRAFE = 18;
 export const FLYER_SPEED_PICKUP_MUL = 1.12;
 export const FLYER_SPEED_MUL_CAP = 1.52;
 export const FLYER_LOCK_AHEAD = 16;
 export const FLYER_LOCK_XY = 2.35;
 export const FLYER_HIT_COOLDOWN = 0.55;
+
+/** Thrust HUD — base 100%; boost pads push above; hazards yank below; recovers toward 100. */
+export const FLYER_THRUST_BASE = 100;
+export const FLYER_THRUST_MAX = 185; // WAVE46 perfect-run headroom
+export const FLYER_THRUST_MIN = 42;
+export const FLYER_THRUST_BOOST = 30; // WAVE46 pad punch
+export const FLYER_THRUST_HAZARD = 30;
+/** Percent per second accelerating back toward base. */
+export const FLYER_THRUST_RECOVER = 22;
+/** WAVE46: slower bleed while boosted so pads/rings sustain ~2x perfect pace. */
+export const FLYER_THRUST_RECOVER_BOOSTED = 11;
+/** Cube→flyer arming countdown before lane motion / collisions start. */
+export const FLYER_COUNTDOWN_SEC = 3.15;
+
+/** WAVE43 interactive rewards / buffs */
+export const FLYER_ENEMY_FRAG = 4;
+export const FLYER_ENEMY_LATTICE = 2;
+export const FLYER_RING_FRAG = 3;
+export const FLYER_RING_LATTICE = 2;
+export const FLYER_RING_CHAIN_N = 3;
+export const FLYER_SHIELD_RESTORE = 0.45;
+export const FLYER_HULL_RESTORE = 0.28;
+
 
 /** Stick up/down. −1: axisY up (W / stick up, negative) raises the ship. Flip only here. */
 export const FLYER_STICK_Y_SIGN: -1 | 1 = -1;
@@ -69,7 +100,7 @@ export function flyerSceneTitle(id: FlyerSceneId): string {
   }
 }
 
-export type FlyerHitKind = 'emp' | 'mine' | 'solid' | 'gate';
+export type FlyerHitKind = 'emp' | 'mine' | 'solid' | 'gate' | 'obstruction';
 
 export function flyerHitProfile(kind: FlyerHitKind): { shield: number; hull: number } {
   switch (kind) {
@@ -81,6 +112,8 @@ export function flyerHitProfile(kind: FlyerHitKind): { shield: number; hull: num
       return { shield: 16, hull: 14 };
     case 'gate':
       return { shield: 8, hull: 20 };
+    case 'obstruction':
+      return { shield: 14, hull: 16 };
   }
 }
 

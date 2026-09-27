@@ -13,6 +13,7 @@ export class MenuUI {
   onLevels: (() => void) | null = null;
   onSettings: (() => void) | null = null;
   onResearch: (() => void) | null = null;
+  onRecruit: (() => void) | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -72,6 +73,7 @@ export class MenuUI {
               </button>`
                   : ''
               }
+              <button class="menu-btn menu-subbtn ui-btn" id="m-recruit" type="button"><span class="menu-btn-label">Champions</span></button>
               <button class="menu-btn menu-subbtn ui-btn" id="m-settings" type="button">
                 <span class="menu-btn-label">Settings</span>
               </button>
@@ -93,6 +95,7 @@ export class MenuUI {
     this.root.querySelector('#m-levels')?.addEventListener('click', () => this.onLevels?.());
     this.root.querySelector('#m-settings')?.addEventListener('click', () => this.onSettings?.());
     this.root.querySelector('#m-research')?.addEventListener('click', () => this.onResearch?.());
+    this.root.querySelector('#m-recruit')?.addEventListener('click', () => this.onRecruit?.());
   }
 
   show(): void {

@@ -218,7 +218,9 @@ export class SplinePath {
     out.r.crossVectors(out.t, out.u);
     if (out.r.lengthSq() < 1e-10) out.r.copy(a.r);
     else out.r.normalize();
-    out.u.crossVectors(out.r, out.t).normalize();
+    out.u.crossVectors(out.r, out.t);
+    if (out.u.lengthSq() < 1e-10) out.u.copy(a.u);
+    else out.u.normalize();
     out.roll = a.roll + (b.roll - a.roll) * w;
     out.s = s;
     return out;
@@ -290,11 +292,11 @@ export class SplinePath {
       new THREE.MeshBasicMaterial({
         vertexColors: true,
         transparent: true,
-        opacity: 0.78,
+        opacity: 0.42,
         side: THREE.DoubleSide,
         depthWrite: false,
         toneMapped: false,
-        fog: false,
+        fog: true,
       })
     );
     strip.frustumCulled = false;
@@ -302,9 +304,9 @@ export class SplinePath {
     group.add(strip);
 
     const railMat = new THREE.LineBasicMaterial({
-      color: 0xffffff,
+      color: 0xb8e0ff,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.55,
       toneMapped: false,
       fog: false,
       depthTest: true,

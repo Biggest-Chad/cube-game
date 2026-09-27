@@ -209,14 +209,25 @@ export function makeTeslaBolt(): THREE.Group {
   });
 }
 
+const _orientDir = new THREE.Vector3();
+const _orientBack = new THREE.Vector3();
+const _orientQ = new THREE.Quaternion();
+const _orientFwd = new THREE.Vector3(0, 0, 1);
+
+/** Point local +Z opposite travel. A −Z nose then faces along travel, and a +Z cone points aft. */
+export function orientAft(obj: THREE.Object3D, travel: THREE.Vector3): void {
+  _orientBack.copy(travel).multiplyScalar(-1);
+  orientZForward(obj, _orientBack);
+}
+
 export function orientZForward(
   obj: THREE.Object3D,
   dir: THREE.Vector3,
-  q = new THREE.Quaternion(),
-  fwd = new THREE.Vector3(0, 0, 1)
+  q = _orientQ,
+  fwd = _orientFwd
 ): void {
   if (dir.lengthSq() < 1e-8) return;
-  const d = dir.clone().normalize();
-  q.setFromUnitVectors(fwd, d);
+  _orientDir.copy(dir).normalize();
+  q.setFromUnitVectors(fwd, _orientDir);
   obj.quaternion.copy(q);
 }

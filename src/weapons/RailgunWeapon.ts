@@ -39,7 +39,7 @@ export class RailgunWeapon implements WeaponBehavior {
 
   constructor() {
     this.stats = {
-      damage: 95,
+      damage: 285,
       fireRate: 0.55,
       projectileSpeed: 180,
       range: 140,
@@ -59,7 +59,7 @@ export class RailgunWeapon implements WeaponBehavior {
     };
 
     this.chargeRing = new THREE.Mesh(
-      new THREE.TorusGeometry(0.28, 0.035, 10, 32),
+      new THREE.TorusGeometry(0.62, 0.07, 12, 40),
       new THREE.MeshBasicMaterial({
         color: 0x66aaff,
         transparent: true,
@@ -72,7 +72,7 @@ export class RailgunWeapon implements WeaponBehavior {
     this.group.add(this.chargeRing);
     // Outer charge halo
     const chargeOuter = new THREE.Mesh(
-      new THREE.TorusGeometry(0.4, 0.02, 8, 28),
+      new THREE.TorusGeometry(0.95, 0.045, 10, 36),
       new THREE.MeshBasicMaterial({
         color: 0x4488ff,
         transparent: true,
@@ -85,7 +85,8 @@ export class RailgunWeapon implements WeaponBehavior {
     chargeOuter.visible = false;
     this.group.add(chargeOuter);
 
-    const geo = new THREE.BoxGeometry(0.09, 0.09, 1.1);
+    const geo = new THREE.CylinderGeometry(0.16, 0.22, 2.6, 10);
+    geo.rotateX(Math.PI / 2);
     for (let i = 0; i < POOL; i++) {
       const mesh = new THREE.Mesh(
         geo,
@@ -101,7 +102,7 @@ export class RailgunWeapon implements WeaponBehavior {
       this.group.add(mesh);
       // Outer glow shell on slug
       const shell = new THREE.Mesh(
-        new THREE.BoxGeometry(0.16, 0.16, 0.95),
+        new THREE.CylinderGeometry(0.28, 0.34, 2.15, 10),
         new THREE.MeshBasicMaterial({
           color: 0x4488ff,
           transparent: true,
@@ -218,6 +219,8 @@ export class RailgunWeapon implements WeaponBehavior {
     }
 
     bus.emit('weapon-fire', { family: this.family, slot: ctx.slot, charge: power });
+    bus.emit('camera-shake-request', { amount: 0.16 + power * 0.1 });
+    bus.emit('explosion', { x: ctx.origin.x, y: ctx.origin.y, z: ctx.origin.z, radius: 1.6, family: 'rail-muzzle' });
     if (rolled.crit) bus.emit('crit');
   }
 
@@ -241,7 +244,7 @@ export class RailgunWeapon implements WeaponBehavior {
       if (dist > 1e-5) {
         const hit = cube.raycast(prev, move.normalize(), dist + 0.4);
         if (hit) {
-          this.impact(s, cube, hit.instanceId, hit.point, now);
+          this.impact(s, cube, hit.instanceId, hit.point, hit.normal, now);
           continue;
         }
       }
@@ -254,6 +257,7 @@ export class RailgunWeapon implements WeaponBehavior {
     cube: CubeManager,
     instanceId: number,
     point: THREE.Vector3,
+    normal: THREE.Vector3,
     now: number
   ): void {
     const type = cube.getBlockType(instanceId);
@@ -290,13 +294,17 @@ export class RailgunWeapon implements WeaponBehavior {
     if (s.bounces > 0) {
       s.bounces--;
       s.damage *= this.stats.flags.has('rico_strong') ? 0.7 : 0.55;
-      // Reflect roughly away from center
-      const n = point.clone().normalize();
+      const n = normal;
+      if (n.lengthSq() < 1e-8) n.copy(point).normalize();
+      else n.normalize();
+      if (n.dot(s.vel) > 0) n.negate();
       s.vel.reflect(n).normalize().multiplyScalar(this.stats.projectileSpeed * 0.85);
-      s.pos.copy(point).addScaledVector(s.vel.clone().normalize(), 0.5);
+      s.pos.copy(point).addScaledVector(n, 0.45);
       s.life = Math.max(s.life, 0.4);
       return;
     }
+    bus.emit('explosion', { x: point.x, y: point.y, z: point.z, radius: 2.8, family: 'rail' });
+    bus.emit('camera-shake-request', { amount: s.crit ? 0.22 : 0.16 });
     this.kill(s);
   }
 

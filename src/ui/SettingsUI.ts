@@ -7,6 +7,7 @@ import {
   GRAPHICS_PRESETS,
   type GraphicsQuality,
 } from '../data/graphics';
+import { APP_VERSION } from '../data/appVersion';
 
 export class SettingsUI {
   private root: HTMLElement;
@@ -59,6 +60,7 @@ export class SettingsUI {
           <div>
             <h2 id="settings-title">SETTINGS</h2>
             <div class="tech-header-sub">Graphics · audio · data</div>
+            <div class="tech-header-sub">v${APP_VERSION}</div>
           </div>
           <button class="icon-btn ui-btn" id="settings-close" type="button" aria-label="Back">✕</button>
         </div>
@@ -103,7 +105,7 @@ export class SettingsUI {
             <div class="settings-label">PRESETS</div>
             <ul class="settings-list">
               <li><strong>LOW</strong> — no bloom, 1× DPR, sparse VFX</li>
-              <li><strong>MEDIUM</strong> — soft bloom, balanced particles (default)</li>
+              <li><strong>MEDIUM</strong> — bloom off, balanced particles (default)</li>
               <li><strong>HIGH</strong> — full bloom, max particles &amp; resolution</li>
             </ul>
           </section>

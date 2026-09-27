@@ -33,6 +33,7 @@ import {
   type InterceptTarget,
 } from './DroneAI';
 import { addMat, stdEmit, stdHull } from '../vfx/ProjectileVfx';
+import { loadAlliedDroneGlb } from './droneGlb';
 
 export interface DroneCombatContext {
   enemies?: EnemyUnitRef[];
@@ -99,6 +100,9 @@ export class Drone {
   private rotor: THREE.Group | null = null;
   private eyeGlow: THREE.Mesh | null = null;
   private thrusters: THREE.Mesh[] = [];
+  private hullRoot = new THREE.Group();
+  private strobeMats: THREE.MeshStandardMaterial[] = [];
+  private disposed = false;
   private spin = 0;
   private index: number;
   private roleColor: number;
@@ -118,7 +122,10 @@ export class Drone {
     this.tanSign = index % 2 === 0 ? 1 : -1;
     this.vel.set(Math.cos(this.orbitAngle), 0.2, Math.sin(this.orbitAngle)).multiplyScalar(5);
 
+    this.hullRoot.name = 'HullVisual';
+    this.group.add(this.hullRoot);
     this.buildMesh();
+    if (role === 'fighter') void this.adoptFighterGlb();
     this.rotor = this.group.getObjectByName('rotor') as THREE.Group | null;
     this.eyeGlow = this.group.getObjectByName('eye') as THREE.Mesh | null;
 
@@ -140,7 +147,7 @@ export class Drone {
   }
 
   private buildMesh(): void {
-    const g = this.group;
+    const g = this.hullRoot;
     const body = stdHull(0x14101a, 0.82, 0.28);
     const plate = stdHull(0x221828, 0.78, 0.32);
     const accent = stdEmit(this.roleColor, 0.85);
@@ -213,7 +220,95 @@ export class Drone {
       g.add(shieldPlate);
     }
 
-    g.scale.setScalar(1.05);
+    this.group.scale.setScalar(1.05);
+  }
+
+  /**
+   * Signal hull, Night Lance amber wingtip and fin lamps.
+   * Nose is glTF −Z, which is the direction Matrix4.lookAt faces along travel.
+   * Group rest scale stays 1.05 (hit squash). The mesh is scaled so the wingspan stays 1.225.
+   */
+  private async adoptFighterGlb(): Promise<void> {
+    try {
+      const visual = await loadAlliedDroneGlb('fighter');
+      if (this.disposed) {
+        releaseCloneMaterials(visual);
+        return;
+      }
+      const drop: THREE.Object3D[] = [];
+      visual.traverse((o) => {
+        const light = o as THREE.Light;
+        if (light.isLight) {
+          drop.push(o);
+          return;
+        }
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        if (mesh.geometry) mesh.geometry.userData.shared = true;
+        if (!o.name.includes('Strobe') || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+          if ('emissiveIntensity' in mat) this.strobeMats.push(mat as THREE.MeshStandardMaterial);
+        }
+      });
+      for (const light of drop) light.removeFromParent();
+
+      visual.updateMatrixWorld(true);
+      const hullBox = new THREE.Box3();
+      let hullHit = false;
+      visual.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || /Lamp_|Dash_|Strobe_/.test(o.name)) return;
+        const part = new THREE.Box3().setFromObject(mesh);
+        if (part.isEmpty()) return;
+        hullBox.union(part);
+        hullHit = true;
+      });
+      const span = hullHit
+        ? hullBox.getSize(new THREE.Vector3()).x
+        : new THREE.Box3().setFromObject(visual).getSize(new THREE.Vector3()).x;
+      visual.scale.setScalar(1.225 / (Math.max(span, 1e-4) * 1.05));
+      visual.updateMatrixWorld(true);
+
+      const nose = findNamed(visual, 'Lamp_NoseL');
+      const eng = findNamed(visual, 'Lamp_EngL');
+      if (nose && eng) {
+        const nosePos = new THREE.Vector3();
+        const engPos = new THREE.Vector3();
+        nose.getWorldPosition(nosePos);
+        eng.getWorldPosition(engPos);
+        if (nosePos.z > engPos.z) visual.rotateY(Math.PI);
+      }
+      visual.updateMatrixWorld(true);
+      const center = new THREE.Box3().setFromObject(visual).getCenter(new THREE.Vector3());
+      visual.position.sub(center);
+      visual.name = 'AlliedFighter';
+
+      const old = this.hullRoot.children.slice();
+      for (const child of old) {
+        this.hullRoot.remove(child);
+        disposeObject(child);
+      }
+      this.hullRoot.add(visual);
+      this.rotor = null;
+      this.eyeGlow = null;
+      this.thrusters.length = 0;
+    } catch (err) {
+      console.warn('[drone] fighter GLB miss', err);
+    }
+  }
+
+  /** Drop an in-flight bomb so the next cube does not inherit it. */
+  clearTransient(): void {
+    this.bombActive = false;
+    this.bombEnemyId = null;
+    this.hasFireLook = false;
+    this.beamLife = 0;
+    this.beamCore.visible = false;
+    this.beamGlow.visible = false;
+    if (this.bombMesh) this.bombMesh.visible = false;
   }
 
   /** Apply damage; returns true if destroyed this hit. */
@@ -304,6 +399,10 @@ export class Drone {
 
     this.spin += dt * (8 + (1 - this.heat) * 4);
     if (this.rotor) this.rotor.rotation.z = this.spin;
+    if (this.strobeMats.length > 0) {
+      const flash = Math.sin(now * 7) > 0.35 ? 6.5 : 0.25;
+      for (let i = 0; i < this.strobeMats.length; i++) this.strobeMats[i].emissiveIntensity = flash;
+    }
 
     if (this.beamLife > 0) {
       this.beamLife -= dt;
@@ -551,7 +650,7 @@ export class Drone {
     this._pos.addScaledVector(right, side * 1.1 + Math.sin(now * 1.4 + this.seed) * 0.35);
     const k = 1 - Math.exp(-3.4 * dt);
     this.group.position.lerp(this._pos, k);
-    this._look.copy(ship);
+    this._look.copy(this.group.position).add(toCenter);
     this._m.lookAt(this.group.position, this._look, this._up);
     this._targetQuat.setFromRotationMatrix(this._m);
     this.group.quaternion.slerp(this._targetQuat, 1 - Math.exp(-4 * dt));
@@ -667,12 +766,40 @@ export class Drone {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.group.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
-        o.geometry.dispose();
+        if (!o.geometry.userData.shared) o.geometry.dispose();
         if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
         else (o.material as THREE.Material).dispose();
       }
     });
   }
+}
+
+function releaseCloneMaterials(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
+    else mesh.material?.dispose();
+  });
+}
+
+function findNamed(root: THREE.Object3D, needle: string): THREE.Object3D | null {
+  let found: THREE.Object3D | null = null;
+  root.traverse((o) => {
+    if (!found && o.name.includes(needle)) found = o;
+  });
+  return found;
+}
+
+function disposeObject(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (!mesh.geometry.userData.shared) mesh.geometry.dispose();
+    if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
+    else mesh.material?.dispose();
+  });
 }

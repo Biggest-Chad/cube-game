@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { ORBIT } from '../data/constants';
 import { maxOrbitSpeedMul } from '../data/balance';
-import { ARENA_FLOOR_WORLD_Y, SHIP_FLOOR_CLEARANCE } from '../data/constraints';
+import { ARENA_FLOOR_WORLD_Y, ORBIT_CITY_CAMERA_LIMIT, SHIP_FLOOR_CLEARANCE } from '../data/constraints';
+import { rollIntroReel, type IntroBeat, type RolledIntro } from './IntroReels';
 
 export type CameraMode = 'gameplay' | 'cinematic' | 'blend';
 
@@ -65,13 +66,16 @@ export class OrbitalCamera {
   private topSpeedMul = 1;
   private floorY = ARENA_FLOOR_WORLD_Y;
   private floorClearance = SHIP_FLOOR_CLEARANCE;
+  /** Zoom-out stop: chase camera stays just inside the megacity towers. */
+  private fittedMaxR = ORBIT_CITY_CAMERA_LIMIT - ORBIT.cameraBack - 1.6;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(55, aspect, 0.1, 500);
     this.radius = ORBIT.defaultRadius;
     this.targetRadius = ORBIT.defaultRadius;
     this.minR = ORBIT.minRadius;
-    this.maxR = ORBIT.maxRadius;
+    this.maxR = this.fittedMaxR;
+    this.baseFov = this.camera.fov;
     this.sync(true);
   }
 
@@ -101,9 +105,13 @@ export class OrbitalCamera {
    *                 When false, only update limits and clamp current radius (no pose pop).
    */
   setOrbitLimits(halfExtent: number, hardSnap = true): void {
-    // Spawn / combat distance scales with cube size (2× prior seat distance).
-    this.minR = Math.max(ORBIT.minRadius, halfExtent * 3.1);
-    this.maxR = Math.max(this.minR + 8, halfExtent * 9.0 + ORBIT.maxRadius * 0.25);
+    // Chase sits cameraBack behind the ship. Cap the ship so that camera stays
+    // inside the nearest towers (centers at 34, faces near 31).
+    const cityCap = ORBIT_CITY_CAMERA_LIMIT - ORBIT.cameraBack - 1.6;
+    this.fittedMaxR = cityCap;
+    const close = Math.max(ORBIT.minRadius, halfExtent * 1.85 + 0.6);
+    this.minR = close < cityCap - 1.5 ? close : Math.max(halfExtent + 2, cityCap - 1.5);
+    this.maxR = this.fittedMaxR;
     const preferred = THREE.MathUtils.clamp(halfExtent * 5.4, this.minR, this.maxR);
     if (hardSnap) {
       this.targetRadius = preferred;
@@ -122,8 +130,9 @@ export class OrbitalCamera {
     }
   }
 
-  extendMaxRadius(add: number): void {
-    this.maxR = ORBIT.maxRadius + add;
+  extendMaxRadius(_add: number): void {
+    // Shop zoom used to push the seat out past 80. The skyline is the hard stop.
+    this.maxR = this.fittedMaxR;
   }
 
   resize(aspect: number): void {
@@ -134,50 +143,59 @@ export class OrbitalCamera {
   private lookYOffset = 0;
   private scriptedLag = 3.5;
 
-  /** Level-intro camera sweep: start pose → final third-person combat seat. */
-  private introStartYaw = 0;
-  private introStartPitch = 0.42;
-  private introStartRadius = 24;
-  private introEndYaw = 0.85;
-  private introEndPitch = 0.28;
+  /** Combat radius the current intro docks to. */
   private introEndRadius = 18;
+  private introReel: RolledIntro | null = null;
+  private introDurationSec: number = ORBIT.introDuration;
+  private introTitle = 'SECTOR SCAN';
+  private introLastId: string | null = null;
+  private introActive = false;
+  private introRoll = 0;
+  private introEnergy = 0;
+  private introPrevCamYaw = 0;
+  private introPrevShipYaw = 0;
+  private introPrevShipPitch = 0.28;
+  private baseFov = 55;
+  private readonly storyLag = 3.5;
+  private introShipPos = new THREE.Vector3();
+  private introCamPos = new THREE.Vector3();
+  private introOut = new THREE.Vector3();
+  private introSide = new THREE.Vector3();
+  private introChaseFocus = new THREE.Vector3();
 
   /**
-   * Begin the short level-intro orbit sweep.
-   * Ends at the standard third-person chase seat (ready for countdown / combat).
+   * Begin a short between-level reel. The ship and the filming camera are
+   * separate until the last moment, then both dock on the combat chase seat.
+   * `forceReel` is for tests; gameplay leaves it unset.
    */
-  beginLevelIntro(startYaw = this.yaw): void {
-    // Resting combat pose — matches finishIntro / gameplay defaults
-    this.introEndYaw = 0.85;
-    this.introEndPitch = 0.28;
+  beginLevelIntro(_startYaw = this.yaw, forceReel?: string): void {
     this.introEndRadius = THREE.MathUtils.clamp(
       this.targetRadius > 0.1 ? this.targetRadius : this.radius,
       this.minR,
       this.maxR
     );
-
-    // Sweep in from a wider, higher angle with a yaw arc
-    this.introStartYaw = startYaw - 1.15;
-    this.introStartPitch = 0.52;
-    this.introStartRadius = Math.min(
-      this.maxR,
-      this.introEndRadius * ORBIT.introRadiusMul
-    );
-
-    this.yaw = this.introStartYaw;
-    this.pitch = this.introStartPitch;
-    this.radius = this.introStartRadius;
-    this.targetRadius = this.introEndRadius;
-
-    this.cinematicYaw = this.introStartYaw;
-    this.cinematicPitch = this.introStartPitch;
-    this.cinematicRadius = this.introStartRadius;
-    this.lookYOffset = 0;
-    this.lookTarget.set(0, 0, 0);
-    this.mode = 'cinematic';
-    this.blend = 0;
+    this.introReel = rollIntroReel({ avoidId: this.introLastId, forceId: forceReel ?? null });
+    this.introLastId = this.introReel.id;
+    this.introTitle = this.introReel.title;
+    this.introDurationSec = this.introReel.duration;
+    this.introActive = true;
+    this.introEnergy = 0;
+    this.introRoll = 0;
     this.resetVelocities();
-    this.sync(true);
+    this.applyIntroFrame(0, 0);
+  }
+
+  getIntroDuration(): number {
+    return this.introDurationSec;
+  }
+
+  getIntroTitle(): string {
+    return this.introTitle;
+  }
+
+  /** 0..1 how hard the filming camera is moving. Drives intro embers. */
+  getIntroEnergy(): number {
+    return this.introEnergy;
   }
 
   /** @deprecated Prefer beginLevelIntro — kept for any external callers. */
@@ -192,6 +210,12 @@ export class OrbitalCamera {
     radius: number;
     lookY?: number;
   }): void {
+    this.introActive = false;
+    this.introRoll = 0;
+    this.introEnergy = 0;
+    this.scriptedLag = this.storyLag;
+    this.applyIntroFov(this.baseFov);
+    this.camera.up.set(0, 1, 0);
     this.mode = 'cinematic';
     this.blend = 0;
     this.cinematicYaw = pose.yaw;
@@ -235,65 +259,263 @@ export class OrbitalCamera {
   }
 
   /**
-   * Drive level-intro sweep. Progress 0→1; at 1 the camera is at the final
-   * third-person combat seat (yaw/pitch/radius = intro end pose).
+   * Drive the level-intro reel. Progress 0→1. At 1 the ship orbit is the
+   * combat seat and the camera is the chase cam behind it.
    */
   updateIntro(progress: number, dt: number): void {
+    this.applyIntroFrame(progress, dt);
+  }
+
+  private applyIntroFrame(progress: number, dt: number): void {
+    const reel = this.introReel;
+    if (!reel) return;
     const p = THREE.MathUtils.clamp(progress, 0, 1);
-    // Smooth ease-in-out so the settle into combat seat feels deliberate
-    const e = p * p * (3 - 2 * p);
-    // Secondary ease that ramps harder in the last third (dock into chase cam)
-    const dock = p < 0.55 ? 0 : (p - 0.55) / 0.45;
-    const dockE = dock * dock * (3 - 2 * dock);
+    const combatR = this.introEndRadius;
+    const dockYaw = reel.dockYaw;
+    const span = reel.span(p * reel.duration);
+    const camA = this.resolveIntroCam(span.a, combatR);
+    const camB = this.resolveIntroCam(span.b, combatR);
+    const u = span.u;
+    const camYaw = THREE.MathUtils.lerp(camA.yaw, this.nearYaw(camA.yaw, camB.yaw), u);
+    const camPitch = THREE.MathUtils.lerp(camA.pitch, camB.pitch, u);
+    const camR = THREE.MathUtils.lerp(camA.radius, camB.radius, u);
 
-    // Gentle mid-sweep flourish that fades out as we dock
-    const flourish = Math.sin(p * Math.PI) * (1 - dockE);
-    const yaw =
-      THREE.MathUtils.lerp(this.introStartYaw, this.introEndYaw, e) + flourish * 0.42;
-    const pitch =
-      THREE.MathUtils.lerp(this.introStartPitch, this.introEndPitch, e) +
-      flourish * 0.1;
-    const radius = THREE.MathUtils.lerp(
-      this.introStartRadius,
-      this.introEndRadius,
-      e
+    let shipYaw = THREE.MathUtils.lerp(span.a.shipYaw, span.b.shipYaw, u);
+    let shipPitch = THREE.MathUtils.lerp(span.a.shipPitch, span.b.shipPitch, u);
+    let shipR = THREE.MathUtils.lerp(
+      combatR * span.a.shipRadiusMul,
+      combatR * span.b.shipRadiusMul,
+      u
     );
+    let lookAt = Math.min(0.92, THREE.MathUtils.lerp(span.a.lookAt, span.b.lookAt, u));
+    let lookY = THREE.MathUtils.lerp(span.a.lookY, span.b.lookY, u);
+    let fov = THREE.MathUtils.lerp(span.a.fov, span.b.fov, u);
+    let roll = THREE.MathUtils.lerp(span.a.roll, span.b.roll, u);
+    let shake = THREE.MathUtils.lerp(span.a.shake, span.b.shake, u);
+    this.scriptedLag = THREE.MathUtils.lerp(span.a.lag, span.b.lag, u);
 
-    this.cinematicYaw = yaw;
-    this.cinematicPitch = THREE.MathUtils.clamp(pitch, ORBIT.minPitch, ORBIT.maxPitch);
-    this.cinematicRadius = radius;
+    // Last ~12% eases onto the real chase cam. Earlier than that each reel plays out.
+    const dockStart = 0.88;
+    const dockU =
+      p <= dockStart ? 0 : this.smooth01((p - dockStart) / (1 - dockStart));
+    if (dockU > 0) {
+      shipYaw = THREE.MathUtils.lerp(shipYaw, dockYaw, dockU);
+      shipPitch = THREE.MathUtils.lerp(shipPitch, 0.28, dockU);
+      shipR = THREE.MathUtils.lerp(shipR, combatR, dockU);
+      lookAt = THREE.MathUtils.lerp(lookAt, 0, dockU);
+      lookY = THREE.MathUtils.lerp(lookY, 0, dockU);
+      fov = THREE.MathUtils.lerp(fov, this.baseFov, dockU);
+      roll *= 1 - dockU;
+      shake *= 1 - dockU;
+    }
 
-    // Keep orbit truth in lockstep so blend/gameplay handoff has zero pop
-    this.yaw = this.cinematicYaw;
-    this.pitch = this.cinematicPitch;
-    this.radius = this.cinematicRadius;
-    this.targetRadius = this.introEndRadius;
-    this.lookYOffset = THREE.MathUtils.lerp(0.15, 0, e);
-    this.lookTarget.set(0, this.lookYOffset, 0);
+    shipR = THREE.MathUtils.clamp(shipR, this.introMinRadius(), this.maxR);
+    shipPitch = this.pitchAboveFloor(shipPitch, shipR, this.floorClearance);
+    let filmR = THREE.MathUtils.clamp(camR, this.introMinRadius(), this.maxR);
+    let filmPitch = this.pitchAboveFloor(camPitch, filmR, 1.15);
+    const time = p * reel.duration;
+    const wob = Math.sin(time * 46) * shake;
+    filmPitch = this.pitchAboveFloor(filmPitch + Math.cos(time * 33) * shake * 0.65, filmR, 1.15);
+    // Keep the displayed yaw on a continuous branch. spherePos is 2π-periodic,
+    // and a whip longer than π must stay on the authored side of nearYaw.
+    let filmYaw = this.nearYaw(this.introPrevCamYaw, camYaw + wob);
+    this.spherePos(shipYaw, shipPitch, shipR, this.introShipPos);
+    const clear = this.pushOffShip(filmYaw, filmPitch, filmR, this.introShipPos);
+    filmYaw = clear.yaw;
+    filmPitch = clear.pitch;
+    filmR = clear.radius;
 
-    if (p < 0.55) {
-      this.mode = 'cinematic';
-      this.blend = 0;
-    } else if (p < 0.999) {
-      // Blend cinematic sphere → third-person chase over the final stretch
-      this.mode = 'blend';
-      this.blend = dockE;
-    } else {
-      // Land exactly on combat seat
-      this.yaw = this.introEndYaw;
-      this.pitch = this.introEndPitch;
-      this.radius = this.introEndRadius;
-      this.targetRadius = this.introEndRadius;
+    if (dt > 0) {
+      const dy = filmYaw - this.introPrevCamYaw;
+      const dp = filmPitch - this.cinematicPitch;
+      this.introEnergy = THREE.MathUtils.clamp(
+        Math.hypot(dy, dp) / Math.max(dt, 1 / 120) / 1.55,
+        0,
+        1
+      );
+      const shipDy = shipYaw - this.introPrevShipYaw;
+      if (Math.abs(shipDy) < 0.35) {
+        this.velYaw = THREE.MathUtils.clamp(shipDy / dt, -2.4, 2.4);
+        this.velPitch = THREE.MathUtils.clamp(
+          (shipPitch - this.introPrevShipPitch) / dt,
+          -2.4,
+          2.4
+        );
+      } else {
+        this.velYaw = 0;
+        this.velPitch = 0;
+      }
+    }
+
+    this.yaw = shipYaw;
+    this.pitch = shipPitch;
+    this.radius = shipR;
+    this.targetRadius = combatR;
+
+    const yawJump = Math.abs(filmYaw - this.cinematicYaw) > 0.55;
+    const radJump = Math.abs(filmR - this.cinematicRadius) > Math.max(3.5, this.cinematicRadius * 0.2);
+    this.cinematicYaw = filmYaw;
+    this.cinematicPitch = filmPitch;
+    this.cinematicRadius = filmR;
+
+    this.lookTarget.set(0, lookY, 0).addScaledVector(this.introShipPos, lookAt);
+    this.lookYOffset = this.lookTarget.y;
+    this.introRoll = roll;
+    this.applyIntroFov(fov);
+    this.introPrevCamYaw = filmYaw;
+    this.introPrevShipYaw = shipYaw;
+    this.introPrevShipPitch = shipPitch;
+
+    if (p >= 0.999) {
+      this.yaw = dockYaw;
+      this.pitch = 0.28;
+      this.radius = combatR;
+      this.targetRadius = combatR;
       this.lookYOffset = 0;
       this.lookTarget.set(0, 0, 0);
+      this.introRoll = 0;
+      this.introActive = false;
+      this.introEnergy = 0;
+      this.scriptedLag = this.storyLag;
+      this.applyIntroFov(this.baseFov);
+      this.camera.up.set(0, 1, 0);
       this.mode = 'gameplay';
       this.blend = 1;
       this.resetVelocities();
-      this.sync(true);
+      this.sync(true, dt);
       return;
     }
 
-    this.sync(false, dt);
+    if (dockU <= 0) {
+      this.mode = 'cinematic';
+      this.blend = 0;
+    } else {
+      this.mode = 'blend';
+      this.blend = dockU;
+    }
+    this.introActive = true;
+    const snap = p <= 0 || span.snap || yawJump || radJump || dockU > 0.72;
+    this.sync(snap, dt);
+  }
+
+  /** Closest cube-clear radius for an intro shot. */
+  private introMinRadius(): number {
+    // minR ≈ max(10, half * 3.1). 0.70*minR stays outside the cube corner (~0.56*minR).
+    return Math.max(ORBIT.minRadius * 0.75, this.minR * 0.7);
+  }
+
+  /** Keep a sphere pose above the arena floor. Positive pitch is up. */
+  private pitchAboveFloor(pitch: number, radius: number, clearance: number): number {
+    const minY = this.floorY + clearance;
+    const ratio = THREE.MathUtils.clamp(minY / Math.max(radius, 0.01), -0.98, 0.98);
+    const lim = Math.max(ORBIT.minPitch, Math.asin(ratio));
+    return THREE.MathUtils.clamp(Math.max(pitch, lim), ORBIT.minPitch, ORBIT.maxPitch);
+  }
+
+  private smooth01(u: number): number {
+    const t = THREE.MathUtils.clamp(u, 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+
+  private nearYaw(from: number, to: number): number {
+    let y = to;
+    const pi2 = Math.PI * 2;
+    while (y - from > Math.PI) y -= pi2;
+    while (from - y > Math.PI) y += pi2;
+    return y;
+  }
+
+  /**
+   * Filming pose for one beat. Framed beats sit a fixed distance off the ship;
+   * orbit beats use the sphere around the cube.
+   */
+  private resolveIntroCam(
+    beat: IntroBeat,
+    combatR: number
+  ): { yaw: number; pitch: number; radius: number } {
+    if (!beat.frame) {
+      const radius = THREE.MathUtils.clamp(
+        combatR * beat.radiusMul,
+        this.introMinRadius(),
+        this.maxR
+      );
+      return { yaw: beat.yaw, pitch: this.pitchAboveFloor(beat.pitch, radius, 1.15), radius };
+    }
+    const shipR = THREE.MathUtils.clamp(
+      combatR * beat.shipRadiusMul,
+      this.introMinRadius(),
+      this.maxR
+    );
+    const shipPitch = this.pitchAboveFloor(beat.shipPitch, shipR, this.floorClearance);
+    this.spherePos(beat.shipYaw, shipPitch, shipR, this.introShipPos);
+    this.introOut.copy(this.introShipPos);
+    if (this.introOut.lengthSq() < 1e-8) this.introOut.set(0, 0, 1);
+    else this.introOut.normalize();
+    this.introSide.crossVectors(this.worldUp, this.introOut);
+    if (this.introSide.lengthSq() < 1e-8) this.introSide.set(1, 0, 0);
+    else this.introSide.normalize();
+    this.introCamPos
+      .copy(this.introShipPos)
+      .addScaledVector(this.introOut, beat.frame.out)
+      .addScaledVector(this.introSide, beat.frame.side)
+      .addScaledVector(this.worldUp, beat.frame.up);
+    const minR = this.introMinRadius();
+    const len = this.introCamPos.length();
+    if (len < minR) this.introCamPos.setLength(minR);
+    else if (len > this.maxR) this.introCamPos.setLength(this.maxR);
+    const sphere = this.worldToSphere(this.introCamPos);
+    sphere.pitch = this.pitchAboveFloor(sphere.pitch, sphere.radius, 1.15);
+    return sphere;
+  }
+
+  /**
+   * A reel lerp can thread the camera through the ship. Shove it out to a
+   * readable gap without changing shots that are already clear.
+   */
+  private pushOffShip(
+    yaw: number,
+    pitch: number,
+    radius: number,
+    ship: THREE.Vector3
+  ): { yaw: number; pitch: number; radius: number } {
+    this.spherePos(yaw, pitch, radius, this.introCamPos);
+    this.introOut.copy(this.introCamPos).sub(ship);
+    const sep = this.introOut.length();
+    const minSep = 5.4;
+    if (sep >= minSep) return { yaw, pitch, radius };
+    if (sep < 0.08) {
+      this.introOut.copy(ship);
+      if (this.introOut.lengthSq() < 1e-6) this.introOut.set(0, 0.2, 1);
+      this.introOut.normalize();
+      this.introCamPos.copy(ship).addScaledVector(this.introOut, minSep);
+    } else {
+      this.introCamPos.copy(ship).addScaledVector(this.introOut, minSep / sep);
+    }
+    const floorY = this.floorY + 1.15;
+    if (this.introCamPos.y < floorY) this.introCamPos.y = floorY;
+    const minR = this.introMinRadius();
+    const len = this.introCamPos.length();
+    if (len < minR) this.introCamPos.setLength(minR);
+    else if (len > this.maxR) this.introCamPos.setLength(this.maxR);
+    const sphere = this.worldToSphere(this.introCamPos);
+    sphere.pitch = this.pitchAboveFloor(sphere.pitch, sphere.radius, 1.15);
+    sphere.yaw = this.nearYaw(yaw, sphere.yaw);
+    return sphere;
+  }
+
+  /** Inverse of spherePos. Yaw matches atan2(x, z); pitch is asin(y/r). */
+  private worldToSphere(p: THREE.Vector3): { yaw: number; pitch: number; radius: number } {
+    const radius = Math.max(0.01, p.length());
+    const pitch = Math.asin(THREE.MathUtils.clamp(p.y / radius, -1, 1));
+    const yaw = Math.atan2(p.x, p.z);
+    return { yaw, pitch, radius };
+  }
+
+  private applyIntroFov(fov: number): void {
+    const f = THREE.MathUtils.clamp(fov, 34, 82);
+    if (Math.abs(this.camera.fov - f) < 0.04) return;
+    this.camera.fov = f;
+    this.camera.updateProjectionMatrix();
   }
 
   /** Advance scripted cinematic camera lag (call from Game when intro cinematic runs). */
@@ -307,6 +529,12 @@ export class OrbitalCamera {
    * When `snapPose` is provided, orbit truth is set first (final combat seat).
    */
   endCinematic(snapPose?: { yaw?: number; pitch?: number; radius?: number }): void {
+    this.introActive = false;
+    this.introRoll = 0;
+    this.introEnergy = 0;
+    this.scriptedLag = this.storyLag;
+    this.applyIntroFov(this.baseFov);
+    this.camera.up.set(0, 1, 0);
     if (snapPose) {
       if (snapPose.yaw !== undefined) this.yaw = snapPose.yaw;
       if (snapPose.pitch !== undefined) {
@@ -489,6 +717,22 @@ export class OrbitalCamera {
     return base * (1 + 0.4 * t);
   }
 
+  /**
+   * Chase would pass through the arena floor: pull toward the subject
+   * (zoom in) instead of clipping. Does not raise the orbit pitch.
+   */
+  private pullCamAboveFloor(cam: THREE.Vector3, subject: THREE.Vector3): void {
+    const minY = this.floorY + 0.45;
+    if (cam.y >= minY) return;
+    const dy = subject.y - cam.y;
+    if (dy <= 0.04) {
+      cam.y = minY;
+      return;
+    }
+    const t = THREE.MathUtils.clamp((minY - cam.y) / dy, 0, 0.92);
+    cam.lerp(subject, t);
+  }
+
   private sync(snap: boolean, dt = 1 / 60): void {
     this.computeOrbitPoint(this.shipPos);
     this.buildGameplayCamera(this.shipPos, this.gameplayCam);
@@ -505,10 +749,16 @@ export class OrbitalCamera {
       this.focus.copy(this.lookTarget);
     } else if (this.mode === 'blend') {
       this.desiredCam.lerpVectors(this.cinematicCam, this.gameplayCam, this.blend);
-      this.focus
-        .copy(this.lookTarget)
-        .multiplyScalar(THREE.MathUtils.lerp(1, 0.68, this.blend))
-        .addScaledVector(this.shipPos, THREE.MathUtils.lerp(0, 0.32, this.blend));
+      if (this.introActive) {
+        // Shot focus → the chase aim (origin * 0.68 + ship * 0.32, origin term is 0).
+        this.introChaseFocus.copy(this.shipPos).multiplyScalar(0.32);
+        this.focus.lerpVectors(this.lookTarget, this.introChaseFocus, this.blend);
+      } else {
+        this.focus
+          .copy(this.lookTarget)
+          .multiplyScalar(THREE.MathUtils.lerp(1, 0.68, this.blend))
+          .addScaledVector(this.shipPos, THREE.MathUtils.lerp(0, 0.32, this.blend));
+      }
     } else {
       this.desiredCam.copy(this.gameplayCam);
       this.focus
@@ -516,6 +766,9 @@ export class OrbitalCamera {
         .multiplyScalar(0.68)
         .addScaledVector(this.shipPos, 0.32);
     }
+
+    const subject = this.mode === 'cinematic' ? this.lookTarget : this.shipPos;
+    this.pullCamAboveFloor(this.desiredCam, subject);
 
     if (snap) {
       // Level load / cinematic start only
@@ -526,7 +779,11 @@ export class OrbitalCamera {
       this.camera.position.lerp(this.desiredCam, k);
       // No hard-snap catch-up — continuous exp only
     }
+    this.pullCamAboveFloor(this.camera.position, subject);
     this.camera.lookAt(this.focus);
+    // Roll is reapplied after lookAt. lookAt rebuilds orientation from camera.up,
+    // so a zero roll next frame leaves gameplay untilted.
+    if (this.introActive && this.introRoll !== 0) this.camera.rotateZ(this.introRoll);
   }
 
   /**

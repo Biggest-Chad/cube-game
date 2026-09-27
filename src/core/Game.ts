@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Capacitor } from '@capacitor/core';
 import { COLORS, ORBIT, PERF, SAVE_KEY } from '../data/constants';
 import { getLevel } from '../data/levels';
 import type { UpgradeNodeDef } from '../data/upgrades';
@@ -47,6 +48,7 @@ import { MusicPlayer } from '../audio/MusicPlayer';
 import { AdService } from '../ads/AdService';
 import { DummyAdProvider } from '../ads/DummyAdProvider';
 import { IapService } from '../platform/IapService';
+import { playDamageHaptic } from '../platform/haptics';
 import { HUD } from '../ui/HUD';
 import { MenuUI } from '../ui/MenuUI';
 import { MusicRadioUI } from '../ui/MusicRadioUI';
@@ -85,6 +87,8 @@ import {
 import { EVOLVE_FRAG_PER_CORE, getResearchNode } from '../data/research';
 import {
   ARENA_FLOOR_WORLD_Y,
+  MAIN_GUN_LOCK_PRIORITIES,
+  type MainGunLockPriority,
   LIGHTING_AMBIENT_COLOR,
   LIGHTING_AMBIENT_INTENSITY,
   LIGHTING_HEMI_GROUND_COLOR,
@@ -116,8 +120,12 @@ import { getPilot } from '../data/pilots';
 import { PilotRuntime } from '../combat/PilotRuntime';
 import { PilotState, type PilotUnlockContext } from '../progression/PilotState';
 import { PilotSplashUI } from '../ui/PilotSplashUI';
+import { PilotRecruitUI, PILOT_RECRUIT_COST } from '../ui/PilotRecruitUI';
+import { CubeStageSky } from '../world/CubeStageSky';
 import { FlyerRun } from '../flyer/FlyerRun';
+import { preloadFlyerScenery } from '../flyer/flyerScenery';
 import {
+  FLYER_COUNTDOWN_SEC,
   FLYER_DEBUG_PATH,
   flyerLevelForScene,
   flyerSceneFromQuery,
@@ -162,6 +170,7 @@ export class Game {
   private vitals = new ShipVitals();
   private weapon = new Weapon();
   private mainGunAmmo: MainGunAmmoId = 'standard';
+  private lockPriority: MainGunLockPriority = 'nucleus';
   private hardpoints = new HardpointSystem();
   private loadout = new LoadoutState();
   private droneBays = new DroneBayController();
@@ -175,6 +184,9 @@ export class Game {
   private idle = new IdleSimulator();
   private readonly pilotRuntime = new PilotRuntime();
   private readonly pilots = new PilotState(this.pilotRuntime);
+  private readonly cubeSky = new CubeStageSky();
+  private recruitUI: PilotRecruitUI | null = null;
+  private evolveCinematic: HTMLElement | null = null;
   private particles: ParticlePool;
   private shatter: ShatterSystem;
   private rings: ImpactRings;
@@ -227,7 +239,7 @@ export class Game {
   private readonly CORE_DEATH_SEC = 2.55;
   private unsubs: Array<() => void> = [];
   private introTimer = 0;
-  private introDuration = ORBIT.introDuration;
+  private introDuration: number = ORBIT.introDuration;
   private shopHintShown = false;
   private pendingIdle = 0;
   private menuDemoActive = false;
@@ -254,6 +266,15 @@ export class Game {
     transitScene?: FlyerSceneId;
   } | null = null;
   private flyer: FlyerRun | null = null;
+  /** Scene roots removed for the duration of a transfer flight. */
+  private flightParked: THREE.Object3D[] = [];
+  private sceneLightPark: { light: THREE.Light; intensity: number }[] = [];
+  private transitOutro = 0;
+  /** Cube->flyer arming countdown (seconds remaining). */
+  private transitWarmup = 0;
+  private transitCountdownTone = -1;
+  private flyerBoostTaught = false;
+  private flyerHazardTaught = false;
   private readonly _flyerPos = new THREE.Vector3();
   private readonly _flyerLook = new THREE.Vector3();
   private readonly _flyerCam = new THREE.Vector3();
@@ -298,10 +319,11 @@ export class Game {
     this.effectiveQuality = this.graphicsQuality;
     const bootPreset = getGraphicsPreset(this.graphicsQuality);
 
+    const powerPreference = androidHighPerfGpu() ? 'high-performance' : 'default';
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: bootPreset.antialias,
-      powerPreference: 'default',
+      powerPreference,
       alpha: false,
       stencil: false,
     });
@@ -314,8 +336,11 @@ export class Game {
       this.renderer.domElement.width,
       this.renderer.domElement.height,
       'dpr',
-      this.renderer.getPixelRatio()
+      this.renderer.getPixelRatio(),
+      'powerPreference',
+      powerPreference
     );
+    logGpuRenderer(this.renderer);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = bootPreset.exposure;
@@ -389,6 +414,7 @@ export class Game {
       this.cubeDefense.absorbCoreDamage(n);
     this.cubeDefense.setHooks({
       onPlayerDamage: (amount) => this.onPlayerDamaged(amount),
+      onPlayerShieldDamage: (amount) => this.onPlayerShieldDamaged(amount),
       getPlayerPosition: () => this.ship.position.clone(),
       getPlayerDronePositions: () => this.drones.getAlivePositions(),
       onPlayerDroneDamage: (aim, dmg) => this.drones.damageNear(aim, dmg),
@@ -416,7 +442,7 @@ export class Game {
       stage1Done: false,
       loadoutDone: false,
       fleetDone: false,
-      gunDone: false,
+      gunDone: true,
       flyerDone: false,
     });
     this.evolveReady = new EvolveReadyUI(document.getElementById('ui-root')!);
@@ -427,6 +453,15 @@ export class Game {
     this.evolveConfirm.onCancel = () => undefined;
     this.pilotSplash = new PilotSplashUI(document.getElementById('ui-root')!);
     this.pilotSplash.onContinue = () => undefined;
+    this.recruitUI = new PilotRecruitUI(document.getElementById('ui-root')!);
+    this.recruitUI.onClose = () => { if (this.mode === 'menu') this.menu.show(); };
+    this.recruitUI.onEquip = (id) => {
+      this.pilots.equip(id);
+      this.persist();
+      this.recruitUI?.paint(this.pilots, this.currency.coreEnergy);
+    };
+    this.recruitUI.onSummon = () => this.summonChampion();
+    if (!this.cubeSky.group.parent) this.scene.add(this.cubeSky.group);
     this.screenFx = new ScreenTransition(document.getElementById('app') ?? document.body);
 
     const els = this.hud.elements;
@@ -437,6 +472,7 @@ export class Game {
     this.wireEvents();
     this.loadProgress();
     this.applyGraphics(this.graphicsQuality, false);
+    preloadFlyerScenery();
 
     window.addEventListener('resize', this.onResize);
     window.addEventListener('orientationchange', this.onResize);
@@ -484,6 +520,7 @@ export class Game {
 
   private wipeCombatSession(): void {
     sessionCleaner.resetCombatWorld();
+    this.drones.reset();
   }
 
   private armUiClickLock(ms = UI_CLICK_LOCK_MS): void {
@@ -529,7 +566,29 @@ export class Game {
     }
   };
 
+  /** Buttons stay live while a stick finger is down. pointerup, not click, because a drag cancels click. */
+  private bindHudTap(el: HTMLElement | null, fn: (ev: Event) => void): void {
+    if (!el) return;
+    el.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+    el.addEventListener('pointerup', (ev) => {
+      const pe = ev as PointerEvent;
+      if (pe.pointerType === 'mouse' && pe.button !== 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      fn(ev);
+    });
+  }
+
   private wireUI(): void {
+    document.getElementById('hud-root')?.addEventListener('pointerdown', (ev) => {
+      const t = ev.target as HTMLElement | null;
+      if (t?.closest('button, .ui-btn, .fire-opt')) ev.stopPropagation();
+    });
+    document.addEventListener('pointerdown', (ev) => {
+      const t = ev.target as HTMLElement | null;
+      if (t?.closest('.cockpit-sheet, .cockpit-caret, #hud-drones, #hud-config')) return;
+      this.hud.closeDrops();
+    });
     this.menu.onPlay = () => {
       if (this.isUiClickLocked()) return;
       void this.audio.resume();
@@ -551,6 +610,10 @@ export class Game {
     this.menu.onResearch = () => {
       if (this.isUiClickLocked()) return;
       this.openResearch();
+    };
+    this.menu.onRecruit = () => {
+      if (this.isUiClickLocked()) return;
+      this.openRecruit();
     };
 
     this.pauseUI.onResume = () => {
@@ -595,7 +658,39 @@ export class Game {
       this.shopHintShown = true;
       this.openTech();
     });
-    els.btnAmmo?.addEventListener('click', () => this.cycleMainGunAmmo());
+    this.bindHudTap(els.btnConfig, (ev) => {
+      const target = ev.target as HTMLElement;
+      const ammo = target.closest('[data-ammo]') as HTMLElement | null;
+      const ammoId = ammo?.dataset.ammo;
+      if (ammoId === 'standard' || ammoId === 'ap' || ammoId === 'he') {
+        this.selectMainGunAmmo(ammoId);
+        if (!ammo?.classList.contains('locked')) this.hud.closeDrops();
+        return;
+      }
+      const lock = target.closest('[data-lock]') as HTMLElement | null;
+      const mode = lock?.dataset.lock;
+      if (mode === 'nucleus' || mode === 'blocks') {
+        this.setLockPriority(mode);
+        this.hud.closeDrops();
+        return;
+      }
+      if (target.closest('[data-close]')) {
+        this.hud.closeDrops();
+        return;
+      }
+      if (target.closest('.cockpit-caret')) this.hud.toggleSheet('config');
+    });
+    this.bindHudTap(els.btnDrones, () => this.hud.toggleSheet('drone'));
+    this.bindHudTap(els.btnDroneSheet, (ev) => {
+      const target = ev.target as HTMLElement;
+      if (target.closest('#hud-drone-shop')) {
+        this.hud.closeDrops();
+        this.shopUI.setDroneSubTab('stock');
+        this.openTech('drone_bays');
+        return;
+      }
+      if (target.closest('[data-close]')) this.hud.closeDrops();
+    });
 
     this.shopUI.onClose = () => {
       this.shopUI.hide();
@@ -801,6 +896,8 @@ export class Game {
     };
 
     this.researchUI.onClose = () => {
+      this.researchUI.onContinueSector = null;
+      this.researchUI.continueLabel = '';
       this.researchUI.hide();
       this.closeActiveOverlay();
     };
@@ -896,6 +993,7 @@ export class Game {
       if (id === 'fleet') this.save.data.tutorialFleetDone = true;
       if (id === 'gun') this.save.data.tutorialGunDone = true;
       if (id === 'flyer') this.save.data.tutorialFlyerDone = true;
+      this.save.data.tutorialGunDone = true;
       this.persist();
     };
 
@@ -1037,6 +1135,7 @@ export class Game {
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
+    this.radio?.hide();
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
@@ -1133,17 +1232,19 @@ export class Game {
     this.save.data.currentLevel = EVOLVE_RESET_LEVEL;
     this.pendingNextLevelId = EVOLVE_RESET_LEVEL;
 
-    // Run-layer shop reset. KEEP: ownedWeapons, pilots (if present).
-    // RESET: upgrades, drones, bases, hardpoint buys.
-    // Research / Ascension baseline stay (meta).
+    // WAVE49: wipe shop + research + base unlocks + extra drones.
+    // KEEP: owned weapons, pilots, evolve hardpoint grant (slots 2/3).
     this.tech.resetCombatUpgrades();
     this.tech.setAscensionTier(newTier);
     this.tech.setBaseline(this.save.data.baseline);
+    this.research.resetPurchases();
+    this.save.data.cosmeticTrail = false;
     this.tech.setResearch(this.research.bonuses);
     this.loadout.resetForEvolve();
-    this.droneBays.resetToDefault();
+    const unlockedHp = this.loadout.grantEvolveHardpoints();
+    this.droneBays.resetToStockFighter();
     this.groundBays.resetToDefault();
-    this.groundBays.setRankCap(repeatableUpgradeCap(newTier));
+    this.groundBays.setRankCap(newTier);
     this.mainGunAmmo = 'standard';
     this.hardpoints.rebuildFromLoadout();
     this.syncGroundStations();
@@ -1176,17 +1277,91 @@ export class Game {
       coreGrant: grant,
       fragConverted: converted,
     });
-    if (this.mode === 'playing' || this.mode === 'paused' || this.mode === 'intro') {
-      this.startLevel(EVOLVE_RESET_LEVEL);
-    }
+    this.presentEvolveHandoff(unlockedHp);
     return true;
   }
 
-  private openResearch(): void {
-    if (!canOpenOverlay(this.mode) && this.mode !== 'paused') return;
+  private evolutionIncomeMul(): number {
+    return Math.max(1, Math.floor((this.save.data.ascensionTier ?? 0) + 1));
+  }
+
+  private openRecruit(): void {
+    if (!canOpenOverlay(this.mode) && this.mode !== "menu") return;
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
+    this.radio?.hide();
+    this.recruitUI?.show(this.pilots, this.currency.coreEnergy);
+  }
+
+  private summonChampion(): void {
+    if (this.currency.coreEnergy < PILOT_RECRUIT_COST || !this.currency.spendCoreEnergy(PILOT_RECRUIT_COST)) {
+      this.toast("NOT ENOUGH CORE");
+      this.audio.playUi();
+      return;
+    }
+    const id = this.pilots.rollSealed();
+    if (!id) {
+      this.currency.addCoreEnergy(PILOT_RECRUIT_COST, 1);
+      this.toast("ROSTER COMPLETE");
+      this.audio.playUi();
+      return;
+    }
+    this.persist();
+    const def = getPilot(id);
+    this.audio.playPurchase();
+    this.toast(def ? "CHAMPION SEALED · " + def.callsign : "CHAMPION SEALED");
+    if (def) this.recruitUI?.flash(def);
+    this.recruitUI?.paint(this.pilots, this.currency.coreEnergy);
+    this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+  }
+
+  private presentEvolveHandoff(unlockedHp: number): void {
+    this.toast("2nd and 3rd hardpoints are live. Equip a new loadout.");
+    this.researchUI.continueLabel = "CONTINUE";
+    this.researchUI.onContinueSector = () => {
+      this.researchUI.onContinueSector = null;
+      this.researchUI.continueLabel = "";
+      this.researchUI.hide();
+      this.startLevel(EVOLVE_RESET_LEVEL);
+    };
+    this.openResearch();
+    void unlockedHp;
+  }
+
+  /** WAVE52: remove stuck dark transit vignette (id + class). Safe to call anytime. */
+  private clearTransitArriveVeil(): void {
+    const veil = document.getElementById("transit-arrive");
+    if (veil) {
+      veil.classList.remove("on");
+      veil.remove();
+    }
+    document.querySelectorAll(".transit-arrive").forEach((n) => n.remove());
+  }
+
+  private beginTransitArrive(dt: number): void {
+    this.transitOutro += dt;
+    let veil = document.getElementById("transit-arrive");
+    if (!veil) {
+      veil = document.createElement("div");
+      veil.id = "transit-arrive";
+      veil.className = "transit-arrive";
+      document.body.appendChild(veil);
+      // Next frame: fade in via .on (CSS opacity 0→1). Never leave opaque id-only veil.
+      requestAnimationFrame(() => veil?.classList.add("on"));
+    } else if (!veil.classList.contains("transit-arrive")) {
+      veil.classList.add("transit-arrive");
+    }
+    if (this.transitOutro > 1.35) this.endTransit(false);
+  }
+
+  private openResearch(): void {
+    const handoff = !!this.researchUI.continueLabel;
+    if (!handoff && !canOpenOverlay(this.mode) && this.mode !== 'paused') return;
+    void this.audio.resume();
+    this.audio.playUi();
+    this.menu.hide();
+    this.radio?.hide();
     this.shopUI.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
@@ -1270,7 +1445,7 @@ export class Game {
             this.audio.playDestroy(
               r.type === BlockType.Core || r.type === BlockType.Explosive
             );
-            const gained = this.currency.addFragments(r.fragments, this.tech.stats.fragmentMul);
+            const gained = this.currency.addFragments(r.fragments, this.tech.stats.fragmentMul * this.evolutionIncomeMul());
             this.save.data.totalBlocksDestroyed++;
             this.sessionBlocksDestroyed++;
             if (gained > 0) {
@@ -1317,7 +1492,7 @@ export class Game {
           if (s > 0.6) {
             this.particles.spawn(p.x, p.y, p.z, COLORS.gold, Math.floor(n * 0.6), 10 * s, 'spark');
           }
-          this.cameraCtrl.shake((0.08 + Math.min(0.18, r * 0.035)) * s);
+          const punch = p.family === "kamikaze" ? 1.8 : p.family === "tesla" ? 1.55 : p.family === "rail" ? 1.25 : 1; if (punch > 1) { this.rings.spawn(p.x, p.y, p.z, p.family === "tesla" ? 0x66ffe8 : COLORS.gold, (1.6 + r * 0.22) * s); this.particles.spawn(p.x, p.y, p.z, p.family === "tesla" ? 0x88ffff : 0xff8844, Math.floor(16 * s), 14 * s, "spark"); } this.cameraCtrl.shake((0.08 + Math.min(0.18, r * 0.035)) * s * punch);
           this.audio.playExplosion(r, p.family);
         }
       ),
@@ -1399,8 +1574,24 @@ export class Game {
     setTimeout(() => el.remove(), body ? 2800 : 1600);
   }
 
+  /** Wave51 Tesla proximity arcs drain shield only; contact keeps normal damage. */
+  private onPlayerShieldDamaged(amount: number): void {
+    if (this.mode !== 'playing' || this.isCombatFrozen() || this.reviveImmunity > 0) return;
+    if (amount <= 0 || this.vitals.shield <= 0) return;
+    const hit = this.vitals.takeSplitDamage(amount, 0);
+    playDamageHaptic({
+      shieldDamage: hit.shieldDamage,
+      hullDamage: hit.hullDamage,
+      maxShield: this.vitals.maxShield,
+      maxHull: this.vitals.maxHull,
+    });
+    if (hit.shieldDamage > 0) this.audio.playPlayerHit('shield');
+    this.updateHudVitals();
+  }
+
   private onPlayerDamaged(amount: number): void {
     if (this.mode !== 'playing') return;
+    if (this.isCombatFrozen()) return;
     // Post-ad repair grace — ignore all combat damage
     if (this.reviveImmunity > 0) return;
     // Defender escort bubbles absorb only when a defender is near the ship
@@ -1410,8 +1601,15 @@ export class Game {
       return;
     }
     const hit = this.vitals.takeDamage(afterShield);
+    playDamageHaptic({
+      shieldDamage: hit.shieldDamage,
+      hullDamage: hit.hullDamage,
+      maxShield: this.vitals.maxShield,
+      maxHull: this.vitals.maxHull,
+    });
     this.cameraCtrl.shake(0.1);
-    this.audio.playPlayerHit();
+    if (hit.hullDamage > 0) this.audio.playPlayerHit('hull');
+    else if (hit.shieldDamage > 0) this.audio.playPlayerHit('shield');
     this.updateHudVitals();
     if (hit.died) this.beginShipDeath();
   }
@@ -1436,6 +1634,8 @@ export class Game {
     this.reticle.setVisible(false);
     this.hardpoints.reset();
     this.weapon.reset();
+    this.clearTransitArriveVeil();
+    this.transitOutro = 0;
     this.teardownTransitVisuals();
     this.persist();
 
@@ -1657,6 +1857,45 @@ export class Game {
     this.refreshAmmoHud();
   }
 
+  private normalizeLockPriority(raw: string | undefined): MainGunLockPriority {
+    if (raw === 'blocks' || raw === 'nucleus') return raw;
+    return 'nucleus';
+  }
+
+  private setLockPriority(mode: MainGunLockPriority): void {
+    if (this.lockPriority === mode) {
+      this.hud.updateLockPriority(this.lockPriority);
+      return;
+    }
+    this.lockPriority = mode;
+    const label = mode === 'nucleus' ? 'NUCLEUS' : 'BLOCKS';
+    this.toast('LOCK - ' + label);
+    this.hud.updateLockPriority(this.lockPriority);
+    this.persist();
+  }
+
+  private cycleLockPriority(): void {
+    const i = MAIN_GUN_LOCK_PRIORITIES.indexOf(this.lockPriority);
+    this.setLockPriority(MAIN_GUN_LOCK_PRIORITIES[(i + 1) % MAIN_GUN_LOCK_PRIORITIES.length]);
+  }
+  private selectMainGunAmmo(id: MainGunAmmoId): void {
+    const flags = this.ammoFlags();
+    if (id === 'ap' && !flags.ammoAp) {
+      this.toast('UNLOCK AP IN THE GUN SHOP');
+      return;
+    }
+    if (id === 'he' && !flags.ammoHe) {
+      this.toast('UNLOCK HE IN THE GUN SHOP');
+      return;
+    }
+    if (id === this.mainGunAmmo) return;
+    this.mainGunAmmo = id;
+    const p = MAIN_GUN_AMMO[id];
+    this.toast(`${p.short} · ${p.name.toUpperCase()}`);
+    this.refreshAmmoHud();
+    this.persist();
+  }
+
   private cycleMainGunAmmo(): void {
     const next = nextMainGunAmmo(this.mainGunAmmo, this.ammoFlags());
     if (next === this.mainGunAmmo) {
@@ -1679,6 +1918,8 @@ export class Game {
       hint: p.hint,
       id: p.id,
       canCycle: flags.ammoAp || flags.ammoHe,
+      ammoAp: flags.ammoAp,
+      ammoHe: flags.ammoHe,
     });
   }
 
@@ -1764,6 +2005,8 @@ export class Game {
       shopVisible,
       rec?.name ?? weapon?.name ?? ''
     );
+    const evo = canEvolve(this.currency.dataFragments, this.save.data.highestLevel, this.save.data.ascensionTier);
+    this.hud.setEvolveReady(evo.ok);
   }
 
   private loadProgress(): void {
@@ -1802,6 +2045,9 @@ export class Game {
       ammoHe: this.tech.stats.ammoHe,
     });
     this.refreshAmmoHud();
+    this.lockPriority = this.normalizeLockPriority(data.lockOnPriority);
+    this.hud.updateLockPriority(this.lockPriority);
+    this.save.data.tutorialGunDone = true;
     this.graphicsQuality = data.graphicsQuality ?? DEFAULT_GRAPHICS_QUALITY;
     this.effectiveQuality = this.graphicsQuality;
 
@@ -1849,7 +2095,7 @@ export class Game {
       !!data.tutorialStage1Done,
       !!data.tutorialLoadoutDone,
       !!data.tutorialFleetDone,
-      !!data.tutorialGunDone,
+      true,
       !!data.tutorialFlyerDone
     );
 
@@ -1966,6 +2212,8 @@ export class Game {
     this.save.data.cosmeticTrail =
       !!this.save.data.cosmeticTrail || this.research.bonuses.cosmeticTrail;
     this.save.data.mainGunAmmo = this.mainGunAmmo;
+    this.save.data.lockOnPriority = this.lockPriority;
+    this.save.data.tutorialGunDone = true;
     const db = this.droneBays.toJSON();
     this.save.data.droneBays = db.bays;
     this.save.data.droneOwned = db.owned;
@@ -2093,6 +2341,7 @@ export class Game {
     });
     this.menu.setMeta(this.save.data.ascensionTier, this.currency.coreEnergy);
     this.menu.show();
+    this.radio?.show();
     if (reloadDemo) {
       this.startMenuDemo();
     } else {
@@ -2211,6 +2460,7 @@ export class Game {
     this.shopOpen = false;
     this.mode = 'paused';
     this.menu.hide();
+    this.radio?.hide();
     this.shopUI.hide();
     this.settingsUI.hide();
     this.researchUI.hide();
@@ -2237,7 +2487,11 @@ export class Game {
       this.restoreShipVisual();
       this.hud.setVisible(true);
       const level = getLevel(this.currentLevelId);
-      this.hud.setIntro(true, `${level.name} · ${level.size}³ lattice`);
+      this.hud.setIntro(
+        true,
+        `${level.name} · ${level.size}³ lattice`,
+        this.cameraCtrl.getIntroTitle()
+      );
       this.syncMusicToMode();
       return;
     }
@@ -2312,6 +2566,7 @@ export class Game {
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
+    this.radio?.hide();
     this.levelUI.hide();
     this.loadoutUI.hide();
     this.settingsUI.hide();
@@ -2368,6 +2623,7 @@ export class Game {
     void this.audio.resume();
     this.audio.playUi();
     this.menu.hide();
+    this.radio?.hide();
     this.shopUI.hide();
     this.loadoutUI.hide();
     this.settingsUI.hide();
@@ -2494,12 +2750,16 @@ export class Game {
   private startLevelImmediate(id: number): void {
     const level = getLevel(id);
     this.currentLevelId = id;
+    this.cubeSky.setStage(id, level.name);
+    this.cubeSky.setVisible(true);
+    this.cubeSky.applyStageAtmosphere(this.scene, this.renderer);
     this.levelClearHandled = false;
     this.clearRewardMul = 1;
     // Close any mid-load UI so shop/settings cannot sit on top of a half-started sector
     this.shopOpen = false;
     this.stopMenuDemo();
     this.menu.hide();
+    this.radio?.hide();
     this.shopUI.hide();
     this.researchUI.hide();
     this.levelUI.hide();
@@ -2521,6 +2781,8 @@ export class Game {
       highestLevel: this.shopGateLevel(),
       preferred: level.arena,
     });
+    // Arena attach is async — reassert stage-wide halo so equirect/local bubble cannot stick.
+    this.cubeSky.applyStageAtmosphere(this.scene, this.renderer);
     this.cube.loadLevel(level);
     this.cubeAnimator.setDemoMode(false);
     this.cubeAnimator.setLevel(id);
@@ -2607,12 +2869,20 @@ export class Game {
       this.mode = 'intro';
       this.introTimer = 0;
       this.hud.setVisible(true);
-      this.hud.setIntro(true, `${level.name} · ${level.size}³ lattice`);
       this.reticle.setVisible(false);
       this.ship.group.visible = true;
       this.hardpoints.group.visible = true;
-      // Orbit sweep ends in third-person combat seat — no second black fade after
+      // Reel ends in the third-person combat seat — no second black fade after.
       this.cameraCtrl.beginLevelIntro(this.cameraCtrl.yaw);
+      this.introDuration = this.cameraCtrl.getIntroDuration();
+      this.hud.setIntro(
+        true,
+        `${level.name} · ${level.size}³ lattice`,
+        this.cameraCtrl.getIntroTitle()
+      );
+      if (Math.random() < 0.55) {
+        this.cubeAnimator.forceQuickShift(0.65 + Math.random() * 0.7);
+      }
       // Seat ship on the intro orbit immediately so chase framing is coherent
       for (let i = 0; i < 8; i++) this.ship.update(this.cameraCtrl, 0.05);
       void this.music.unlock();
@@ -2672,7 +2942,7 @@ export class Game {
               seat.radius * 1.1
             ),
           }
-        : seat
+        : { ...seat, yaw: this.cameraCtrl.yaw }
     );
 
     // Place ship on orbit seat BEFORE unhiding (never spawn inside cube)
@@ -2704,7 +2974,7 @@ export class Game {
         this.save.data.tutorialStage1Done,
         this.save.data.tutorialLoadoutDone,
         this.save.data.tutorialFleetDone,
-        this.save.data.tutorialGunDone,
+        true,
         this.save.data.tutorialFlyerDone
       );
       this.tutorial.tryStartStage1();
@@ -2728,8 +2998,25 @@ export class Game {
     return true;
   }
 
+  /**
+   * Warmup, stage-1 fire lock, or a visible tutorial briefing card.
+   * Enemies / nucleus offense / vitals damage must not tick while this is true.
+   */
+  private isCombatFrozen(): boolean {
+    if (this.combatWarmup > 0) return true;
+    if (
+      this.currentLevelId === 1 &&
+      this.tutorial.isStage1Active() &&
+      !this.tutorialFireUnlocked
+    ) {
+      return true;
+    }
+    return this.tutorial.isCardShown();
+  }
+
   private updateCombatWarmup(dt: number): void {
-    if (this.combatWarmup > 0) {
+    const cardHold = this.tutorial.isCardShown();
+    if (this.combatWarmup > 0 && !cardHold) {
       this.combatWarmup = Math.max(0, this.combatWarmup - dt);
     }
     // Tutorial unlock via movement / aim before or during warmup
@@ -2936,6 +3223,7 @@ export class Game {
     this.returnToPause = false;
     this.returnToClear = false;
     this.menu.hide();
+    this.radio?.hide();
     this.shopUI.hide();
     this.overlay.innerHTML = '';
     this.wipeCombatSession();
@@ -2958,6 +3246,7 @@ export class Game {
     this.returnToPause = false;
     this.returnToClear = false;
     this.menu.hide();
+    this.radio?.hide();
     this.shopUI.hide();
     this.overlay.innerHTML = '';
     this.wipeCombatSession();
@@ -2985,6 +3274,11 @@ export class Game {
       return;
     }
     if (q !== 'canyon' && q !== 'wormhole' && q !== 'yard' && q !== 'rift') return;
+    try {
+      if (new URLSearchParams(window.location.search).get('perf') === '1') {
+        (globalThis as { __flightPerfOn?: boolean }).__flightPerfOn = true;
+      }
+    } catch { /* ignore */ }
     const scene = flyerSceneFromQuery(q);
     if (!scene) return;
     this.currentLevelId = flyerLevelForScene(scene);
@@ -2997,18 +3291,20 @@ export class Game {
     };
     this.levelClearHandled = true;
     this.menu.hide();
+    this.radio?.hide();
     this.overlay.innerHTML = '';
     this.queueTransitCinematic(scene);
   }
 
-  /** Letterbox fade + transfer chip between cube shoot and flyer. */
+  /** Letterbox fade + transfer buildup/countdown before flyer gameplay. */
   private queueTransitCinematic(sceneId?: FlyerSceneId): void {
     this.showPhaseChip('GRID TRANSFER', 'transit');
-    this.toast('Relocating defense grid');
+    // WAVE42: quiet fly-mode — no relocating toast lecture
+    try { this.audio.playCinematicPortalOpen(); } catch { /* ignore */ }
     this.screenFx.play({
-      fadeOut: 0.45,
-      hold: 0.22,
-      fadeIn: 0.6,
+      fadeOut: 0.7,
+      hold: 0.55,
+      fadeIn: 0.85,
       onBlack: () => this.beginTransit(sceneId),
     });
   }
@@ -3022,8 +3318,16 @@ export class Game {
     } catch {
       /* ignore */
     }
-    this.flyer = new FlyerRun(id, { debugRibbon: ribbon });
+    this.transitOutro = 0;
+    this.clearTransitArriveVeil();
+    this.flyer = new FlyerRun(id, { debugRibbon: ribbon, quality: this.effectiveQuality });
     this.scene.add(this.flyer.root);
+    this.parkWorldForFlight();
+    this.post.setFlightMode(true);
+    if ((globalThis as { __flightPerfOn?: boolean }).__flightPerfOn) {
+      (globalThis as { __flyerRun?: FlyerRun }).__flyerRun = this.flyer;
+    }
+    this.cubeSky.setVisible(false);
     this.mode = 'transit';
     this.vitals.fullRestore();
     this.ship.beginManualFlight();
@@ -3046,19 +3350,114 @@ export class Game {
     this.cameraCtrl.camera.layers.disable(1);
     this.cameraCtrl.camera.updateProjectionMatrix();
     this.scene.fog = new THREE.Fog(this.flyer.fogColor, this.flyer.fogNear, this.flyer.fogFar);
-    this.scene.background = new THREE.Color(this.flyer.fogColor);
+    this.scene.background = this.flyer.brandBackground;
+    // WAVE14: also keep equirect as env hint via flyer sky dome (brand Color floor kills void).
     this.input.releaseAll();
     this.toast(`${this.flyer.title} · relocating defense grid`);
-    if (!this.save.data.tutorialFlyerDone) this.tutorial.tryStartFlyer();
+    this.transitWarmup = FLYER_COUNTDOWN_SEC;
+    this.transitCountdownTone = -1;
+    this.flyer.armed = false;
+    this.flyerBoostTaught = false;
+    this.flyerHazardTaught = false;
+    this.hud.setWarmupVisible(true, this.transitWarmup, 'TRANSFER ARMING');
+    // WAVE42: no lecture callouts / no flyer briefing card in fly mode
+    this.save.data.tutorialFlyerDone = true;
+    this.tutorial.completeIf('flyer');
+  }
+
+  /**
+   * The combat city, arena and ship stay in the scene graph even when hidden,
+   * and Three still walks every child. Pull them out for the flight.
+   * Scene lights are zeroed so leftover lit materials only see the two flight lights.
+   */
+  private parkWorldForFlight(): void {
+    const roots: THREE.Object3D[] = [
+      this.cube.group,
+      this.cinematicCube.group,
+      this.cubeAnimator.group,
+      this.cubeDefense.group,
+      this.ship.group,
+      this.weapon.group,
+      this.hardpoints.worldGroup,
+      this.drones.group,
+      this.groundStations.group,
+      this.shatter.group,
+      this.rings.group,
+      this.reticle.group,
+      this.cubeSky.group,
+    ];
+    if (this.cinematic?.group) roots.push(this.cinematic.group);
+    const arena = this.scene.getObjectByName('GridVoidArena');
+    if (arena) roots.push(arena);
+    const amb = this.scene.getObjectByName('AmbientEnvironment');
+    if (amb) roots.push(amb);
+    for (const o of roots) {
+      // Only unhook scene roots. Children of the ship must stay parented to it.
+      if (o.parent === this.scene) {
+        this.scene.remove(o);
+        this.flightParked.push(o);
+      }
+    }
+    for (const o of this.scene.children) {
+      if (o instanceof THREE.Light) {
+        this.sceneLightPark.push({ light: o, intensity: o.intensity });
+        o.intensity = 0;
+      }
+    }
+  }
+
+  private restoreWorldAfterFlight(): void {
+    for (const o of this.flightParked) {
+      if (!o.parent) this.scene.add(o);
+    }
+    this.flightParked = [];
+    for (const saved of this.sceneLightPark) saved.light.intensity = saved.intensity;
+    this.sceneLightPark = [];
+  }
+
+  private noteFlightPerf(dt: number): void {
+    const w = globalThis as {
+      __flightPerfOn?: boolean;
+      __flightPerf?: {
+        frames: number;
+        sumDt: number;
+        maxDt: number;
+        sumCalls: number;
+        maxCalls: number;
+        sumTris: number;
+        maxTris: number;
+      };
+    };
+    if (!w.__flightPerfOn || this.mode !== 'transit') return;
+    const info = this.renderer.info.render;
+    const b = w.__flightPerf ?? (w.__flightPerf = {
+      frames: 0, sumDt: 0, maxDt: 0, sumCalls: 0, maxCalls: 0, sumTris: 0, maxTris: 0,
+    });
+    b.frames++;
+    b.sumDt += dt;
+    b.maxDt = Math.max(b.maxDt, dt);
+    b.sumCalls += info.calls;
+    b.maxCalls = Math.max(b.maxCalls, info.calls);
+    b.sumTris += info.triangles;
+    b.maxTris = Math.max(b.maxTris, info.triangles);
   }
 
   private teardownTransitVisuals(): void {
+    // WAVE52: force-clear body-mounted transit vignette + any screen letterbox veil.
+    this.clearTransitArriveVeil();
+    try { this.screenFx?.cancel(); } catch { /* ignore */ }
+    this.transitOutro = 0;
+    this.transitWarmup = 0;
+    this.hud.setWarmupVisible(false);
     this.tutorial.completeIf('flyer');
     if (this.flyer) {
+      this.flyer.resetCameraJuice(this.cameraCtrl.camera);
       this.scene.remove(this.flyer.root);
       this.flyer.dispose();
       this.flyer = null;
     }
+    this.restoreWorldAfterFlight();
+    this.post.setFlightMode(false);
     this.ship.endManualFlight();
     this.ship.group.visible = true;
     this.hud.setFlyerVisible(false);
@@ -3083,14 +3482,98 @@ export class Game {
       this.presentLevelClearCard();
       return;
     }
+    // Buildup / countdown before flyer gameplay begins (not an instant cut).
+    if (this.transitWarmup > 0) {
+      const prev = this.transitWarmup;
+      this.transitWarmup = Math.max(0, this.transitWarmup - dt);
+      const tick = Math.ceil(this.transitWarmup);
+      if (tick !== this.transitCountdownTone && this.transitWarmup > 0) {
+        this.transitCountdownTone = tick;
+        try { this.audio.playFlyerCountdown(tick); } catch { /* ignore */ }
+      }
+      this.hud.setWarmupVisible(true, this.transitWarmup, 'TRANSFER ARMING');
+      if (prev > 0 && this.transitWarmup <= 0) {
+        run.armTransit();
+        this.hud.setWarmupVisible(false);
+        this.showPhaseChip('ENGAGE', 'transit');
+        try { this.audio.playFlyerCountdown(0); } catch { /* ignore */ }
+      }
+    }
     this.input.update(dt);
-    const fire = this.input.consumeFirePulse();
-    run.update(dt, this.input.axisX, this.input.axisY, fire, (_kind, sh, hullPlus) => {
-      const died = this.vitals.takeSplitDamage(sh, hullPlus).died;
+    const fire = this.transitWarmup > 0 ? false : this.input.isManualFire;
+    if (fire) this.input.consumeFirePulse();
+    const ax = this.transitWarmup > 0 ? 0 : this.input.axisX;
+    const ay = this.transitWarmup > 0 ? 0 : this.input.axisY;
+    run.update(dt, ax, ay, fire, (_kind, sh, hullPlus) => {
+      const hit = this.vitals.takeSplitDamage(sh, hullPlus);
+      playDamageHaptic({
+        shieldDamage: hit.shieldDamage,
+        hullDamage: hit.hullDamage,
+        maxShield: this.vitals.maxShield,
+        maxHull: this.vitals.maxHull,
+      });
       this.cameraCtrl.shake(0.22);
       this.updateHudVitals();
-      return died;
+      return hit.died;
     });
+    for (const fx of run.consumeFx()) {
+      if (fx.type === 'speedPickup') {
+        try { this.audio.playFlyerBoost(); } catch { /* ignore */ }
+        this.hud.flashPickup(fx.chain >= 3 ? 'BOOST x3' : 'BOOST', 'boost');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xffcc44, 14, 9, 'glow');
+      } else if (fx.type === 'shieldPickup') {
+        try { this.audio.playFlyerBoost(); } catch { /* ignore */ }
+        this.hud.flashPickup('+SHIELD', 'shield');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0x4499ff, 14, 9, 'glow');
+        this.vitals.restoreShield(this.vitals.maxShield * 0.45);
+        this.updateHudVitals();
+      } else if (fx.type === 'hullPickup') {
+        try { this.audio.playFlyerBoost(); } catch { /* ignore */ }
+        this.hud.flashPickup('+REPAIR', 'hull');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0x55ff66, 14, 9, 'glow');
+        this.vitals.heal(this.vitals.maxHull * 0.28);
+        this.updateHudVitals();
+      } else if (fx.type === 'enemyKill') {
+        try { this.audio.playFlyerGate(); } catch { /* ignore */ }
+        this.hud.flashPickup(fx.combo >= 2 ? `HIT x${fx.combo}` : 'HIT', 'boost');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xff6633, 18, 12, 'spark');
+        this.currency.addFragments(fx.frag, this.tech.stats.fragmentMul * this.evolutionIncomeMul());
+        this.currency.addCoreEnergy(fx.lattice, 1);
+        this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+      } else if (fx.type === 'laneClear') {
+        this.hud.flashPickup('CLEAR', 'hull');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xffcc88, 10, 8, 'spark');
+      } else if (fx.type === 'ringPass') {
+        try { this.audio.playFlyerGate(); } catch { /* ignore */ }
+        this.hud.flashPickup(`RING ${fx.stage}/${fx.total}`, 'ring');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xff66dd, 12, 9, 'glow');
+      } else if (fx.type === 'ringComplete') {
+        try { this.audio.playFlyerBoost(); } catch { /* ignore */ }
+        this.hud.flashPickup('CHAIN', 'ring');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xffee66, 20, 12, 'glow');
+        this.currency.addFragments(fx.frag, this.tech.stats.fragmentMul);
+        this.currency.addCoreEnergy(fx.lattice, 1);
+        this.hud.updateCurrency(this.currency.dataFragments, this.currency.coreEnergy);
+      } else if (fx.type === 'portalEnter') {
+        try { this.audio.playFlyerGate(); } catch { /* ignore */ }
+        this.hud.flashFlyerEvent('gate');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0x66eeff, 22, 14, 'glow');
+        this.cameraCtrl.shake(0.1);
+      } else if (fx.type === 'scrape') {
+        try { this.audio.playFlyerHazard('scrape'); } catch { /* ignore */ }
+        this.hud.flashFlyerEvent('hazard');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xff8844, 12, 8, 'spark');
+        this.cameraCtrl.shake(0.12);
+      } else if (fx.type === 'hit') {
+        try { this.audio.playFlyerHazard('hit'); } catch { /* ignore */ }
+        this.hud.flashFlyerEvent('hazard');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xff4466, 18, 11, 'spark');
+      } else if (fx.type === 'gatePass' || fx.type === 'lockKill') {
+        try { this.audio.playFlyerGate(); } catch { /* ignore */ }
+        this.hud.flashFlyerEvent('gate');
+        this.particles.spawn(fx.x, fx.y, fx.z, 0xff3aa8, 16, 10, 'glow');
+      }
+    }
     run.shipPos(this._flyerPos);
     run.lookTarget(this._flyerLook);
     run.camPos(this._flyerCam);
@@ -3101,14 +3584,18 @@ export class Game {
     this.cameraCtrl.camera.up.copy(this._flyerUp);
     this.cameraCtrl.camera.position.copy(this._flyerCam);
     this.cameraCtrl.camera.lookAt(this._flyerLook);
+    run.applyCameraJuice(this.cameraCtrl.camera);
     run.applyMusicBass(this.music.getBassLevel(), dt);
     const fogCol = run.fogPulseColor;
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(fogCol);
-    if (this.scene.background instanceof THREE.Color) this.scene.background.copy(fogCol);
+    // WAVE14: keep brand Color as scene.background (never swap back to dark equirect void).
+    const brandBg = run.brandBackground;
+    if (this.scene.background !== brandBg) this.scene.background = brandBg;
     this.hud.updateFlyer({
       title: run.title,
       time: run.t,
       speed: run.speedMul,
+      thrust: run.thrust,
       lock: run.lockOn,
     });
     this.tutorial.update(dt, {
@@ -3136,7 +3623,7 @@ export class Game {
       this.endTransit(true);
       return;
     }
-    if (run.finished) this.endTransit(false);
+    if (run.finished) this.beginTransitArrive(dt);
   }
 
   private endTransit(failed: boolean): void {
@@ -3179,6 +3666,7 @@ export class Game {
     this.loadoutUI.hide();
     this.settingsUI.hide();
     this.menu.hide();
+    this.radio?.hide();
     this.armUiClickLock();
 
     const rewardText = card.doubled
@@ -3313,6 +3801,7 @@ export class Game {
   private onVisibility = (): void => {
     this.hidden = document.hidden;
     if (document.hidden) {
+      this.input.releaseAll();
       this.silenceAudio();
       if (this.mode !== 'core_death' && this.mode !== 'dying') this.persist();
       return;
@@ -3418,7 +3907,12 @@ export class Game {
       }
     }
 
-    this.arena.update(dt);
+    if (this.mode !== 'transit') this.arena.update(dt);
+    if (this.mode === 'playing' && this.cubeSky.group.visible) {
+      this.cubeSky.update(dt);
+      // Cheap guard: if async arena restored a texture bg, clear it back to stage sky.
+      if (this.scene.background) this.cubeSky.applyStageAtmosphere(this.scene, this.renderer);
+    }
     this.screenFx.update(dt);
     if (this.mode !== 'playing') this.audio.setKamikazeSeek(0);
 
@@ -3443,18 +3937,25 @@ export class Game {
       this.cameraCtrl.updateIntro(progress, dt);
       this.ship.update(this.cameraCtrl, dt);
       this.cubeAnimator.update(dt);
-      if (Math.random() < dt * 6) {
+      const energy = this.cameraCtrl.getIntroEnergy();
+      const emberRate = 5 + energy * 28;
+      if (Math.random() < dt * emberRate) {
         const a = Math.random() * Math.PI * 2;
-        const r = this.cube.halfExtent * (1.2 + Math.random());
+        const r = this.cube.halfExtent * (1.15 + Math.random() * (1.1 + energy));
+        const hot = energy > 0.55 && Math.random() < 0.7;
         this.particles.spawn(
           Math.cos(a) * r,
-          (Math.random() - 0.5) * r,
+          (Math.random() - 0.35) * r,
           Math.sin(a) * r,
-          COLORS.cyan,
-          1,
-          0.5,
-          'ember'
+          hot ? COLORS.magenta : COLORS.cyan,
+          hot ? 2 : 1,
+          0.4 + energy * 1.4,
+          hot ? 'spark' : 'ember'
         );
+      }
+      if (energy > 0.35 && Math.random() < dt * (8 + energy * 18)) {
+        const p = this.ship.group.position;
+        this.particles.spawn(p.x, p.y, p.z, COLORS.cyan, 2, 0.8 + energy * 1.6, 'spark');
       }
       const level = getLevel(this.currentLevelId);
       this.hud.updateLevel(
@@ -3487,21 +3988,28 @@ export class Game {
         );
       }
       this.cameraCtrl.update(dt);
-      this.ship.update(this.cameraCtrl, dt, this.particles);
+      this.ship.update(this.cameraCtrl, dt, this.particles, this.input.aimX, this.input.aimY);
 
       if (this.mode === 'playing') {
-        this.audio.setKamikazeSeek(this.cubeDefense.kamikazeSeekIntensity(this.ship.position));
-        if (this.reviveImmunity > 0) {
-          this.reviveImmunity = Math.max(0, this.reviveImmunity - dt);
+        this.updateCombatWarmup(dt);
+        const combatFrozen = this.isCombatFrozen();
+        if (!combatFrozen) {
+          this.audio.setKamikazeSeek(this.cubeDefense.kamikazeSeekIntensity(this.ship.position));
+          if (this.reviveImmunity > 0) {
+            this.reviveImmunity = Math.max(0, this.reviveImmunity - dt);
+          }
+        } else {
+          this.audio.setKamikazeSeek(0);
         }
         this.vitals.update(dt);
         this.updateHudVitals();
-        this.updateCombatWarmup(dt);
         if (this.input.consumeAmmoCycle()) this.cycleMainGunAmmo();
-        const allowFire = this.canFireWeapons() && this.input.isFiring;
+        if (this.input.consumeLockPriority()) this.cycleLockPriority();
+        const allowFire =
+          !combatFrozen && this.canFireWeapons() && this.input.isFiring;
 
         // Always update aim (so crosshair tracks); fire only when armed
-        if (this.scanPulseTimer > 0) {
+        if (this.scanPulseTimer > 0 && !combatFrozen) {
           this.scanPulseTimer = Math.max(0, this.scanPulseTimer - dt);
         }
         const combatStats =
@@ -3524,6 +4032,7 @@ export class Game {
             enemyTargets: this.cubeDefense.getEnemyTargetsForWeapons(),
             onEnemyHit: (id, dmg) => this.cubeDefense.damageEnemy(id, dmg),
             ammo: this.mainGunAmmo,
+            lockPriority: this.lockPriority,
           }
         );
 
@@ -3573,17 +4082,11 @@ export class Game {
           ) {
             this.tutorial.tryStartFleet();
           }
-          if (
-            this.save.data.tutorialFleetDone &&
-            !this.save.data.tutorialGunDone &&
-            !this.tech.owned.has('off_multi_1') &&
-            this.currency.dataFragments >= 100 &&
-            this.droneBays.equippedCount() >= 2
-          ) {
-            this.tutorial.tryStartGun();
-          }
         }
 
+        if (combatFrozen) {
+          this.cubeDefense.update(dt, false, true);
+        } else {
         // Hardpoints: forward / guided only — never player aim stick
         this.hardpoints.update(
           dt,
@@ -3624,10 +4127,10 @@ export class Game {
           },
         });
         this.cubeDefense.setFireRateMul(this.cube.nucleus.rageFireMul);
-        // Turrets/enemy drones locked during stage countdown same as player
-        this.cubeDefense.update(dt, this.canFireWeapons());
+        this.cubeDefense.update(dt, this.canFireWeapons(), false);
         const tug = this.cubeDefense.consumeOrbitNudge();
         if (tug) this.cameraCtrl.nudgeAngular(tug.yaw, tug.pitch);
+        } // !combatFrozen
 
         const level = getLevel(this.currentLevelId);
         this.hud.updateLevel(
@@ -3648,7 +4151,6 @@ export class Game {
         if (this.cube.isLevelComplete()) this.beginCoreDeathSequence();
       }
     } else if (this.mode === 'transit') {
-      this.post.setPresentation(true);
       this.updateTransit(dt);
     } else if (this.mode === 'core_death') {
       this.updateCoreDeath(dt);
@@ -3681,9 +4183,12 @@ export class Game {
     }
 
     this.particles.update(dt);
-    this.shatter.update(dt);
-    this.rings.update(dt);
+    if (this.mode !== 'transit') {
+      this.shatter.update(dt);
+      this.rings.update(dt);
+    }
     this.post.render();
+    this.noteFlightPerf(dt);
     this.maybeSave(dt);
     } catch (err) {
       // One bad frame must not freeze the WebView on a still cube.
@@ -3718,5 +4223,30 @@ export class Game {
     this.audio.dispose();
     this.input.dispose();
     this.renderer.dispose();
+  }
+}
+
+/** Mid-range Android SoCs often pick the low-power GPU when preference is `default`. */
+function androidHighPerfGpu(): boolean {
+  try {
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') return true;
+  } catch {
+    /* Capacitor unavailable (tests / desktop) */
+  }
+  if (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)) return true;
+  return false;
+}
+
+function logGpuRenderer(renderer: THREE.WebGLRenderer): void {
+  try {
+    const gl = renderer.getContext();
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!dbg) {
+      console.info('[perf] gpu', gl.getParameter(gl.RENDERER));
+      return;
+    }
+    console.info('[perf] gpu', gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+  } catch (err) {
+    console.info('[perf] gpu unavailable', err);
   }
 }

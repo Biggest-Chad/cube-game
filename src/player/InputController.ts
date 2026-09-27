@@ -27,6 +27,8 @@ export class InputController {
   private firePulse = false;
   private ammoQueued = false;
   private ammoHeld = false;
+  private lockQueued = false;
+  private lockHeld = false;
   private pilotQueued = false;
   private pilotHeld = false;
   private bound = false;
@@ -62,6 +64,10 @@ export class InputController {
     aimZone.addEventListener('pointerup', this.onAimUp);
     aimZone.addEventListener('pointercancel', this.onAimUp);
 
+    window.addEventListener('pointermove', this.onWindowPointerMove);
+    window.addEventListener('pointerup', this.onWindowPointerUp);
+    window.addEventListener('pointercancel', this.onWindowPointerUp);
+    window.addEventListener('blur', this.onFocusLost);
     window.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('touchstart', this.onTouchStart, { passive: false });
     window.addEventListener('touchmove', this.onTouchMove, { passive: false });
@@ -74,6 +80,10 @@ export class InputController {
       this.ammoQueued = true;
       this.ammoHeld = true;
     }
+    if (e.code === 'KeyF' && !this.lockHeld) {
+      this.lockQueued = true;
+      this.lockHeld = true;
+    }
     if (e.code === 'KeyQ' && !this.pilotHeld) {
       this.pilotQueued = true;
       this.pilotHeld = true;
@@ -83,17 +93,32 @@ export class InputController {
   private onKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
     if (e.code === 'KeyR') this.ammoHeld = false;
+    if (e.code === 'KeyF') this.lockHeld = false;
     if (e.code === 'KeyQ') this.pilotHeld = false;
   };
 
   private onJoyDown = (e: PointerEvent): void => {
     if (this.joyPointerId !== null) return;
+    // Do not capture the pointer. Capture swallows a second finger on HUD buttons.
     this.joyPointerId = e.pointerId;
     this.joyActive = true;
     this.joyOriginX = e.clientX;
     this.joyOriginY = e.clientY;
-    this.joyZone?.setPointerCapture(e.pointerId);
     this.setStick(this.stickEl, 0, 0);
+  };
+
+  private onFocusLost = (): void => {
+    this.releaseAll();
+  };
+
+  private onWindowPointerMove = (e: PointerEvent): void => {
+    if (e.pointerId === this.joyPointerId) this.onJoyMove(e);
+    if (e.pointerId === this.aimPointerId) this.onAimMove(e);
+  };
+
+  private onWindowPointerUp = (e: PointerEvent): void => {
+    if (e.pointerId === this.joyPointerId) this.onJoyUp(e);
+    if (e.pointerId === this.aimPointerId) this.onAimUp(e);
   };
 
   private onJoyMove = (e: PointerEvent): void => {
@@ -114,13 +139,11 @@ export class InputController {
   };
 
   private onAimDown = (e: PointerEvent): void => {
-    e.preventDefault();
     if (this.aimPointerId !== null) return;
     this.aimPointerId = e.pointerId;
     this.aimActive = true;
     this.aimOriginX = e.clientX;
     this.aimOriginY = e.clientY;
-    this.aimZone?.setPointerCapture(e.pointerId);
     this.aimZone?.classList.add('active');
     this.setStick(this.aimStickEl, 0, 0);
     this.firePulse = true;
@@ -176,6 +199,11 @@ export class InputController {
 
   private onTouchMove = (e: TouchEvent): void => {
     if (e.touches.length === 2) {
+      const onControl = [...e.touches].some((touch) => {
+        const hit = document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null;
+        return !!hit?.closest('button, .ui-btn, .fire-opt, .shop-panel, .panel');
+      });
+      if (onControl) return;
       e.preventDefault();
       const d = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
@@ -240,6 +268,8 @@ export class InputController {
     this.zoomDelta = 0;
     this.ammoQueued = false;
     this.ammoHeld = false;
+    this.lockQueued = false;
+    this.lockHeld = false;
     this.pilotQueued = false;
     this.pilotHeld = false;
     this.firePulse = false;
@@ -257,6 +287,12 @@ export class InputController {
   consumeAmmoCycle(): boolean {
     const v = this.ammoQueued;
     this.ammoQueued = false;
+    return v;
+  }
+
+  consumeLockPriority(): boolean {
+    const v = this.lockQueued;
+    this.lockQueued = false;
     return v;
   }
 
@@ -280,6 +316,11 @@ export class InputController {
   get isFiring(): boolean {
     // Auto-fire always; space still works as boost focus (same)
     return this.autoFire || this.keys.has('Space');
+  }
+
+  /** Held fire for flight. Ignores combat auto-fire so the lane gun is the fire button or Space. */
+  get isManualFire(): boolean {
+    return this.aimActive || this.keys.has('Space') || this.firePulse;
   }
 
   get isAiming(): boolean {

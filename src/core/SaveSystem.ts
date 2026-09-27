@@ -101,6 +101,8 @@ export interface SaveData {
 
   /** Selected main-gun magazine: standard | ap | he */
   mainGunAmmo: string;
+  /** Main-gun soft-lock class: nucleus | blocks | drones */
+  lockOnPriority: string;
 }
 
 export function defaultSave(): SaveData {
@@ -147,7 +149,7 @@ export function defaultSave(): SaveData {
     tutorialStage1Done: false,
     tutorialLoadoutDone: false,
     tutorialFleetDone: false,
-    tutorialGunDone: false,
+    tutorialGunDone: true,
     tutorialFlyerDone: false,
     evolveReadySeenTier: -1,
 
@@ -158,6 +160,7 @@ export function defaultSave(): SaveData {
     researchRanks: {},
     cosmeticTrail: false,
     mainGunAmmo: 'standard',
+    lockOnPriority: 'nucleus',
   };
 }
 
@@ -308,6 +311,12 @@ export class SaveSystem {
           parsed.mainGunAmmo === 'ap' || parsed.mainGunAmmo === 'he' || parsed.mainGunAmmo === 'standard'
             ? parsed.mainGunAmmo
             : 'standard',
+        lockOnPriority:
+          parsed.lockOnPriority === 'blocks' ||
+          parsed.lockOnPriority === 'drones' ||
+          parsed.lockOnPriority === 'nucleus'
+            ? parsed.lockOnPriority
+            : 'nucleus',
         dataFragments: sanitizeCurrency(parsed.dataFragments, base.dataFragments),
         coreEnergy: sanitizeCurrency(parsed.coreEnergy, base.coreEnergy),
         prestigeTokens: sanitizeCurrency(parsed.prestigeTokens, base.prestigeTokens),

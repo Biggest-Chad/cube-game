@@ -632,16 +632,38 @@ export async function addMegacityStreets(root: THREE.Group): Promise<void> {
   }
 
   let acc = 0;
+  let colorAcc = 0;
+  const lampCol = new THREE.Color();
+  const lampCount = lampMesh.count;
+  const lampRate = new Float32Array(lampCount);
+  const lampGate = new Float32Array(lampCount);
+  const lampWarm = new Float32Array(lampCount);
+  for (let i = 0; i < lampCount; i++) {
+    lampRate[i] = hash(i, 46);
+    lampGate[i] = hash(i, 44);
+    lampWarm[i] = hash(i, 45);
+  }
+  const lowCount = lowMesh.count;
+  const lowSeed = new Float32Array(lowCount);
+  for (let i = 0; i < lowCount; i++) lowSeed[i] = hash(i, 52);
   const prev = root.userData.tick as ((t: number, dt: number) => void) | undefined;
   root.userData.tick = (t: number, dt: number) => {
     prev?.(t, dt);
     const pulse = 0.65 + Math.sin(t * 1.6) * 0.25;
     portalGlow.scale.setScalar(pulse);
     (portalGlow.material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(t * 2.1) * 0.2;
+    edgeCyan.opacity = 0.42 + 0.32 * (0.5 + 0.5 * Math.sin(t * 1.45));
+    for (let i = 0; i < adMeshes.length; i++) {
+      const mat = adMeshes[i].material as THREE.MeshBasicMaterial;
+      if (typeof mat.userData.baseOpacity !== 'number') mat.userData.baseOpacity = mat.opacity;
+      const base = mat.userData.baseOpacity as number;
+      mat.opacity = base * (0.7 + 0.3 * Math.sin(t * 0.9 + i * 1.3));
+    }
 
     acc += dt;
-    if (acc < 0.09) return;
-    acc = 0;
+    colorAcc += dt;
+    if (acc >= 0.09) {
+      acc = 0;
 
     const pa = (t * 0.055) % 1;
     const pb = (1 - t * 0.042) % 1;
@@ -704,6 +726,25 @@ export async function addMegacityStreets(root: THREE.Group): Promise<void> {
     carLite.count = cars.length;
     carMesh.instanceMatrix.needsUpdate = true;
     carLite.instanceMatrix.needsUpdate = true;
+    }
+
+    if (colorAcc < 0.16) return;
+    colorAcc = 0;
+    for (let i = 0; i < lampCount; i++) {
+      const n = lampRate[i];
+      const on = lampGate[i] > 0.12 && Math.sin(t * (1.8 + n * 2.4) + i) > -0.45;
+      lampCol.setHex(on ? (lampWarm[i] > 0.72 ? 0xffe2a8 : 0xffffff) : 0x3a4c56);
+      lampMesh.setColorAt(i, lampCol);
+    }
+    if (lampMesh.instanceColor) lampMesh.instanceColor.needsUpdate = true;
+    for (let i = 0; i < lowCount; i++) {
+      const n = lowSeed[i];
+      const blink = n > 0.9 ? (Math.sin(t * 2.4 + i) > 0.15 ? 1 : 0.55) : 1;
+      const v = (0.8 + 0.2 * Math.sin(t * (0.35 + n) + n * 5)) * blink;
+      lampCol.setRGB(v, v, v);
+      lowMesh.setColorAt(i, lampCol);
+    }
+    if (lowMesh.instanceColor) lowMesh.instanceColor.needsUpdate = true;
   };
 
   // Seed moving instances off the origin before the first frame.

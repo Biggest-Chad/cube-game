@@ -44,9 +44,9 @@ export class IdleSimulator {
     const fragments = currency.addFragments(soft, stats.fragmentMul);
 
     // Tiny core drip — never the main offline sink
-    const coreRaw = Math.floor(seconds / 900) * (1 + Math.floor(stats.coreEnergyMul));
+    const coreTicks = Math.floor(seconds / 900);
     const coreEnergy =
-      coreRaw > 0 ? currency.addCoreEnergy(coreRaw, stats.coreEnergyMul) : 0;
+      coreTicks > 0 ? currency.addCoreEnergy(coreTicks, stats.coreEnergyMul) : 0;
 
     return {
       seconds,

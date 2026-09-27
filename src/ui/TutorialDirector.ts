@@ -29,7 +29,8 @@ export type TutorialStepId =
   | 'loadout_done'
   | 'flyer_strafe'
   | 'flyer_gates'
-  | 'flyer_banks';
+  | 'flyer_banks'
+  | 'flyer_objects';
 
 export interface TutorialStep {
   id: TutorialStepId;
@@ -64,7 +65,7 @@ const STAGE1_STEPS: TutorialStep[] = [
   {
     id: 'welcome',
     title: 'WELCOME, PILOT',
-    body: 'A hostile cube lattice threatens the grid. You orbit it. You destroy it. You upgrade.',
+    body: 'A hostile cube lattice threatens the grid. Orbit it. Destroy it. Earn Fragments. Buy your first drone.',
     advance: 'tap',
     cta: 'BEGIN',
   },
@@ -87,7 +88,7 @@ const STAGE1_STEPS: TutorialStep[] = [
   {
     id: 'destroy',
     title: 'DESTROY',
-    body: 'Weapons auto-fire. Melt lattice blocks to earn Data Fragments for your first ally drone (100 FRAG).',
+    body: 'Weapons auto-fire once the hold lifts. Melt lattice blocks to earn Fragments for your first ally drone (100 FRAG).',
     advance: 'afford_drone',
     target: 100,
   },
@@ -109,7 +110,7 @@ const STAGE1_STEPS: TutorialStep[] = [
   {
     id: 'complete',
     title: 'WINGMAN ONLINE',
-    body: 'Tutorial complete. Your drone mines with you. Rocket Pods unlock from Sector 3 — master the main gun and upgrades first.',
+    body: 'Wingman online. Shop anytime for GUN upgrades and more bays. Rocket Pods unlock from Sector 3.',
     advance: 'tap',
     cta: 'ENGAGE',
   },
@@ -134,7 +135,7 @@ const FLEET_STEPS: TutorialStep[] = [
   {
     id: 'fleet_done',
     title: 'SQUAD ONLINE',
-    body: 'Keep buying bays and types as you earn FRAG. UPGRADES on the same tab boost hull, damage, and respawn.',
+    body: 'Keep buying bays as you earn FRAG. GUN and UPGRADES tabs boost firepower, hull, and respawn — no required purchase.',
     advance: 'tap',
     cta: 'ENGAGE',
   },
@@ -172,31 +173,8 @@ const GUN_STEPS: TutorialStep[] = [
   },
 ];
 
-const FLYER_STEPS: TutorialStep[] = [
-  {
-    id: 'flyer_strafe',
-    title: 'STRAFE',
-    body: 'LEFT stick slides you in the lane. Stick is screen-relative — the ship leans with the path.',
-    highlight: '#joy-zone',
-    advance: 'strafe',
-    target: 0.45,
-  },
-  {
-    id: 'flyer_gates',
-    title: 'SHOOT THE GATES',
-    body: 'RIGHT side fires. Pink lock diamond means a gate is in the pipe — shoot it for a clear line.',
-    highlight: '#aim-zone',
-    advance: 'flyer_lock',
-  },
-  {
-    id: 'flyer_banks',
-    title: 'BANKS AHEAD',
-    body: 'The ribbon banks, sweeps, and loops. Hold the lane through the roll — walls hurt.',
-    advance: 'time',
-    target: 3.2,
-    cta: 'FLY',
-  },
-];
+/** WAVE42: flyer briefing stripped — no lecture cards in fly mode. */
+const FLYER_STEPS: TutorialStep[] = [];
 
 const LOADOUT_STEPS: TutorialStep[] = [
   {
@@ -343,20 +321,15 @@ export class TutorialDirector {
     }
   }
 
-  /** First transfer flight — strafe / gates / banks. */
+  /** WAVE42: flyer lecture retired — mark done, never show briefing cards. */
   tryStartFlyer(): void {
-    if (this.flyerDone || this.active) return;
-    this.begin('flyer', FLYER_STEPS);
+    this.flyerDone = true;
   }
 
-  /** After 2 drones, when the player has 100 FRAG again — push Split Beam. */
+  /** Split Beam briefing retired — never start this track. */
   tryStartGun(): void {
-    if (this.gunDone || this.active || this.pendingGun) return;
-    if (this.stage1Done && this.fleetDone) {
-      this.begin('gun', GUN_STEPS);
-    } else {
-      this.pendingGun = true;
-    }
+    this.gunDone = true;
+    this.pendingGun = false;
   }
 
   setFlags(
@@ -396,18 +369,6 @@ export class TutorialDirector {
       ) {
         this.pendingFleet = false;
         this.begin('fleet', FLEET_STEPS);
-      }
-      if (
-        this.pendingGun &&
-        this.stage1Done &&
-        this.fleetDone &&
-        !this.gunDone &&
-        !this.active &&
-        ctx.fragments >= 100 &&
-        !ctx.ownsSplitBeam
-      ) {
-        this.pendingGun = false;
-        this.begin('gun', GUN_STEPS);
       }
       return;
     }
@@ -771,6 +732,23 @@ export class TutorialDirector {
   /** True if stage-1 tutorial is running (any step). */
   isStage1Active(): boolean {
     return this.active === 'stage1';
+  }
+
+  /** True while the briefing card overlay is on screen (not farm chip / shop). */
+  isCardShown(): boolean {
+    if (!this.active || !this.visible || this.suppressCard) return false;
+    const step = this.currentStep;
+    if (!step) return false;
+    if (
+      step.advance === 'afford_drone' ||
+      step.advance === 'destroy' ||
+      step.advance === 'afford_gun'
+    ) {
+      return false;
+    }
+    const card = this.root.querySelector('#tutorial-card') as HTMLElement | null;
+    if (!card) return false;
+    return !card.classList.contains('panel-hidden');
   }
 
   completeIf(id: TutorialId): void {
